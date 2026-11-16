@@ -561,6 +561,22 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Debug Extractor
+  if (pathname === '/api/debug-extractor') {
+    const pw = require('playwright-core');
+    try {
+      const b = await pw.chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+      });
+      const v = b.version();
+      await b.close();
+      return sendJSON(res, 200, { ok: true, version: v });
+    } catch (err) {
+      return sendJSON(res, 200, { ok: false, error: err.message, stack: err.stack });
+    }
+  }
+
   // Direct Stream Extractor (HLS .m3u8 direct pour lecteur Netflix natif)
   if (pathname === '/api/direct-stream') {
     const { id, type = 'movie', season = 1, episode = 1, lang = 'vf' } = query;

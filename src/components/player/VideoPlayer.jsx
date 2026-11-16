@@ -9,7 +9,7 @@ import { LoadingOverlay } from './hls/PlayerOverlays';
 export default function VideoPlayer({ content, onClose, initialSeason = 1, initialEpisode = 1 }) {
     const type = getContentType(content) === 'tv' ? 'tv' : 'movie';
     const { currentProfile, watchHistory, addToHistory } = useProfile();
-    const preferredLang = (currentProfile?.preferredAudio || 'VF').toUpperCase().startsWith('VO') ? 'VOSTFR' : 'VF';
+    const preferredLang = 'VOSTFR';
     const navigate = useNavigate();
     const tmdbId = content.id || content.contentId;
     // null = vérification en cours ; false = pas de vidéo hébergée pour cette fiche.

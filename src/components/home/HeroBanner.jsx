@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo } from 'react';
+﻿import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayer } from '../../contexts/PlayerContext';
 import { getContentType, formatRuntime } from '../../utils/helpers';
@@ -13,7 +13,26 @@ const GENRE_NAMES = {
     10759: 'Action & Aventure', 10762: 'Enfants', 10765: 'Sci-Fi & Fantastique',
 };
 
-const HeroBanner = ({ movie: propMovie, movies: propMovies }) => {
+const SLIDE_DURATION_MS = 9000;
+const LOGO_TIMEOUT_MS = 2500;
+const EASE = [0.16, 1, 0.3, 1];
+
+const idOf = (m) => m?.id || m?.contentId;
+const isTvItem = (m) => Boolean(m) && (getContentType(m) === 'tv' || Number(idOf(m)) === 220102);
+const backdrop = (path, size) => `https://image.tmdb.org/t/p/${size}${path}`;
+
+// Text fallback scales with title length so long titles never swallow the hero.
+const titleSize = (title = '') => {
+    if (title.length <= 14) return 'text-5xl sm:text-7xl lg:text-[5.5rem]';
+    if (title.length <= 28) return 'text-4xl sm:text-6xl lg:text-7xl';
+    return 'text-3xl sm:text-5xl lg:text-6xl';
+};
+
+/**
+ * Full-bleed featured carousel.
+ * `rankLabel` (e.g. "des tendances") turns on the "N° 1 …" chart marker.
+ */
+const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
     const movies = useMemo(() => {
         return propMovies || (propMovie ? [propMovie] : []);
     }, [propMovies, propMovie]);
@@ -21,27 +40,66 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies }) => {
     const [detailedMovie, setDetailedMovie] = useState(null);
     const [trailerKey, setTrailerKey] = useState(null);
     const [showTrailer, setShowTrailer] = useState(false);
+    const [hovered, setHovered] = useState(false);
+    // id -> logo URL, or null once we know the title has no artwork
+    const [logos, setLogos] = useState({});
     const navigate = useNavigate();
     const { play } = usePlayer();
+
+    const paused = hovered || showTrailer;
 
     // Reset index when movies list changes
     useEffect(() => {
         setActiveIndex(0);
     }, [propMovies, propMovie]);
 
-    // Auto-rotate every 8 seconds if there are multiple movies
+    // Auto-advance. Pausing keeps the time already elapsed, so the timer stays
+    // in step with the progress indicator when the hero is resumed.
+    const remainingMs = useRef(SLIDE_DURATION_MS);
+    const timedIndex = useRef(-1);
     useEffect(() => {
-        if (!movies || movies.length <= 1) return;
-
-        const interval = setInterval(() => {
+        if (timedIndex.current !== activeIndex) {
+            timedIndex.current = activeIndex;
+            remainingMs.current = SLIDE_DURATION_MS;
+        }
+        if (movies.length <= 1 || paused) return;
+        const startedAt = Date.now();
+        const timer = setTimeout(() => {
             setActiveIndex(prev => (prev + 1) % movies.length);
-        }, 8000);
+        }, remainingMs.current);
+        return () => {
+            clearTimeout(timer);
+            remainingMs.current = Math.max(400, remainingMs.current - (Date.now() - startedAt));
+        };
+    }, [movies.length, activeIndex, paused]);
 
-        return () => clearInterval(interval);
+    // Title artwork for every slide, fetched up front so slide changes are instant
+    useEffect(() => {
+        let active = true;
+        movies.forEach((m) => {
+            const id = idOf(m);
+            if (!id) return;
+            Promise.race([
+                tmdb.getTitleLogo(isTvItem(m) ? 'tv' : 'movie', id),
+                new Promise(resolve => setTimeout(() => resolve(null), LOGO_TIMEOUT_MS)),
+            ]).then((url) => {
+                if (active) setLogos(prev => (id in prev && prev[id] ? prev : { ...prev, [id]: url }));
+            });
+        });
+        return () => { active = false; };
     }, [movies]);
 
+    // Warm the next backdrop so the crossfade never shows a half-loaded image
+    useEffect(() => {
+        const next = movies[(activeIndex + 1) % movies.length];
+        if (movies.length > 1 && next?.backdrop_path) {
+            const img = new Image();
+            img.src = backdrop(next.backdrop_path, 'w1280');
+        }
+    }, [movies, activeIndex]);
+
     const movie = movies[activeIndex];
-    const isTv = movie ? (getContentType(movie) === 'tv' || Number(movie.id || movie.contentId) === 220102) : false;
+    const isTv = isTvItem(movie);
 
     useEffect(() => {
         if (!movie) return;
@@ -53,7 +111,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies }) => {
 
         const fetchDetails = async () => {
             try {
-                const id = movie.id || movie.contentId;
+                const id = idOf(movie);
                 if (!id) return;
                 let data;
                 if (isTv) {
@@ -71,7 +129,6 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies }) => {
                 }
                 if (isMounted) {
                     setDetailedMovie(data);
-                    // Fetch trailer
                     const videos = data?.videos?.results || [];
                     const trailer = videos.find(v => v.type === 'Trailer' && v.site === 'YouTube') || videos.find(v => v.site === 'YouTube');
                     if (trailer) setTrailerKey(trailer.key);
@@ -87,240 +144,230 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies }) => {
 
     if (!movie) {
         return (
-            <div className="w-full h-[95vh] bg-[#0B0B0F] flex items-center justify-center relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent z-10" />
-                {/* Animated skeleton shimmer */}
-                <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a1a] to-[#0a0a0a]">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-shimmer" />
+            <div className="w-full h-[85vh] sm:h-[100vh] bg-[#060608] relative overflow-hidden">
+                <div className="absolute inset-0 skeleton !rounded-none !bg-[#0c0c10]" />
+                <div className="absolute inset-x-0 bottom-0 h-[60vh] bg-gradient-to-t from-[#060608] to-transparent" />
+                <div className="absolute left-[4%] md:left-[5%] bottom-[22vh] sm:bottom-[18vh] space-y-4 w-[min(80%,520px)]">
+                    <div className="skeleton h-16 sm:h-24 w-3/4 !rounded-xl" />
+                    <div className="skeleton h-4 w-1/2" />
+                    <div className="skeleton h-4 w-full" />
+                    <div className="skeleton h-12 w-40 !rounded-xl" />
                 </div>
-                <div className="w-16 h-16 border-4 border-[#E50914] border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(229,9,20,0.5)] z-20" />
             </div>
         );
     }
 
+    const movieId = idOf(movie);
     const title = movie.title || movie.name || movie.original_title || movie.original_name;
     const description = movie.overview;
-    const backdropUrl = movie.backdrop_path
-        ? `https://image.tmdb.org/t/p/original${movie.backdrop_path}`
-        : null;
+    const logo = logos[movieId];
+    const logoPending = !(movieId in logos);
 
-    // Extract genres
     const genres = detailedMovie?.genres?.slice(0, 3) ||
         (movie.genre_ids?.slice(0, 3).map(id => ({ id, name: GENRE_NAMES[id] })).filter(g => g.name)) || [];
+    const year = (movie.release_date || movie.first_air_date)?.substring(0, 4);
+    const length = isTv
+        ? (detailedMovie?.number_of_seasons ? `${detailedMovie.number_of_seasons} saison${detailedMovie.number_of_seasons > 1 ? 's' : ''}` : null)
+        : (detailedMovie?.runtime ? formatRuntime(detailedMovie.runtime) : null);
+    const facts = [year, length, ...genres.map(g => g.name)].filter(Boolean);
 
     return (
-        <div className="relative w-full h-[85vh] sm:h-[100vh] overflow-hidden text-white gpu-accelerated bg-black animate-fade-in" key={movie.id || movie.contentId}>
-            {/* Base Background Image with slow zoom */}
-            <AnimatePresence mode="wait">
+        <div
+            className="relative w-full h-[85vh] sm:h-[100vh] overflow-hidden text-white bg-[#060608]"
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
+            {/* Backdrops crossfade into each other — the frame never cuts to black */}
+            <AnimatePresence initial={false}>
                 <motion.div
-                    key={movie.id || movie.contentId}
+                    key={movieId}
                     className="absolute inset-0 z-0"
-                    initial={{ scale: 1.1, opacity: 0 }}
-                    animate={{ scale: 1.05, opacity: 1 }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    transition={{ duration: 1.2, ease: "easeOut" }}
+                    transition={{ duration: 1.1, ease: 'easeInOut' }}
                 >
-                    <img
-                        src={backdropUrl}
-                        alt={title}
-                        className="w-full h-full object-cover origin-center opacity-80 animate-hero-pan"
-                        fetchpriority="high"
-                        decoding="async"
-                    />
+                    {movie.backdrop_path && (
+                        <img
+                            src={backdrop(movie.backdrop_path, 'w1280')}
+                            srcSet={`${backdrop(movie.backdrop_path, 'w780')} 780w, ${backdrop(movie.backdrop_path, 'w1280')} 1280w, ${backdrop(movie.backdrop_path, 'original')} 2560w`}
+                            sizes="100vw"
+                            alt=""
+                            className="w-full h-full object-cover object-[center_20%] animate-hero-pan"
+                            // eslint-disable-next-line react/no-unknown-property -- React 18 only forwards the lowercase attribute
+                            fetchpriority="high"
+                            decoding="async"
+                        />
+                    )}
                 </motion.div>
             </AnimatePresence>
 
-            {/* Cinematic Gradients */}
-            <div className="absolute inset-0 z-0 pointer-events-none">
-                <div className="absolute inset-0 bg-gradient-to-r from-black via-black/55 to-transparent w-[90%] sm:w-[65%]" />
-                <div className="absolute inset-x-0 bottom-0 h-[70vh] bg-gradient-to-t from-[#060608] via-[#060608]/80 to-transparent" />
-                <div className="absolute inset-x-0 top-0 h-[20vh] bg-gradient-to-b from-black/70 to-transparent" />
-                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_50%,transparent_0%,rgba(0,0,0,0.55)_100%)]" />
+            {/* Cinematic grade: left scrim for legibility, deep fade into the page */}
+            <div className="absolute inset-0 z-[1] pointer-events-none">
+                <div className="absolute inset-y-0 left-0 w-full sm:w-[70%] bg-gradient-to-r from-[#060608]/95 via-[#060608]/55 to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 h-[55vh] bg-gradient-to-t from-[#060608] via-[#060608]/70 to-transparent" />
+                <div className="absolute inset-x-0 top-0 h-[22vh] bg-gradient-to-b from-[#060608]/80 to-transparent" />
             </div>
 
-            {/* Ambient bokeh */}
-            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden hidden sm:block">
+            <div className="relative z-10 h-full flex flex-col justify-end px-[4%] md:px-[5%] pb-[22vh] sm:pb-[17vh]">
                 <motion.div
-                    className="absolute top-1/4 right-1/4 w-[30vw] h-[30vw] bg-white/5 rounded-full blur-[120px]"
-                    animate={{ x: [0, 50, -20, 0], y: [0, -40, 30, 0] }}
-                    transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                />
-                <motion.div
-                    className="absolute bottom-1/3 right-1/2 w-[20vw] h-[20vw] bg-red-600/10 rounded-full blur-[100px]"
-                    animate={{ scale: [1, 1.2, 0.9, 1], opacity: [0.5, 0.8, 0.5] }}
-                    transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-                />
-            </div>
-
-            <div className="relative z-10 h-full flex flex-col justify-end px-[4%] md:px-[5%] pb-[22vh] sm:pb-[15vh]">
-                <motion.div
-                    initial={{ opacity: 0, x: -30 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.5 }}
+                    key={movieId}
+                    initial="hidden"
+                    animate="show"
+                    variants={{ hidden: {}, show: { transition: { staggerChildren: 0.07, delayChildren: 0.15 } } }}
                     className="max-w-2xl lg:max-w-3xl"
                 >
-                    {/* Badge */}
+                    {/* Eyebrow */}
                     <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.8 }}
+                        variants={{ hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: EASE } } }}
                         className="flex items-center gap-3 mb-4 sm:mb-5 flex-wrap"
                     >
-                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/15 shadow-sm">
-                            <span className="text-[#E50914] font-black font-sans text-xl leading-none">A</span>
-                            <span className="text-white/90 font-bold tracking-[0.2em] text-[10px] sm:text-xs uppercase">
-                                {isTv ? 'SÉRIE' : 'FILM'} ALTYFLIX
-                            </span>
-                        </div>
-                        {activeIndex === 0 && (
-                            <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-[#E50914] to-[#B81D24] text-white px-3 py-1 rounded-full font-black text-[10px] sm:text-xs uppercase tracking-wider shadow-[0_4px_15px_rgba(229,9,20,0.4)]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                                <span>N° 1</span>
-                                <span className="font-medium normal-case text-white/90">
-                                    {isTv ? "des séries aujourd'hui" : "des films aujourd'hui"}
+                        <span className="flex items-center gap-2 text-[10px] sm:text-xs font-bold uppercase tracking-[0.28em] text-white/70">
+                            <span className="text-[#E50914] font-black text-base sm:text-lg leading-none tracking-normal">A</span>
+                            {isTv ? 'Série' : 'Film'}
+                        </span>
+                        {rankLabel && movies.length > 1 && (
+                            <span className="inline-flex items-center gap-2 text-[11px] sm:text-xs font-semibold text-white/90">
+                                <span className="grid place-items-center min-w-[26px] h-[26px] px-1 rounded-md bg-[#E50914] text-white font-black text-[11px] leading-none shadow-[0_4px_14px_rgba(229,9,20,0.45)]">
+                                    {activeIndex + 1}
                                 </span>
-                            </div>
+                                N° {activeIndex + 1} {rankLabel}
+                            </span>
                         )}
                     </motion.div>
 
-                    {/* Title */}
-                    <motion.h1
-                        initial={{ opacity: 0, scale: 0.95, filter: 'blur(10px)' }}
-                        animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-                        transition={{ duration: 1.2, delay: 0.2, ease: "easeOut" }}
-                        className="text-4xl sm:text-6xl md:text-7xl lg:text-[5.5rem] font-black mb-3 sm:mb-4 tracking-[-0.03em] uppercase leading-[0.9] text-white font-sans"
-                        style={{ textShadow: '0 10px 40px rgba(0,0,0,0.9), 0 2px 10px rgba(0,0,0,0.8)' }}
-                    >
-                        {title}
-                    </motion.h1>
-
-                    {/* Meta info */}
+                    {/* Title: official artwork when it exists, type otherwise */}
                     <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 1 }}
-                        className="flex items-center gap-3 sm:gap-4 text-white/80 font-medium text-sm sm:text-base mb-4 drop-shadow-lg flex-wrap"
+                        variants={{ hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: { duration: 0.8, ease: EASE } } }}
+                        className="mb-4 sm:mb-6"
+                    >
+                        {logo ? (
+                            <>
+                                <h1 className="sr-only">{title}</h1>
+                                <img
+                                    src={logo}
+                                    alt=""
+                                    className="max-h-[16vh] sm:max-h-[24vh] max-w-[78%] sm:max-w-[min(520px,42vw)] w-auto object-contain object-left-bottom"
+                                    style={{ filter: 'drop-shadow(0 6px 24px rgba(0,0,0,0.65))' }}
+                                    onError={() => setLogos(prev => ({ ...prev, [movieId]: null }))}
+                                    decoding="async"
+                                />
+                            </>
+                        ) : (
+                            <h1
+                                className={`${titleSize(title)} font-black font-display tracking-[-0.035em] leading-[0.92] text-white text-balance transition-opacity duration-500 ${logoPending ? 'opacity-0' : 'opacity-100'}`}
+                                style={{ textShadow: '0 8px 40px rgba(0,0,0,0.7)' }}
+                            >
+                                {title}
+                            </h1>
+                        )}
+                    </motion.div>
+
+                    {/* Facts line — only real data, quietly separated */}
+                    <motion.div
+                        variants={{ hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: EASE } } }}
+                        className="flex items-center gap-x-2.5 gap-y-1 text-[13px] sm:text-[15px] font-medium text-white/75 mb-3 sm:mb-4 flex-wrap"
                     >
                         {movie.vote_average > 0 && (
-                            <span className="inline-flex items-center gap-1 text-[#46d369] font-black text-xs sm:text-sm bg-[#46d369]/10 border border-[#46d369]/30 px-2.5 py-0.5 rounded-full drop-shadow-[0_0_12px_rgba(70,211,105,0.4)]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#46d369] animate-pulse" />
-                                {Math.round(movie.vote_average * 10)}% Recommandé
+                            <span className="font-bold text-[#46d369]">
+                                {Math.round(movie.vote_average * 10)}% recommandé
                             </span>
                         )}
-                        <span className="font-semibold text-white/90">{movie.release_date?.substring(0, 4) || movie.first_air_date?.substring(0, 4) || '2025'}</span>
-                        <span className="border border-white/20 px-2 py-0.5 rounded-full text-[11px] bg-white/[0.06] backdrop-blur-md font-bold text-white/80">16+</span>
-                        <span className="font-medium text-white/80">
-                            {isTv
-                                ? (detailedMovie?.number_of_seasons ? `${detailedMovie.number_of_seasons} Saison${detailedMovie.number_of_seasons > 1 ? 's' : ''}` : 'Saisons')
-                                : (detailedMovie?.runtime ? formatRuntime(detailedMovie.runtime) : '...')}
-                        </span>
-                        <span className="border border-white/25 px-2 py-0.5 rounded-full text-[10px] bg-white/[0.08] backdrop-blur-md font-black tracking-widest uppercase text-white/90 hidden sm:inline-block">4K Ultra HD</span>
-                        <span className="border border-white/20 px-2 py-0.5 rounded-full text-[10px] bg-white/[0.06] backdrop-blur-md font-bold tracking-wider uppercase text-white/70 hidden md:inline-block">HDR10+</span>
+                        {facts.map((fact, i) => (
+                            <span key={fact} className="flex items-center gap-2.5">
+                                {(i > 0 || movie.vote_average > 0) && <span aria-hidden="true" className="w-[3px] h-[3px] rounded-full bg-white/40" />}
+                                {fact}
+                            </span>
+                        ))}
                     </motion.div>
 
-                    {/* Genre badges */}
-                    {genres.length > 0 && (
-                        <motion.div
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 1.05 }}
-                            className="flex items-center gap-2 mb-5 flex-wrap"
+                    {description && (
+                        <motion.p
+                            variants={{ hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: EASE } } }}
+                            className="text-sm sm:text-[1.05rem] text-white/85 mb-6 sm:mb-8 max-w-[92%] sm:max-w-xl leading-relaxed line-clamp-2 sm:line-clamp-3"
+                            style={{ textShadow: '0 1px 12px rgba(0,0,0,0.6)' }}
                         >
-                            {genres.map((g, i) => (
-                                <span
-                                    key={g.id || i}
-                                    className="px-3 py-1 rounded-full text-xs font-semibold bg-white/[0.08] hover:bg-white/[0.15] backdrop-blur-xl border border-white/15 text-white/90 transition-colors"
-                                >
-                                    {g.name}
-                                </span>
-                            ))}
-                        </motion.div>
+                            {description}
+                        </motion.p>
                     )}
 
-                    {/* Description */}
-                    <motion.p
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.8, delay: 1.1, ease: "easeOut" }}
-                        className="text-sm sm:text-[1.1rem] text-white/90 mb-6 sm:mb-8 max-w-[90%] sm:max-w-2xl font-normal leading-snug drop-shadow-xl line-clamp-2 sm:line-clamp-3 font-sans"
-                        style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
-                    >
-                        {description}
-                    </motion.p>
-
-                    {/* Buttons */}
+                    {/* Actions */}
                     <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.8, delay: 1.3, ease: "easeOut" }}
-                        className="flex items-center gap-3 sm:gap-4 flex-wrap"
+                        variants={{ hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: EASE } } }}
+                        className="flex items-center gap-2.5 sm:gap-3 flex-wrap"
                     >
-                        {/* Play button */}
                         <motion.button
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
+                            whileHover={{ scale: 1.03 }}
+                            whileTap={{ scale: 0.97 }}
                             onClick={() => play(movie)}
-                            className="group relative flex items-center justify-center gap-2.5 sm:gap-3 bg-white text-black px-6 sm:px-8 py-3.5 sm:py-3.5 rounded-2xl text-base sm:text-lg font-black tracking-wide overflow-hidden min-w-[130px] sm:min-w-[160px] shadow-[0_10px_30px_rgba(255,255,255,0.25)] hover:shadow-[0_15px_40px_rgba(255,255,255,0.4)] transition-all duration-300"
+                            className="flex items-center justify-center gap-2.5 bg-white text-black pl-5 pr-7 sm:pl-6 sm:pr-8 h-12 sm:h-[52px] rounded-xl text-base sm:text-lg font-bold hover:bg-white/85 transition-colors duration-200 shadow-[0_10px_40px_rgba(0,0,0,0.45)]"
                         >
-                            <div className="absolute inset-0 w-1/3 h-full bg-gradient-to-r from-transparent via-black/10 to-transparent -translate-x-full group-hover:translate-x-[300%] transition-transform duration-700" />
-                            <svg className="w-5 h-5 sm:w-6 sm:h-6 fill-current flex-shrink-0" viewBox="0 0 24 24">
+                            <svg className="w-6 h-6 sm:w-7 sm:h-7 fill-current flex-shrink-0" viewBox="0 0 24 24">
                                 <path d="M8 5v14l11-7z" />
                             </svg>
                             <span>Lecture</span>
                         </motion.button>
 
-                        {/* Trailer button (if available) */}
-                        <AnimatePresence>
-                            {trailerKey && (
-                                <motion.button
-                                    initial={{ opacity: 0, x: -10 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0 }}
-                                    whileHover={{ scale: 1.05 }}
-                                    whileTap={{ scale: 0.95 }}
-                                    onClick={() => setShowTrailer(true)}
-                                    className="flex items-center justify-center gap-2.5 sm:gap-3 bg-white/10 hover:bg-white/20 backdrop-blur-xl border border-white/20 hover:border-white/40 text-white px-5 sm:px-7 py-3.5 sm:py-3.5 rounded-2xl text-base sm:text-lg font-semibold transition-all duration-300 shadow-[0_8px_25px_rgba(0,0,0,0.5)] hover:shadow-[0_12px_35px_rgba(0,0,0,0.7)] min-w-[130px]"
-                                >
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                    <span>Bande-annonce</span>
-                                </motion.button>
-                            )}
-                        </AnimatePresence>
-
-                        {/* More info button */}
                         <motion.button
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => navigate(`/${isTv ? 'tv' : 'movie'}/${movie.id || movie.contentId}`)}
-                            className="flex items-center justify-center gap-2.5 sm:gap-3 bg-white/10 hover:bg-white/20 backdrop-blur-xl border border-white/20 hover:border-white/40 text-white px-5 sm:px-7 py-3.5 sm:py-3.5 rounded-2xl text-base sm:text-lg font-semibold transition-all duration-300 shadow-[0_8px_25px_rgba(0,0,0,0.5)] hover:shadow-[0_12px_35px_rgba(0,0,0,0.7)] min-w-[130px] sm:min-w-[160px]"
+                            whileHover={{ scale: 1.03 }}
+                            whileTap={{ scale: 0.97 }}
+                            onClick={() => navigate(`/${isTv ? 'tv' : 'movie'}/${movieId}`)}
+                            className="flex items-center justify-center gap-2.5 bg-white/[0.14] hover:bg-white/[0.22] backdrop-blur-xl border border-white/15 text-white px-5 sm:px-7 h-12 sm:h-[52px] rounded-xl text-base sm:text-lg font-semibold transition-colors duration-200"
                         >
-                            <svg className="w-5 h-5 text-white/90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             <span>{"Plus d'infos"}</span>
                         </motion.button>
+
+                        <AnimatePresence>
+                            {trailerKey && (
+                                <motion.button
+                                    initial={{ opacity: 0, scale: 0.8 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.8 }}
+                                    whileHover={{ scale: 1.06 }}
+                                    whileTap={{ scale: 0.94 }}
+                                    onClick={() => setShowTrailer(true)}
+                                    aria-label="Voir la bande-annonce"
+                                    title="Bande-annonce"
+                                    className="grid place-items-center w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full border border-white/30 hover:border-white bg-black/30 hover:bg-white/10 backdrop-blur-xl text-white transition-colors duration-200"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                </motion.button>
+                            )}
+                        </AnimatePresence>
                     </motion.div>
                 </motion.div>
             </div>
 
-            {/* Carousel Indicators on the bottom right */}
+            {/* Slide indicators double as the auto-advance timer */}
             {movies.length > 1 && (
-                <div className="absolute right-[4%] md:right-[5%] bottom-[22vh] sm:bottom-[15vh] z-20 flex items-center gap-2 bg-black/40 backdrop-blur-xl px-3 py-1.5 rounded-full border border-white/10 shadow-lg">
-                    {movies.map((m, idx) => (
-                        <button
-                            key={m.id || idx}
-                            onClick={() => setActiveIndex(idx)}
-                            aria-label={`Afficher le film ${idx + 1}`}
-                            className={`transition-all duration-300 rounded-full ${
-                                activeIndex === idx
-                                    ? 'w-6 h-1.5 bg-[#E50914] shadow-[0_0_10px_rgba(229,9,20,0.9)]'
-                                    : 'w-1.5 h-1.5 bg-white/40 hover:bg-white/80'
-                            }`}
-                        />
-                    ))}
+                <div className="absolute right-[4%] md:right-[5%] bottom-[22vh] sm:bottom-[17vh] z-20 flex items-center gap-1.5">
+                    {movies.map((m, idx) => {
+                        const isActive = activeIndex === idx;
+                        return (
+                            <button
+                                key={idOf(m) || idx}
+                                onClick={() => setActiveIndex(idx)}
+                                aria-label={`Afficher le titre ${idx + 1}`}
+                                aria-current={isActive ? 'true' : undefined}
+                                className="group py-3"
+                            >
+                                <span className={`block h-[3px] rounded-full overflow-hidden transition-all duration-500 ${isActive ? 'w-10 bg-white/25' : 'w-4 bg-white/30 group-hover:bg-white/60'}`}>
+                                    {isActive && (
+                                        <span
+                                            key={idx}
+                                            className="block h-full w-full bg-white origin-left hero-progress"
+                                            style={{ animationDuration: `${SLIDE_DURATION_MS}ms`, animationPlayState: paused ? 'paused' : 'running' }}
+                                        />
+                                    )}
+                                </span>
+                            </button>
+                        );
+                    })}
                 </div>
             )}
 
@@ -335,11 +382,11 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies }) => {
                         onClick={() => setShowTrailer(false)}
                     >
                         <motion.div
-                            initial={{ scale: 0.9, opacity: 0 }}
+                            initial={{ scale: 0.94, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            transition={{ type: 'spring', damping: 25 }}
-                            className="relative w-full max-w-5xl aspect-video mx-4 rounded-2xl overflow-hidden shadow-[0_40px_80px_rgba(0,0,0,0.8)]"
+                            exit={{ scale: 0.94, opacity: 0 }}
+                            transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+                            className="relative w-full max-w-5xl aspect-video mx-4 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_40px_100px_rgba(0,0,0,0.85)]"
                             onClick={e => e.stopPropagation()}
                         >
                             <iframe
@@ -353,6 +400,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies }) => {
                             />
                             <button
                                 onClick={() => setShowTrailer(false)}
+                                aria-label="Fermer"
                                 className="absolute top-3 right-3 w-10 h-10 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/80 transition-all"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

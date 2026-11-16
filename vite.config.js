@@ -13,6 +13,9 @@ const autoBackendPlugin = () => ({
       const proc = spawn('node', ['server/server-vf-api.cjs'], {
         cwd: process.cwd(),
         stdio: 'inherit',
+        // The proxy below targets :3000. Without this the API inherits Vite's own
+        // PORT (set by some launchers) and listens where nothing looks for it.
+        env: { ...process.env, PORT: '3000' },
       });
       process.on('exit', () => proc.kill());
     });
@@ -87,7 +90,7 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globIgnores: ['**/hls-*.js', '**/dash.all.min-*.js', '**/artplayer-*.js'],
+        globIgnores: ['**/hls-*.js'],
         globPatterns: ['**/*.{js,css,html,ico,svg}'],
         runtimeCaching: [
           {
@@ -112,14 +115,6 @@ export default defineConfig({
       }
     })
   ],
-  css: {
-    preprocessorOptions: {
-      sass: {
-        api: 'modern-compiler',
-        silenceDeprecations: ['import', 'global-builtin', 'color-functions', 'mixed-decls'],
-      },
-    },
-  },
   build: {
     chunkSizeWarningLimit: 1000,
     rollupOptions: {

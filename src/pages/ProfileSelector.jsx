@@ -1,177 +1,305 @@
-﻿// Netflix-Faithful Profile Selector
-// Centered white logo, "Qui regarde ?" title, avatar grid with names below,
-// hover shows white border, clicking enters with scale transition
-// "Gérer les profils" button at the bottom
+﻿// Profile picker: animated entrance, pointer-tilt avatars, and a short
+// "welcome" sequence (the avatar glides to the centre while a ring draws
+// around it) before entering the catalogue.
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '../contexts/ProfileContext';
 import { DEFAULT_AVATARS } from '../config/constants';
 import { playHaptic, playSound } from '../utils/interactions';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useMotionValue, useSpring, useTransform } from 'framer-motion';
 import { Helmet } from 'react-helmet-async';
 import PinModal from '../components/common/PinModal';
 import ALTYFLIXLogo from '../components/common/AltyflixLogo';
 import AvatarSelector from '../components/settings/AvatarSelector';
+import Icon from '../components/ui/Icons';
+import OrbitBackdrop from '../components/ui/OrbitBackdrop';
 import { useTranslation } from '../hooks/useTranslation';
 import { sanitizeReturnUrl } from '../utils/helpers';
 
-// ── Profile Card (Premium Redesign) ──────────────────
-const ProfileAvatar = ({ profile, onClick, manageMode, onDelete, isSelected, anySelected }) => {
-    const [hovered, setHovered] = useState(false);
-    const [failedAvatar, setFailedAvatar] = useState(null);
+const EASE = [0.16, 1, 0.3, 1];
+const SPRING = { type: 'spring', stiffness: 260, damping: 24 };
+const WELCOME_MS = 1500;
+const CARD = 'clamp(112px, 15vw, 172px)';
+const MAX_PROFILES = 5;
+
+const prefersReducedMotion = () =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const Avatar = ({ profile, className = '' }) => {
+    const [failed, setFailed] = useState(null);
+    return profile.avatar && profile.avatar !== failed ? (
+        <img src={profile.avatar} alt="" draggable="false" className={`h-full w-full object-cover ${className}`} onError={() => setFailed(profile.avatar)} />
+    ) : (
+        <span aria-hidden="true" className={`grid h-full w-full place-items-center bg-[#53212c] font-display text-4xl font-bold text-white ${className}`}>
+            {Array.from(profile.name?.trim() || '?')[0]}
+        </span>
+    );
+};
+
+// ── Profile card ─────────────────────────────────────
+const ProfileCard = ({ profile, index, onClick, manageMode, onDelete, isSelected, anySelected }) => {
+    // Pointer position inside the card, from -0.5 to 0.5 on each axis
+    const px = useMotionValue(0);
+    const py = useMotionValue(0);
+    const rotateX = useSpring(useTransform(py, [-0.5, 0.5], [11, -11]), { stiffness: 300, damping: 22 });
+    const rotateY = useSpring(useTransform(px, [-0.5, 0.5], [-11, 11]), { stiffness: 300, damping: 22 });
+    const glareX = useTransform(px, [-0.5, 0.5], ['0%', '100%']);
+    const glareY = useTransform(py, [-0.5, 0.5], ['0%', '100%']);
+    const glare = useTransform([glareX, glareY], ([x, y]) => `radial-gradient(circle at ${x} ${y}, rgba(255,255,255,0.28), transparent 55%)`);
+
+    const interactive = !manageMode && !anySelected;
+
+    const handlePointerMove = (e) => {
+        if (!interactive || e.pointerType !== 'mouse') return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        px.set((e.clientX - rect.left) / rect.width - 0.5);
+        py.set((e.clientY - rect.top) / rect.height - 0.5);
+    };
+    const resetTilt = () => { px.set(0); py.set(0); };
 
     return (
         <motion.div
-            className="flex flex-col items-center gap-4 cursor-pointer select-none group/card"
-            style={{ width: 'clamp(130px, 16vw, 180px)' }}
-            animate={
-                anySelected
-                    ? (isSelected ? { scale: 1.06, opacity: 1 } : { scale: 0.94, opacity: 0 })
-                    : { scale: 1, opacity: 1 }
-            }
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="relative flex flex-col items-center gap-4"
+            style={{ width: CARD }}
+            initial={{ opacity: 0, y: 36, scale: 0.86, filter: 'blur(8px)' }}
+            animate={anySelected
+                ? { opacity: 0, y: 0, scale: isSelected ? 1 : 0.9, filter: isSelected ? 'blur(0px)' : 'blur(6px)' }
+                : { opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+            transition={{ ...SPRING, delay: anySelected ? 0 : 0.12 + index * 0.07 }}
         >
+            {/* Gentle sway signals that cards are editable */}
             <motion.div
-                className="relative origin-center w-[clamp(120px,15vw,168px)] h-[clamp(120px,15vw,168px)] rounded-2xl overflow-visible group"
-                whileHover={{ scale: manageMode || anySelected ? 1 : 1.08, y: manageMode || anySelected ? 0 : -6 }}
-                whileTap={{ scale: manageMode || anySelected ? 1 : 0.96 }}
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                style={{
-                    filter: isSelected
-                        ? 'drop-shadow(0 0 40px rgba(229,9,20,0.65)) drop-shadow(0 10px 30px rgba(0,0,0,0.8))'
-                        : (hovered && !manageMode ? 'drop-shadow(0 20px 40px rgba(229,9,20,0.35)) drop-shadow(0 8px 20px rgba(0,0,0,0.7))' : 'drop-shadow(0 10px 25px rgba(0,0,0,0.6))'),
-                }}
-                onClick={() => {
-                    if (anySelected) return;
-                    playHaptic('medium');
-                    onClick();
-                }}
-                onMouseEnter={() => {
-                    if (!manageMode && !anySelected) { playSound('hover'); setHovered(true); }
-                }}
-                onMouseLeave={() => setHovered(false)}
+                className="relative"
+                style={{ width: CARD, height: CARD, perspective: 700 }}
+                animate={manageMode ? { rotate: [-1.4, 1.4] } : { rotate: 0 }}
+                transition={manageMode
+                    ? { duration: 0.22 + (index % 3) * 0.03, repeat: Infinity, repeatType: 'mirror', ease: 'easeInOut' }
+                    : { duration: 0.2 }}
             >
-                {/* Glow ring on hover or selected */}
-                <div className={`absolute -inset-[3px] rounded-[18px] transition-all duration-400 pointer-events-none ${
-                    isSelected
-                        ? 'bg-gradient-to-br from-[#E50914] via-[#E50914]/40 to-transparent opacity-100 ring-2 ring-white/60'
-                        : (hovered && !manageMode
-                            ? 'bg-gradient-to-br from-white/80 via-white/20 to-transparent opacity-100'
-                            : 'opacity-0'
-                        )
-                }`} />
+                <motion.button
+                    type="button"
+                    aria-label={manageMode ? `Modifier le profil ${profile.name}` : `Choisir le profil ${profile.name}`}
+                    className="group relative block h-full w-full rounded-[26%] outline-none"
+                    style={{ rotateX, rotateY, transformStyle: 'preserve-3d' }}
+                    initial="rest"
+                    animate="rest"
+                    whileHover={interactive ? 'hover' : 'rest'}
+                    whileFocus={interactive ? 'hover' : 'rest'}
+                    whileTap={interactive ? { scale: 0.95 } : undefined}
+                    variants={{ rest: { scale: 1, y: 0 }, hover: { scale: 1.07, y: -6 } }}
+                    transition={SPRING}
+                    onPointerMove={handlePointerMove}
+                    onPointerLeave={resetTilt}
+                    onPointerEnter={() => { if (interactive) playSound('hover'); }}
+                    onClick={() => {
+                        if (anySelected) return;
+                        playHaptic('medium');
+                        onClick();
+                    }}
+                >
+                    {/* Soft accent halo */}
+                    <motion.span
+                        aria-hidden="true"
+                        className="absolute -inset-5 rounded-full bg-[#E50914] blur-2xl"
+                        variants={{ rest: { opacity: 0, scale: 0.8 }, hover: { opacity: 0.28, scale: 1 } }}
+                        transition={{ duration: 0.4 }}
+                    />
 
-                {/* Avatar image */}
-                <div className="relative w-full h-full rounded-2xl overflow-hidden">
-                    {profile.avatar && profile.avatar !== failedAvatar ? (
-                        <img
-                            src={profile.avatar}
-                            alt={profile.name}
-                            className="w-full h-full object-cover"
-                            onError={() => setFailedAvatar(profile.avatar)}
+                    <span className="relative block h-full w-full overflow-hidden rounded-[26%] bg-[#101016] shadow-[0_18px_40px_rgba(0,0,0,0.6)] ring-1 ring-inset ring-white/10">
+                        {/* The selected avatar is handed over to the welcome stage (shared layoutId) */}
+                        {isSelected ? null : (
+                            <motion.span layoutId={`avatar-${profile.id}`} className="block h-full w-full overflow-hidden rounded-[26%]">
+                                <Avatar profile={profile} />
+                            </motion.span>
+                        )}
+                        <motion.span aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" style={{ background: glare }} />
+
+                        <AnimatePresence>
+                            {manageMode && (
+                                <motion.span
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="absolute inset-0 grid place-items-center bg-black/60 backdrop-blur-[2px]"
+                                >
+                                    <motion.span
+                                        initial={{ scale: 0, rotate: -40 }}
+                                        animate={{ scale: 1, rotate: 0 }}
+                                        exit={{ scale: 0 }}
+                                        transition={{ ...SPRING, delay: index * 0.04 }}
+                                        className="grid h-11 w-11 place-items-center rounded-full bg-white text-black"
+                                    >
+                                        <Icon name="edit" className="h-5 w-5" strokeWidth={2} />
+                                    </motion.span>
+                                </motion.span>
+                            )}
+                        </AnimatePresence>
+                    </span>
+
+                    {/* Outline that draws itself around the avatar */}
+                    <svg aria-hidden="true" viewBox="0 0 100 100" className="pointer-events-none absolute -inset-[5px] h-[calc(100%+10px)] w-[calc(100%+10px)] overflow-visible">
+                        <motion.rect
+                            x="1.5" y="1.5" width="97" height="97" rx="27"
+                            fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"
+                            variants={{ rest: { pathLength: 0, opacity: 0 }, hover: { pathLength: 1, opacity: 1 } }}
+                            transition={{ pathLength: { duration: 0.55, ease: EASE }, opacity: { duration: 0.15 } }}
                         />
-                    ) : (
-                        <span aria-hidden="true" className="grid h-full w-full place-items-center bg-[#53212c] text-4xl font-bold text-white">
-                            {Array.from(profile.name?.trim() || '?')[0]}
+                    </svg>
+
+                    {profile.pin && !manageMode && (
+                        <span className="absolute -bottom-1.5 -right-1.5 grid h-8 w-8 place-items-center rounded-full border border-white/15 bg-[#14141b] text-white shadow-lg" title="Protégé par un code PIN">
+                            <Icon name="lock" className="h-4 w-4" />
                         </span>
                     )}
+                </motion.button>
 
-                    {/* Hover overlay */}
-                    <div className={`absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-white/5 pointer-events-none transition-opacity duration-400 ${hovered && !manageMode && !anySelected ? 'opacity-100' : 'opacity-0'}`} />
-
-                    {/* Manage mode edit overlay */}
+                <AnimatePresence>
                     {manageMode && (
-                        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center transition-all duration-300 hover:bg-black/50 border-[3px] border-white/20 rounded-2xl">
-                            <svg className="w-9 h-9 text-white drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                        </div>
+                        <motion.button
+                            type="button"
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            exit={{ scale: 0 }}
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.9 }}
+                            transition={SPRING}
+                            onClick={onDelete}
+                            aria-label={`Supprimer le profil ${profile.name}`}
+                            className="absolute -right-2 -top-2 z-10 grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-[#14141b] text-white shadow-lg transition-colors hover:border-[#E50914] hover:bg-[#E50914]"
+                        >
+                            <Icon name="trash" className="h-4 w-4" />
+                        </motion.button>
                     )}
-
-                    {/* PIN lock indicator */}
-                    {profile.pin && !manageMode && (
-                        <div className="absolute bottom-2 right-2 w-7 h-7 bg-black/80 backdrop-blur-md rounded-full flex items-center justify-center border border-white/20 shadow-md">
-                            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                            </svg>
-                        </div>
-                    )}
-                </div>
-
-                {/* Delete button (manage mode) */}
-                {manageMode && (
-                    <button
-                        onClick={e => { e.stopPropagation(); onDelete(); }}
-                        className="absolute -top-3 -right-3 w-8 h-8 bg-black border-2 border-[#444] rounded-full flex items-center justify-center shadow-lg hover:bg-red-600 hover:border-red-600 hover:scale-110 transition-all z-10"
-                    >
-                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    </button>
-                )}
+                </AnimatePresence>
             </motion.div>
 
-            {/* Name or Welcome greeting */}
-            <div className="text-center">
-                <motion.p
-                    animate={isSelected ? { scale: 1.05, y: -2 } : { scale: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="text-base sm:text-lg font-semibold font-sans transition-all duration-400 tracking-wide leading-tight"
-                    style={{ color: (hovered || isSelected) && !manageMode ? 'white' : 'rgba(180,180,180,0.9)' }}
-                >
-                    {isSelected ? `Bienvenue, ${profile.name}` : profile.name}
-                    {profile.isKid && !isSelected && <span className="block text-[10px] text-blue-400 font-medium uppercase tracking-widest mt-0.5">Enfants</span>}
-                </motion.p>
-            </div>
+            <p className="max-w-full truncate text-center text-base font-semibold text-white/70 sm:text-lg">
+                {profile.name}
+                {profile.isKid && (
+                    <span className="mt-1 flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-[0.18em] text-sky-300">
+                        <Icon name="kid" className="h-3 w-3" strokeWidth={2} /> Enfants
+                    </span>
+                )}
+            </p>
         </motion.div>
     );
 };
 
-
-// ── Add Profile Card ──────────────────────────────────
-const AddProfileCard = ({ onClick }) => {
-    const [hovered, setHovered] = useState(false);
-    return (
-        <div
-            className="flex flex-col items-center gap-4 cursor-pointer select-none"
-            style={{ width: 'clamp(130px, 16vw, 180px)' }}
+// ── Add profile ──────────────────────────────────────
+const AddProfileCard = ({ index, onClick, hidden }) => (
+    <motion.div
+        className="flex flex-col items-center gap-4"
+        style={{ width: CARD }}
+        initial={{ opacity: 0, y: 36, scale: 0.86 }}
+        animate={hidden ? { opacity: 0, scale: 0.9 } : { opacity: 1, y: 0, scale: 1 }}
+        transition={{ ...SPRING, delay: hidden ? 0 : 0.12 + index * 0.07 }}
+    >
+        <motion.button
+            type="button"
+            aria-label="Ajouter un profil"
             onClick={onClick}
+            onPointerEnter={() => playSound('hover')}
+            className="relative grid place-items-center rounded-[26%] text-white/45 outline-none"
+            style={{ width: CARD, height: CARD }}
+            initial="rest"
+            animate="rest"
+            whileHover="hover"
+            whileFocus="hover"
+            whileTap={{ scale: 0.95 }}
+            variants={{ rest: { scale: 1, y: 0 }, hover: { scale: 1.07, y: -6 } }}
+            transition={SPRING}
         >
-            <motion.div
-                className="w-[clamp(120px,15vw,168px)] h-[clamp(120px,15vw,168px)] flex items-center justify-center rounded-2xl border-2 border-dashed transition-all duration-400"
-                whileHover={{ scale: 1.08, y: -6 }}
-                whileTap={{ scale: 0.95 }}
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                style={{
-                    borderColor: hovered ? 'rgba(255,255,255,0.7)' : 'rgba(120,120,120,0.4)',
-                    background: hovered ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.02)',
-                    filter: hovered ? 'drop-shadow(0 20px 40px rgba(255,255,255,0.1))' : 'none',
-                }}
-                onMouseEnter={() => { playSound('hover'); setHovered(true); }}
-                onMouseLeave={() => setHovered(false)}
+            {/* Dashed outline that starts marching on hover */}
+            <svg aria-hidden="true" viewBox="0 0 100 100" className="absolute inset-0 h-full w-full overflow-visible">
+                <motion.rect
+                    x="1.5" y="1.5" width="97" height="97" rx="25"
+                    fill="rgba(255,255,255,0.03)" strokeWidth="1.6" strokeDasharray="5 6" strokeLinecap="round"
+                    variants={{
+                        rest: { stroke: 'rgba(255,255,255,0.28)', strokeDashoffset: 0 },
+                        hover: { stroke: 'rgba(255,255,255,0.9)', strokeDashoffset: -44, transition: { strokeDashoffset: { duration: 1.6, repeat: Infinity, ease: 'linear' } } },
+                    }}
+                />
+            </svg>
+            <motion.span
+                className="relative"
+                variants={{ rest: { rotate: 0, color: 'rgba(255,255,255,0.45)' }, hover: { rotate: 90, color: 'rgba(255,255,255,1)' } }}
+                transition={SPRING}
             >
-                <svg
-                    className="w-10 h-10 transition-all duration-400"
-                    style={{ color: hovered ? 'white' : 'rgba(150,150,150,0.7)' }}
-                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
-                </svg>
-            </motion.div>
-            <p
-                className="text-base sm:text-lg font-semibold font-sans transition-colors duration-300 tracking-wide"
-                style={{ color: hovered ? 'white' : 'rgba(150,150,150,0.8)' }}
-            >
-                Ajouter
-            </p>
-        </div>
-    );
-};
+                <Icon name="plus" className="h-10 w-10" strokeWidth={1.4} />
+            </motion.span>
+        </motion.button>
+        <p className="text-base font-semibold text-white/50 sm:text-lg">Ajouter</p>
+    </motion.div>
+);
 
+// ── Welcome stage ────────────────────────────────────
+const WelcomeStage = ({ profile }) => (
+    <motion.div
+        role="status"
+        aria-live="polite"
+        className="fixed inset-0 z-[400] flex flex-col items-center justify-center gap-8 bg-[#060608]"
+        initial={{ backgroundColor: 'rgba(6,6,8,0)' }}
+        animate={{ backgroundColor: 'rgba(6,6,8,1)' }}
+        transition={{ duration: 0.45 }}
+    >
+        <div className="relative h-[clamp(150px,22vw,220px)] w-[clamp(150px,22vw,220px)]">
+            <motion.div
+                aria-hidden="true"
+                className="absolute -inset-10 rounded-full bg-[#E50914] blur-3xl"
+                initial={{ opacity: 0, scale: 0.6 }}
+                animate={{ opacity: [0, 0.35, 0.2], scale: 1 }}
+                transition={{ duration: 1.1, ease: 'easeOut' }}
+            />
+            <motion.span
+                layoutId={`avatar-${profile.id}`}
+                transition={{ type: 'spring', stiffness: 170, damping: 22 }}
+                className="absolute inset-[9%] block overflow-hidden rounded-full shadow-[0_24px_60px_rgba(0,0,0,0.7)]"
+            >
+                <Avatar profile={profile} />
+            </motion.span>
+
+            {/* Progress ring: a faint track, then the accent stroke draws once around */}
+            <svg aria-hidden="true" viewBox="0 0 100 100" className="absolute inset-0 h-full w-full -rotate-90">
+                <defs>
+                    <linearGradient id="welcome-ring" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor="#ff5a63" />
+                        <stop offset="100%" stopColor="#E50914" />
+                    </linearGradient>
+                </defs>
+                <circle cx="50" cy="50" r="47" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="1.2" />
+                <motion.circle
+                    cx="50" cy="50" r="47" fill="none" stroke="url(#welcome-ring)" strokeWidth="2.4" strokeLinecap="round"
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: (WELCOME_MS - 450) / 1000, delay: 0.3, ease: [0.65, 0, 0.35, 1] }}
+                />
+            </svg>
+        </div>
+
+        <div className="overflow-hidden text-center">
+            <motion.p
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.3, ease: EASE }}
+                className="text-[11px] font-bold uppercase tracking-[0.3em] text-white/45"
+            >
+                Bon retour
+            </motion.p>
+            <motion.p
+                initial={{ opacity: 0, y: 28 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.7, delay: 0.4, ease: EASE }}
+                className="mt-2 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl"
+            >
+                {profile.name}
+            </motion.p>
+        </div>
+    </motion.div>
+);
 
 const ProfileSelector = () => {
     const navigate = useNavigate();
-    const { profiles, currentProfile: _currentProfile, switchProfile, createProfile, updateProfile, deleteProfile } = useProfile();
+    const { profiles, switchProfile, createProfile, updateProfile, deleteProfile } = useProfile();
     const [manageMode, setManageMode] = useState(false);
     const { t } = useTranslation();
 
@@ -209,6 +337,13 @@ const ProfileSelector = () => {
 
     const closeModal = () => { setShowModal(false); resetForm(); };
 
+    const openCreate = () => {
+        if (transitioningProfile) return;
+        playHaptic();
+        resetForm();
+        setShowModal(true);
+    };
+
     const handleSave = async () => {
         if (!profileName.trim() || saving) return;
         setSaving(true);
@@ -218,22 +353,17 @@ const ProfileSelector = () => {
             isKid,
             pin: pinCode.length === 4 ? pinCode : null,
         };
-        let result;
-        if (editingProfile) {
-            result = await updateProfile(editingProfile.id, data);
-        } else {
-            result = await createProfile(data);
-        }
+        const result = editingProfile
+            ? await updateProfile(editingProfile.id, data)
+            : await createProfile(data);
         setSaving(false);
         if (result?.success !== false) closeModal();
     };
 
     const triggerProfileTransition = (profile) => {
-        const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         playSound('netflix_intro');
         setTransitioningProfile(profile);
 
-        const duration = prefersReducedMotion ? 50 : 420;
         setTimeout(() => {
             switchProfile(profile);
             const returnUrl = localStorage.getItem('returnUrl');
@@ -243,109 +373,106 @@ const ProfileSelector = () => {
             } else {
                 navigate('/');
             }
-        }, duration);
+        }, prefersReducedMotion() ? 50 : WELCOME_MS);
     };
 
     const handleSelectProfile = (profile) => {
-        if (manageMode) {
-            if (profile.pin) {
-                setPendingProfile(profile);
-                setPinPurpose('manage');
-                setShowPinModal(true);
-            } else {
-                setEditingProfile(profile);
-                setShowModal(true);
-            }
-        } else if (profile.pin) {
+        if (profile.pin) {
             setPendingProfile(profile);
-            setPinPurpose('select');
+            setPinPurpose(manageMode ? 'manage' : 'select');
             setShowPinModal(true);
+        } else if (manageMode) {
+            setEditingProfile(profile);
+            setShowModal(true);
         } else {
             triggerProfileTransition(profile);
         }
     };
 
     const handlePinSubmit = async (pin) => {
-        if (pendingProfile?.pin === pin) {
-            const p = pendingProfile;
-            const purpose = pinPurpose;
-            setShowPinModal(false);
-            setPendingProfile(null);
-            if (purpose === 'manage') {
-                setEditingProfile(p);
-                setShowModal(true);
-            } else {
-                triggerProfileTransition(p);
-            }
-            return true;
+        if (pendingProfile?.pin !== pin) return false;
+        const profile = pendingProfile;
+        setShowPinModal(false);
+        setPendingProfile(null);
+        if (pinPurpose === 'manage') {
+            setEditingProfile(profile);
+            setShowModal(true);
+        } else {
+            triggerProfileTransition(profile);
         }
-        return false;
+        return true;
     };
 
+    const leaving = Boolean(transitioningProfile);
+    const heading = manageMode
+        ? t('profileSelector.manageProfiles')
+        : (profiles.length === 0 ? 'Créez votre profil' : t('profileSelector.whoIsWatching'));
+    const canAdd = profiles.length < MAX_PROFILES;
+
     return (
-        <div
-            className="min-h-screen flex flex-col items-center justify-center bg-[#080808] relative overflow-hidden text-white"
-        >
-            {/* Animated ambient background */}
-            <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[70vw] h-[70vw] max-w-[700px] max-h-[700px] bg-[#e50914] rounded-full mix-blend-screen filter blur-[180px] opacity-[0.07] pointer-events-none" />
-                <div className="absolute top-0 left-0 w-[40vw] h-[40vw] max-w-[400px] bg-[#1a0a0a] rounded-full filter blur-[120px] opacity-60" />
-                <div className="absolute bottom-0 right-0 w-[40vw] h-[40vw] max-w-[400px] bg-[#0a0a1a] rounded-full filter blur-[120px] opacity-60" />
-                <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.4),transparent_30%,transparent_70%,rgba(0,0,0,0.4))]" />
-            </div>
+        <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#060608] text-white">
+            <OrbitBackdrop />
 
             <Helmet>
                 <title>Qui regarde ? - ALTYFLIX</title>
                 <meta name="robots" content="noindex" />
             </Helmet>
 
-            {/* Logo — fixed top-left */}
-            <div className="fixed top-6 left-6 z-50 pointer-events-none">
-                <ALTYFLIXLogo size={38} className="text-[#E50914]" />
-            </div>
+            <motion.div
+                initial={{ opacity: 0, y: -12 }}
+                animate={{ opacity: leaving ? 0 : 1, y: 0 }}
+                transition={{ duration: 0.6, ease: EASE }}
+                className="pointer-events-none fixed left-6 top-6 z-50"
+            >
+                <ALTYFLIXLogo size={38} />
+            </motion.div>
 
             <PinModal
                 isOpen={showPinModal}
                 onClose={() => { setShowPinModal(false); setPendingProfile(null); }}
                 onSubmit={handlePinSubmit}
                 profileName={pendingProfile?.name}
+                avatar={pendingProfile?.avatar}
             />
 
+            {/* ── Delete confirmation ── */}
             <AnimatePresence>
                 {profileToDelete && (
                     <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4"
+                        role="dialog" aria-modal="true" aria-label="Supprimer le profil"
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
+                        onClick={() => setProfileToDelete(null)}
                     >
                         <motion.div
-                            initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }}
-                            className="bg-[#0e0e14] border border-white/10 p-8 sm:p-12 max-w-lg w-full text-center shadow-[0_25px_60px_rgba(0,0,0,0.9)] rounded-3xl backdrop-blur-2xl"
+                            initial={{ scale: 0.9, y: 16, opacity: 0 }}
+                            animate={{ scale: 1, y: 0, opacity: 1 }}
+                            exit={{ scale: 0.94, y: 8, opacity: 0 }}
+                            transition={SPRING}
+                            onClick={e => e.stopPropagation()}
+                            className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0e0e14] p-8 text-center shadow-[0_30px_80px_rgba(0,0,0,0.8)]"
                         >
-                            <h3 className="text-2xl sm:text-3xl font-sans font-normal mb-6 font-display">Supprimer le profil ?</h3>
-                            <div className="flex items-center gap-4 justify-center mb-6">
-                                <img src={profileToDelete.avatar} alt="Avatar" className="w-16 h-16 rounded-xl shadow-md" />
-                                <div className="text-left">
-                                    <p className="font-semibold text-lg">{profileToDelete.name}</p>
-                                </div>
+                            <div className="mx-auto mb-5 h-20 w-20 overflow-hidden rounded-[26%] ring-1 ring-white/10 grayscale">
+                                <Avatar profile={profileToDelete} />
                             </div>
-                            <p className="text-gray-400 mb-10 text-[15px] leading-relaxed">
-                                {"L'historique des titres regardés de ce profil sera supprimé définitivement."}
+                            <h3 className="font-display text-2xl font-bold tracking-tight">Supprimer « {profileToDelete.name} » ?</h3>
+                            <p className="mx-auto mt-3 max-w-xs text-sm leading-relaxed text-white/55">
+                                {"L'historique, la liste et les préférences de ce profil seront supprimés définitivement."}
                             </p>
-                            <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 justify-center">
+                            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
                                 <button
+                                    type="button"
                                     onClick={() => setProfileToDelete(null)}
-                                    className="px-8 py-3 bg-white text-black font-bold text-lg hover:bg-gray-200 transition-colors rounded-xl"
+                                    className="h-12 rounded-xl bg-white px-7 text-base font-bold text-black transition-colors hover:bg-white/85"
                                 >
                                     Conserver
                                 </button>
                                 <button
-                                    onClick={() => {
-                                        deleteProfile(profileToDelete.id);
-                                        setProfileToDelete(null);
-                                    }}
-                                    className="px-8 py-3 border border-gray-600 text-gray-300 font-bold text-lg hover:border-red-500 hover:text-red-400 transition-colors rounded-xl"
+                                    type="button"
+                                    onClick={() => { deleteProfile(profileToDelete.id); setProfileToDelete(null); }}
+                                    className="flex h-12 items-center justify-center gap-2 rounded-xl border border-[#E50914]/50 px-7 text-base font-bold text-[#ff5a63] transition-colors hover:bg-[#E50914] hover:text-white"
                                 >
-                                    Supprimer
+                                    <Icon name="trash" className="h-4 w-4" /> Supprimer
                                 </button>
                             </div>
                         </motion.div>
@@ -353,241 +480,240 @@ const ProfileSelector = () => {
                 )}
             </AnimatePresence>
 
-            <motion.div
-                className="flex flex-col items-center justify-center relative z-10 w-full px-[5%] py-20"
-                animate={transitioningProfile ? { scale: 1.03, opacity: 0 } : { scale: 1, opacity: 1 }}
-                transition={transitioningProfile ? { duration: 0.16, ease: [0.22, 1, 0.36, 1] } : { duration: 0.3 }}
-            >
-                <motion.h1
-                    className="text-white text-[2rem] sm:text-[3rem] md:text-[3.8rem] font-light mb-3 tracking-tight font-sans drop-shadow-xl text-center"
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ 
-                        opacity: transitioningProfile ? 0 : 1, 
-                        y: transitioningProfile ? -15 : 0 
-                    }}
-                    transition={{ duration: 0.35, ease: "easeOut" }}
+            {/* ── Picker ── */}
+            <div className="relative z-10 flex w-full flex-col items-center px-[5%] py-24">
+                <motion.div
+                    className="mb-12 text-center sm:mb-14"
+                    animate={{ opacity: leaving ? 0 : 1, y: leaving ? -16 : 0 }}
+                    transition={{ duration: 0.35, ease: EASE }}
                 >
-                    {manageMode ? t('profileSelector.manageProfiles') : (profiles.length === 0 ? 'Créez votre profil' : t('profileSelector.whoIsWatching'))}
-                </motion.h1>
-
-                {!manageMode && (
-                    <motion.p
-                        className="text-white/40 text-sm sm:text-base mb-12 font-sans tracking-wide"
-                        initial={{ opacity: 0 }}
-                        animate={{ 
-                            opacity: transitioningProfile ? 0 : 1,
-                            y: transitioningProfile ? -10 : 0
-                        }}
-                        transition={{ duration: 0.3, ease: "easeOut" }}
-                    >
-                        {profiles.length === 0 ? 'Ajoutez un profil personnalisé pour commencer' : 'Sélectionnez un profil pour continuer'}
-                    </motion.p>
-                )}
-                {manageMode && <div className="mb-12" />}
-
-                <div className="flex flex-wrap justify-center gap-8 sm:gap-10 md:gap-14 mb-14 max-w-[1100px] relative">
-                    {profiles.map((profile, i) => (
-                        <motion.div
-                            key={profile.id}
-                            className="relative z-10"
-                            initial={{ opacity: 0, scale: 0.85, y: 20 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            transition={{ delay: i * 0.05, duration: 0.4, ease: "easeOut" }}
+                    <AnimatePresence mode="wait">
+                        <motion.h1
+                            key={heading}
+                            initial={{ opacity: 0, y: 18, filter: 'blur(10px)' }}
+                            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                            exit={{ opacity: 0, y: -12, filter: 'blur(8px)' }}
+                            transition={{ duration: 0.5, ease: EASE }}
+                            className="font-display text-4xl font-bold tracking-tight text-white text-balance sm:text-5xl md:text-6xl"
                         >
-                            <ProfileAvatar
-                                profile={profile}
-                                manageMode={manageMode}
-                                isSelected={transitioningProfile?.id === profile.id}
-                                anySelected={!!transitioningProfile}
-                                onClick={() => handleSelectProfile(profile)}
-                                onDelete={() => setProfileToDelete(profile)}
-                            />
-                        </motion.div>
+                            {heading}
+                        </motion.h1>
+                    </AnimatePresence>
+                    <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.6, delay: 0.25 }}
+                        className="mt-3 text-sm text-white/45 sm:text-base"
+                    >
+                        {manageMode
+                            ? 'Touchez un profil pour le modifier.'
+                            : profiles.length === 0 ? 'Ajoutez un profil pour commencer.' : 'Choisissez un profil pour continuer.'}
+                    </motion.p>
+                </motion.div>
+
+                <div className="mb-14 flex max-w-[1100px] flex-wrap justify-center gap-x-8 gap-y-10 sm:gap-x-10 md:gap-x-14">
+                    {profiles.map((profile, i) => (
+                        <ProfileCard
+                            key={profile.id}
+                            index={i}
+                            profile={profile}
+                            manageMode={manageMode}
+                            isSelected={transitioningProfile?.id === profile.id}
+                            anySelected={leaving}
+                            onClick={() => handleSelectProfile(profile)}
+                            onDelete={() => setProfileToDelete(profile)}
+                        />
                     ))}
 
-                    {profiles.length < 5 && (!manageMode || profiles.length === 0) && (
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.85, y: 20 }}
-                            animate={{ 
-                                opacity: transitioningProfile ? 0 : 1, 
-                                scale: transitioningProfile ? 0.9 : 1, 
-                                y: 0 
-                            }}
-                            transition={{ delay: profiles.length * 0.05, duration: 0.4 }}
-                        >
-                            <AddProfileCard onClick={() => { 
-                                if (transitioningProfile) return;
-                                playHaptic(); 
-                                resetForm(); 
-                                setShowModal(true); 
-                            }} />
-                        </motion.div>
+                    {canAdd && (!manageMode || profiles.length === 0) && (
+                        <AddProfileCard index={profiles.length} hidden={leaving} onClick={openCreate} />
                     )}
                 </div>
 
-                {/* Bottom buttons */}
                 {profiles.length > 0 && (
-                    <motion.div 
-                        className="flex flex-col sm:flex-row items-center gap-3"
-                        animate={{ 
-                            opacity: transitioningProfile ? 0 : 1,
-                            y: transitioningProfile ? 15 : 0
-                        }}
-                        transition={{ duration: 0.3, ease: "easeOut" }}
+                    <motion.div
+                        className="flex flex-col items-center gap-3 sm:flex-row"
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: leaving ? 0 : 1, y: leaving ? 16 : 0 }}
+                        transition={{ duration: 0.4, delay: leaving ? 0 : 0.3 + profiles.length * 0.07, ease: EASE }}
                     >
                         <motion.button
-                            whileHover={{ scale: 1.04 }}
+                            type="button"
+                            layout
+                            whileHover={{ scale: 1.03 }}
                             whileTap={{ scale: 0.97 }}
                             onClick={() => { setManageMode(!manageMode); setShowModal(false); resetForm(); }}
-                            className={`px-8 sm:px-10 py-3 text-sm sm:text-base font-semibold tracking-[0.12em] uppercase transition-all duration-400 rounded-full backdrop-blur-md border ${manageMode
-                                    ? 'bg-white text-black border-white hover:bg-red-600 hover:text-white hover:border-red-600'
-                                    : 'bg-white/5 text-white/70 border-white/20 hover:text-white hover:bg-white/10 hover:border-white/50'
-                                }`}
+                            className={`flex h-11 items-center gap-2 rounded-xl border px-6 text-sm font-semibold transition-colors duration-300 ${manageMode
+                                ? 'border-white bg-white text-black hover:bg-white/85'
+                                : 'border-white/15 bg-white/[0.06] text-white/75 hover:bg-white/15 hover:text-white'}`}
                         >
+                            <Icon name={manageMode ? 'check' : 'edit'} className="h-4 w-4" strokeWidth={2.2} />
                             {manageMode ? t('profileSelector.done') : t('profileSelector.manageProfiles')}
                         </motion.button>
 
-                        {manageMode && profiles.length < 5 && (
-                            <motion.button
-                                initial={{ opacity: 0, scale: 0.9 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0 }}
-                                whileHover={{ scale: 1.04 }}
-                                whileTap={{ scale: 0.97 }}
-                                onClick={() => { playHaptic(); resetForm(); setShowModal(true); }}
-                                className="px-8 sm:px-10 py-3 text-sm sm:text-base font-semibold tracking-[0.12em] uppercase bg-[#e50914]/10 text-[#ff4444] border border-[#e50914]/40 hover:bg-[#e50914] hover:text-white hover:border-[#e50914] transition-all duration-300 rounded-full"
-                            >
-                                + Ajouter un profil
-                            </motion.button>
-                        )}
+                        <AnimatePresence>
+                            {manageMode && canAdd && (
+                                <motion.button
+                                    type="button"
+                                    layout
+                                    initial={{ opacity: 0, scale: 0.9, x: -10 }}
+                                    animate={{ opacity: 1, scale: 1, x: 0 }}
+                                    exit={{ opacity: 0, scale: 0.9, x: -10 }}
+                                    whileHover={{ scale: 1.03 }}
+                                    whileTap={{ scale: 0.97 }}
+                                    onClick={openCreate}
+                                    className="flex h-11 items-center gap-2 rounded-xl border border-white/15 bg-white/[0.06] px-6 text-sm font-semibold text-white/75 transition-colors duration-300 hover:bg-white/15 hover:text-white"
+                                >
+                                    <Icon name="plus" className="h-4 w-4" strokeWidth={2.2} /> Ajouter un profil
+                                </motion.button>
+                            )}
+                        </AnimatePresence>
                     </motion.div>
                 )}
-            </motion.div>
+            </div>
 
-            {/* Seamless Fade into Home */}
             <AnimatePresence>
-                {transitioningProfile && (
-                    <motion.div
-                        key="seamless-fade"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.16, ease: "easeOut" }}
-                        className="fixed inset-0 z-[500] bg-[#060608] pointer-events-none"
-                    />
-                )}
+                {transitioningProfile && <WelcomeStage profile={transitioningProfile} />}
             </AnimatePresence>
 
-            {/* ── Create / Edit Modal ── */}
+            {/* ── Create / Edit ── */}
             <AnimatePresence>
                 {showModal && (
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-[#060608] z-50 overflow-y-auto"
+                        role="dialog"
+                        aria-modal="true"
+                        className="fixed inset-0 z-50 overflow-y-auto bg-[#060608]"
                     >
-                        {/* Header for edit modal matching layout */}
-                        <div className="absolute top-8 left-[4%] pointer-events-none z-10">
-                            <ALTYFLIXLogo size={36} className="text-[#E50914]" />
+                        <OrbitBackdrop className="opacity-60" />
+                        <div className="pointer-events-none absolute left-6 top-6 z-10">
+                            <ALTYFLIXLogo size={38} />
                         </div>
 
-                        <div className="min-h-screen flex items-center justify-center p-4 py-24">
+                        <div className="relative flex min-h-screen items-center justify-center p-4 py-24">
                             <motion.div
-                                initial={{ opacity: 0, scale: 0.97, y: 10 }}
-                                animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.97, y: 10 }}
-                                transition={{ duration: 0.3, ease: 'easeOut' }}
-                                className="w-full max-w-[800px] bg-transparent text-white"
+                                initial="hidden"
+                                animate="show"
+                                exit="hidden"
+                                variants={{ hidden: {}, show: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } } }}
+                                className="w-full max-w-[760px] text-white"
                             >
-                                <h1 className="text-[2.5rem] sm:text-[3.5rem] font-sans font-medium mb-6 px-4">
+                                <motion.h1
+                                    variants={{ hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: EASE } } }}
+                                    className="mb-8 px-1 font-display text-4xl font-bold tracking-tight sm:text-5xl"
+                                >
                                     {editingProfile ? t('profileSelector.editProfile') : t('profileSelector.addProfile')}
-                                </h1>
-                                <div className="h-[1px] w-full bg-[#333] mb-8" />
+                                </motion.h1>
 
-                                <div className="flex flex-col md:flex-row gap-6 lg:gap-10 px-4">
-                                    {/* Left column (Avatar UI) */}
-                                    <div className="w-full md:w-[160px] flex-shrink-0 flex justify-center md:justify-start items-start">
-                                        <div
-                                            className="relative group cursor-pointer"
+                                <motion.div
+                                    variants={{ hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: EASE } } }}
+                                    className="flex flex-col gap-8 rounded-3xl border border-white/[0.08] bg-[#0b0b10]/80 p-6 backdrop-blur-xl sm:p-8 md:flex-row lg:gap-10"
+                                >
+                                    <div className="flex flex-shrink-0 flex-col items-center gap-3">
+                                        <motion.button
+                                            type="button"
+                                            aria-label="Changer d’avatar"
+                                            whileHover={{ scale: 1.04, rotate: -2 }}
+                                            whileTap={{ scale: 0.96 }}
+                                            transition={SPRING}
+                                            className="group relative rounded-[26%]"
                                             onClick={() => { playHaptic(); setShowAvatarSelector(true); }}
                                         >
-                                            <div className="w-[120px] h-[120px] sm:w-[140px] sm:h-[140px] rounded-[4px] overflow-hidden bg-[#333]">
-                                                <img src={selectedAvatar || DEFAULT_AVATARS[0]} alt="Avatar" className="w-full h-full object-cover" />
-                                            </div>
-                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-300 rounded-[4px] border-[3px] border-white">
-                                                <svg className="w-8 h-8 text-white drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                                                </svg>
-                                            </div>
-                                        </div>
+                                            <AnimatePresence mode="popLayout" initial={false}>
+                                                <motion.span
+                                                    key={selectedAvatar}
+                                                    initial={{ opacity: 0, scale: 0.8, rotate: -8 }}
+                                                    animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                                                    exit={{ opacity: 0, scale: 0.8 }}
+                                                    transition={SPRING}
+                                                    className="block h-[128px] w-[128px] overflow-hidden rounded-[26%] bg-[#101016] ring-1 ring-white/10 transition-shadow group-hover:ring-2 group-hover:ring-white sm:h-[148px] sm:w-[148px]"
+                                                >
+                                                    <img src={selectedAvatar || DEFAULT_AVATARS[0]} alt="" className="h-full w-full object-cover" />
+                                                </motion.span>
+                                            </AnimatePresence>
+                                            <span className="absolute -bottom-2 -right-2 grid h-9 w-9 place-items-center rounded-full bg-white text-black shadow-lg">
+                                                <Icon name="edit" className="h-4 w-4" strokeWidth={2.2} />
+                                            </span>
+                                        </motion.button>
                                     </div>
 
-                                    {/* Middle column (Inputs & Checkboxes) */}
-                                    <div className="flex-1 max-w-[500px]">
-                                        <div className="mb-6">
+                                    <div className="max-w-[500px] flex-1 space-y-6">
+                                        <div>
+                                            <label htmlFor="profile-name" className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/45">Nom du profil</label>
                                             <input
+                                                id="profile-name"
                                                 type="text"
                                                 value={profileName}
                                                 onChange={e => setProfileName(e.target.value)}
-                                                className="w-full bg-[#666] border-none px-4 py-2.5 text-white text-lg placeholder-white/80 focus:outline-none focus:ring-1 focus:ring-white transition-all rounded-sm"
-                                                placeholder="Nom"
+                                                onKeyDown={e => { if (e.key === 'Enter') handleSave(); }}
+                                                className="field-input"
+                                                placeholder="Prénom ou surnom"
                                                 maxLength={20}
                                                 autoFocus
                                             />
                                         </div>
 
-                                        <div className="mb-8">
-                                            <p className="text-[#ccc] text-lg mb-2">Code PIN (Optionnel)</p>
+                                        <div>
+                                            <label htmlFor="profile-pin" className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.2em] text-white/45">
+                                                <Icon name="lock" className="h-3.5 w-3.5" strokeWidth={2} /> Code PIN
+                                                <span className="normal-case tracking-normal text-white/30">· facultatif</span>
+                                            </label>
                                             <input
+                                                id="profile-pin"
                                                 type="text"
                                                 inputMode="numeric"
+                                                autoComplete="off"
                                                 maxLength={4}
                                                 value={pinCode}
                                                 onChange={e => setPinCode(e.target.value.replace(/\D/g, ''))}
-                                                className="w-full bg-[#1A1A1A] border border-[#333] rounded-[4px] px-4 py-2 text-white text-lg focus:outline-none focus:border-white transition-all placeholder-[#4d4d4d]"
-                                                placeholder="Ex: 1234"
+                                                className="field-input max-w-[180px] tracking-[0.4em]"
+                                                placeholder="••••"
                                             />
+                                            <p className="mt-2 text-xs text-white/40">4 chiffres demandés à chaque ouverture du profil.</p>
                                         </div>
 
-                                        <div className="flex items-center gap-3 mb-8">
-                                            <input
-                                                type="checkbox"
-                                                id="kidCheck"
-                                                checked={isKid}
-                                                onChange={() => setIsKid(!isKid)}
-                                                className="w-6 h-6 border-[3px] border-[#333] rounded-sm appearance-none checked:bg-[#E50914] checked:border-transparent cursor-pointer relative"
-                                            />
-                                            <label htmlFor="kidCheck" className="text-[#ccc] text-lg cursor-pointer select-none">Enfant ?</label>
-                                        </div>
+                                        <label htmlFor="kidCheck" className="flex cursor-pointer select-none items-center justify-between gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.03] px-4 py-3.5">
+                                            <span className="flex items-center gap-3">
+                                                <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-sky-400/10 text-sky-300"><Icon name="kid" className="h-5 w-5" /></span>
+                                                <span>
+                                                    <span className="block text-sm font-semibold text-white">Profil enfant</span>
+                                                    <span className="block text-xs text-white/45">Affiche uniquement les contenus jeunesse.</span>
+                                                </span>
+                                            </span>
+                                            <input type="checkbox" id="kidCheck" checked={isKid} onChange={() => setIsKid(!isKid)} className="peer sr-only" />
+                                            <span aria-hidden="true" className="relative h-7 w-12 flex-none rounded-full bg-white/15 transition-colors after:absolute after:left-1 after:top-1 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform after:duration-300 peer-checked:bg-[#E50914] peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-white" />
+                                        </label>
                                     </div>
-                                </div>
+                                </motion.div>
 
-
-
-
-
-                                <div className="flex flex-wrap gap-4 px-4">
+                                <motion.div
+                                    variants={{ hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: EASE } } }}
+                                    className="mt-8 flex flex-wrap gap-3 px-1"
+                                >
                                     <button
+                                        type="button"
                                         onClick={handleSave}
                                         disabled={!profileName.trim() || saving}
-                                        className="px-8 py-3 bg-white text-black font-bold text-lg hover:bg-[#c00] hover:text-white transition-colors rounded-[4px] min-w-[140px] disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-black"
+                                        className="h-12 min-w-[150px] rounded-xl bg-white px-7 text-base font-bold text-black transition-colors hover:bg-white/85 disabled:opacity-40 disabled:hover:bg-white"
                                     >
-                                        {saving ? '...' : editingProfile ? 'Enregistrer' : 'Continuer'}
+                                        {saving ? 'Enregistrement…' : editingProfile ? 'Enregistrer' : 'Créer le profil'}
                                     </button>
                                     <button
+                                        type="button"
                                         onClick={closeModal}
-                                        className="px-8 py-3 border border-gray-500 text-gray-300 font-bold text-lg hover:border-white hover:text-white transition-colors rounded-[4px] min-w-[140px]"
+                                        className="h-12 min-w-[150px] rounded-xl border border-white/15 bg-white/[0.06] px-7 text-base font-semibold text-white/80 transition-colors hover:bg-white/15 hover:text-white"
                                     >
                                         Annuler
                                     </button>
-                                </div>
+                                </motion.div>
                             </motion.div>
                         </div>
                     </motion.div>
                 )}
             </AnimatePresence>
 
-            {/* Sub-modal: Full-screen Avatar Selector */}
             <AnimatePresence>
                 {showAvatarSelector && (
                     <AvatarSelector

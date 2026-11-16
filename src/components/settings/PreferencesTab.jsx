@@ -82,8 +82,7 @@ export default function PreferencesTab({
                                 onChange={e => setPreferredAudio(e.target.value)}
                                 className="w-full px-4 py-3 bg-white/[0.04] border border-white/10 rounded-2xl text-xs text-white outline-none focus:border-white/30 cursor-pointer"
                             >
-                                <option className="bg-[#111]" value="VF">🇫🇷 VF (Version Française)</option>
-                                <option className="bg-[#111]" value="VOST">🇬🇧 VOST (Version Originale)</option>
+                                <option className="bg-[#111]" value="VOST">🇬🇧 VOST (Version Originale Sous-Titrée)</option>
                             </select>
                         </div>
 

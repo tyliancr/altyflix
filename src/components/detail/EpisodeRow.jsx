@@ -9,12 +9,12 @@ const EpisodeRow = ({ episode, number, onPlay, onPersonClick, isWatched, progres
             aria-label={`Regarder l’épisode ${number} : ${episode.name}`}
             onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPlay(); } }}
             onClick={onPlay}
-            className="flex flex-col sm:flex-row gap-4 p-4 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/5 transition-all duration-300 cursor-pointer group"
+            className="flex flex-col sm:flex-row gap-4 p-3 sm:p-4 rounded-2xl hover:bg-white/[0.05] transition-colors duration-300 cursor-pointer group"
         >
             {/* Left section: Index, Thumbnail */}
             <div className="flex gap-4 items-center flex-shrink-0">
-                <div className="flex items-center justify-center w-6 text-white/40 text-sm font-semibold">{number}</div>
-                <div className="w-40 aspect-video rounded-lg overflow-hidden bg-[#2f2f2f] relative shadow-md">
+                <div className="w-7 text-center font-display text-xl font-bold text-white/35 group-hover:text-white transition-colors">{number}</div>
+                <div className="w-44 aspect-video rounded-xl overflow-hidden bg-[#101016] relative ring-1 ring-inset ring-white/[0.07]">
                     {episode.still_path ? (
                         <img
                             src={`https://image.tmdb.org/t/p/w300${episode.still_path}`}
@@ -24,13 +24,13 @@ const EpisodeRow = ({ episode, number, onPlay, onPersonClick, isWatched, progres
                             decoding="async"
                         />
                     ) : (
-                        <div className="w-full h-full flex items-center justify-center text-white/20">
-                            🎬
+                        <div className="w-full h-full grid place-items-center text-xs font-semibold text-white/25">
+                            Épisode {number}
                         </div>
                     )}
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm shadow-lg">
-                            <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-black shadow-lg">
+                            <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
                                 <path d="M8 5v14l11-7z" />
                             </svg>
                         </div>
@@ -38,11 +38,11 @@ const EpisodeRow = ({ episode, number, onPlay, onPersonClick, isWatched, progres
 
                     {/* Progress or Watched Badge */}
                     {isWatched ? (
-                        <div className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[10px] text-white font-bold py-0.5 text-center flex items-center justify-center gap-1 backdrop-blur-xs">
-                            <span>✓ Vu</span>
+                        <div className="absolute top-1.5 right-1.5 rounded-md bg-black/70 backdrop-blur-md border border-[#46d369]/30 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#46d369]">
+                            Vu
                         </div>
                     ) : progress > 0 ? (
-                        <div className="absolute bottom-0 inset-x-0 h-1.5 bg-black/60">
+                        <div className="absolute bottom-0 inset-x-0 h-1 bg-white/20">
                             <div className="h-full bg-[#E50914]" style={{ width: `${progress}%` }} />
                         </div>
                     ) : null}
@@ -53,8 +53,8 @@ const EpisodeRow = ({ episode, number, onPlay, onPersonClick, isWatched, progres
             <div className="flex-1 min-w-0 flex flex-col justify-between">
                 <div>
                     <div className="flex items-start justify-between gap-2 mb-1">
-                        <p className="text-white text-sm md:text-base font-bold line-clamp-1 group-hover:text-ALTYFLIX-primary transition-colors">{episode.name}</p>
-                        {episode.runtime && <span className="text-white/50 text-xs font-semibold flex-shrink-0 bg-white/5 px-2 py-0.5 rounded-full">{episode.runtime}m</span>}
+                        <p className="text-white text-sm md:text-base font-semibold line-clamp-1">{episode.name}</p>
+                        {episode.runtime > 0 && <span className="text-white/45 text-xs font-medium flex-shrink-0 pt-0.5">{episode.runtime} min</span>}
                     </div>
                     <p className="text-white/50 text-xs md:text-sm line-clamp-2 leading-relaxed font-light">
                         {episode.overview || "Aucun synopsis disponible pour cet épisode."}
@@ -86,7 +86,7 @@ const EpisodeRow = ({ episode, number, onPlay, onPersonClick, isWatched, progres
                                             {g.profile_path ? (
                                                 <img src={`https://image.tmdb.org/t/p/w45${g.profile_path}`} className="w-full h-full object-cover" alt={g.name} loading="lazy" decoding="async" />
                                             ) : (
-                                                <div className="w-full h-full flex items-center justify-center text-[8px] text-white/50">👤</div>
+                                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold text-white/50">{g.name?.charAt(0)}</div>
                                             )}
                                         </div>
                                     ))}

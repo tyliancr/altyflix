@@ -38,7 +38,7 @@ function loadEnv() {
 loadEnv();
 
 const PORT = process.env.PORT || 3000;
-const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
+const TMDB_API_KEY = process.env.TMDB_API_KEY || 'a0819950449844817a0942ca79a4ccb0';
 
 // Map: ancien nom haché → nouveau nom lisible
 // Nécessaire car les bundles compilés se référencent mutuellement par leurs anciens noms

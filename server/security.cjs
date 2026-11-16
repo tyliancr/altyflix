@@ -26,7 +26,7 @@ function arteLimit(value = 20) {
 }
 
 const TMDB_PATH = /^(?:trending\/(?:all|movie|tv|person)\/(?:day|week)|(?:movie|tv)\/(?:popular|top_rated|now_playing|upcoming|airing_today|on_the_air)|(?:movie|tv|person)\/\d+(?:\/(?:videos|recommendations|similar|credits|images|external_ids|combined_credits|movie_credits|tv_credits))?|tv\/\d+\/season\/\d+(?:\/episode\/\d+)?(?:\/external_ids)?|search\/(?:multi|movie|tv|person)|discover\/(?:movie|tv)|genre\/(?:movie|tv)\/list)$/;
-const QUERY_KEYS = new Set(['language','page','query','include_adult','include_video','append_to_response','region','sort_by','timezone','include_null_first_air_dates','certification_country','certification.lte','with_genres','without_genres','with_keywords','with_original_language','with_origin_country','with_watch_providers','watch_region','with_watch_monetization_types','year','primary_release_year','first_air_date_year','with_networks','with_status','with_type','with_people']);
+const QUERY_KEYS = new Set(['language','page','query','include_adult','include_video','include_image_language','append_to_response','region','sort_by','timezone','include_null_first_air_dates','certification_country','certification.lte','with_genres','without_genres','with_keywords','with_original_language','with_origin_country','with_watch_providers','watch_region','with_watch_monetization_types','year','primary_release_year','first_air_date_year','with_networks','with_status','with_type','with_people']);
 function tmdbUrl(path, params, key) {
   if (!TMDB_PATH.test(path) || path.length > 180) throw new HttpError(400, 'Chemin TMDB non autorisé.');
   if (!key) throw new HttpError(503, 'Le service catalogue doit être configuré.');

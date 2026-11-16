@@ -14,7 +14,7 @@ export default function ResumeRow({ history, title }) {
 
     return (
         <section aria-label={title} className="relative px-[4%] md:px-[5%] mb-4 sm:mb-6">
-            <h2 className="mb-3 text-sm sm:text-base md:text-lg font-bold text-white tracking-wide">{title}</h2>
+            <h2 className="mb-3 sm:mb-4 text-[17px] sm:text-xl md:text-[22px] font-bold font-display text-white tracking-tight">{title}</h2>
             <div className="flex snap-x gap-4 overflow-x-auto p-1 pb-4 no-scrollbar">
                 {unfinished.map(item => {
                     const id = item.contentId || item.id;
@@ -31,7 +31,7 @@ export default function ResumeRow({ history, title }) {
                             onClick={() => { playHaptic(); play({ ...item, id, media_type: type }); }}
                             onKeyDown={(e) => { if (e.key === 'Enter') { playHaptic(); play({ ...item, id, media_type: type }); } }}
                             aria-label={['Reprendre ' + name, episode, percent + ' %'].filter(Boolean).join(', ')}
-                            className="group relative aspect-video w-64 shrink-0 snap-start overflow-hidden rounded-2xl bg-[#121218] text-left sm:w-80 shadow-[0_8px_30px_rgba(0,0,0,0.6)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.9)] hover:scale-[1.03] transition-all duration-300 border border-white/10 hover:border-white/30 cursor-pointer select-none"
+                            className="group relative aspect-video w-64 shrink-0 snap-start overflow-hidden rounded-xl bg-[#101016] text-left sm:w-80 shadow-[0_6px_20px_rgba(0,0,0,0.45)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.8)] hover:scale-[1.03] transition-all duration-300 ring-1 ring-inset ring-white/[0.07] hover:ring-white/25 cursor-pointer select-none"
                         >
                             {art && <img src={art} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" />}
                             <span className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-transparent" />

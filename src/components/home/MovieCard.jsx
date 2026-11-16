@@ -21,8 +21,6 @@ const isNew = (content) => {
     return (Date.now() - new Date(date).getTime()) / 86400000 < 30;
 };
 
-const isTrending = (content) => content.vote_count > 2000 && content.vote_average > 7;
-
 const cardDetailsCache = new Map();
 
 // ─── Poster (portrait mode) ───────────────────────────────────────────────────
@@ -200,7 +198,7 @@ const MovieCard = memo(({
 
     const displayData = fullDetails || content;
     const year = (displayData.release_date || displayData.first_air_date || content.release_date || content.first_air_date)?.substring(0, 4);
-    const maturity = (displayData.vote_average || content.vote_average) > 7 ? 'TV-MA' : 'TV-14';
+    const score = Math.round((displayData.vote_average || content.vote_average || 0) * 10);
     const desc = displayData.overview || content.overview;
 
     const genresList = useMemo(() => {
@@ -236,33 +234,30 @@ const MovieCard = memo(({
                 The wrapper in ContentRow controls the actual width via CSS transition.
             ─────────────────────────────────────────────────────────────────── */}
             <div
-                className="relative w-full overflow-hidden rounded-2xl bg-[#0d0d12] border border-white/[0.08] hover:border-white/30 transition-colors"
+                className="relative w-full overflow-hidden rounded-xl bg-[#101016] ring-1 ring-inset ring-white/[0.07] hover:ring-white/25"
                 style={{
                     paddingBottom: isExpanded ? '56.25%' : '150%',
-                    transition: 'padding-bottom 420ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 300ms ease, border-color 300ms ease',
+                    transition: 'padding-bottom 420ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 300ms ease',
                     boxShadow: isExpanded
-                        ? '0 20px 60px rgba(0,0,0,0.9), 0 0 30px rgba(229,9,20,0.2)'
-                        : '0 8px 24px rgba(0,0,0,0.5)',
+                        ? '0 24px 60px rgba(0,0,0,0.85)'
+                        : '0 6px 20px rgba(0,0,0,0.45)',
                     willChange: 'padding-bottom',
                 }}
             >
                 {/* ── Badges (Mutually exclusive: only 1 badge at most, no overlap) ──────── */}
                 {!isExpanded && (isUpcoming || showNewBadge || isTop10) && (
-                    <div className="absolute top-2.5 left-2.5 z-20 pointer-events-none animate-badge-pop">
+                    <div className="absolute top-2 left-2 z-20 pointer-events-none">
                         {isUpcoming ? (
-                            <span className="block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest text-white shadow-lg backdrop-blur-md"
-                                style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                            <span className="block px-1.5 py-1 rounded-md text-[9px] leading-none font-bold uppercase tracking-[0.12em] text-white bg-black/70 backdrop-blur-md border border-white/15">
                                 À venir
                             </span>
                         ) : showNewBadge ? (
-                            <span className="block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest text-white shadow-lg backdrop-blur-md"
-                                style={{ background: 'linear-gradient(135deg,#E50914,#ff3b44)' }}>
+                            <span className="block px-1.5 py-1 rounded-md text-[9px] leading-none font-bold uppercase tracking-[0.12em] text-white bg-[#E50914] shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
                                 Nouveau
                             </span>
                         ) : isTop10 ? (
-                            <span className="block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest text-white shadow-lg backdrop-blur-md font-sans"
-                                style={{ background: 'linear-gradient(135deg,#E50914,#990000)' }}>
-                                TOP 10
+                            <span className="block px-1.5 py-1 rounded-md text-[9px] leading-none font-black uppercase tracking-[0.12em] text-white bg-[#E50914] shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
+                                Top 10
                             </span>
                         ) : null}
                     </div>
@@ -345,7 +340,7 @@ const MovieCard = memo(({
                                 transition={{ duration: 0.25, delay: 0.12 }}
                                 className="absolute bottom-3 left-3 right-3 flex items-end justify-between z-20"
                             >
-                                <h3 className="text-white font-black text-base md:text-xl leading-tight drop-shadow-[0_4px_4px_rgba(0,0,0,0.9)] truncate font-display uppercase w-3/4">
+                                <h3 className="text-white font-bold text-base md:text-lg leading-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] truncate font-display tracking-tight w-3/4">
                                     {title}
                                 </h3>
                                 <div className="flex gap-2">
@@ -398,20 +393,12 @@ const MovieCard = memo(({
                         exit={{ opacity: 0, y: -8 }}
                         transition={{ duration: 0.25, delay: 0.1 }}
                     >
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#b3b3b3] flex-wrap leading-tight">
+                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white/55 flex-wrap leading-tight">
+                            {score > 0 && <span className="text-[#46d369] font-bold">{score}%</span>}
+                            {year && <span>{score > 0 ? '· ' : ''}{year}</span>}
                             {genresList.length > 0 && (
-                                <>
-                                    <span className="text-white">{genresList.join(' · ')}</span>
-                                    <span>·</span>
-                                </>
+                                <span className="text-white/85">{(score > 0 || year) ? '· ' : ''}{genresList.join(' · ')}</span>
                             )}
-                            {year && (
-                                <>
-                                    <span>{year}</span>
-                                    <span>·</span>
-                                </>
-                            )}
-                            <span className="border border-white/40 px-1 py-0.5 rounded-sm text-[9px] uppercase text-white/80">{maturity}</span>
                         </div>
                         {desc && (
                             <p className="text-[11px] md:text-[12px] text-white/65 leading-snug line-clamp-2 mt-1.5 font-sans pr-4">

@@ -101,14 +101,14 @@ export const GENRE_NAMES = {
     53: 'Thriller',
     10752: 'Guerre',
     37: 'Western',
-    10759: 'Action & Adventure',
-    10762: 'Kids',
-    10763: 'News',
-    10764: 'Reality',
-    10765: 'Sci-Fi & Fantasy',
-    10766: 'Soap',
-    10767: 'Talk',
-    10768: 'War & Politics',
+    10759: 'Action & Aventure',
+    10762: 'Enfants',
+    10763: 'Actualités',
+    10764: 'Téléréalité',
+    10765: 'Science-Fiction & Fantastique',
+    10766: 'Feuilleton',
+    10767: 'Talk-show',
+    10768: 'Guerre & Politique',
 };
 
 // Video source types

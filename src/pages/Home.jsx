@@ -106,7 +106,7 @@ const Home = () => {
 
                     // Initial Categories (Trending + New Releases)
                     const initialCategories = [
-                        { title: t('home.trending'), content: trendingData.results || [] },
+                        { title: t('home.trending'), content: trendingData.results || [], ranked: true },
                         { title: t('home.newReleases'), content: newReleasesList }
                     ];
                     setCategories(initialCategories);
@@ -151,7 +151,7 @@ const Home = () => {
                         ].sort((a, b) => b.vote_average - a.vote_average);
 
                         const baseCategories = [
-                            { title: t('home.trending'), content: trendingData.results || [] },
+                            { title: t('home.trending'), content: trendingData.results || [], ranked: true },
                             { title: t('home.newReleases'), content: newReleasesList },
                             { title: t('home.seriesTrending'), content: popularSeriesData.results || [] },
                             { title: t('home.seriesAction'), content: actionSeriesData.results || [] },
@@ -185,15 +185,15 @@ const Home = () => {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-[#060608] animate-pulse">
-                <div className="w-full h-[85vh] bg-[#0c0c10]"></div>
-                <div className="relative -mt-[15vh] px-[4%] z-10 space-y-8">
+            <div className="min-h-screen bg-[#060608]" aria-busy="true" aria-label="Chargement du catalogue">
+                <HeroBanner movies={[]} />
+                <div className="relative -mt-[3vh] sm:-mt-[10vh] z-10 space-y-10">
                     {[1, 2, 3].map(i => (
-                        <div key={i} className="mb-8">
-                            <div className="h-6 w-48 bg-[#14141a] rounded-lg mb-4" />
-                            <div className="flex gap-2 relative overflow-hidden">
-                                {[1, 2, 3, 4, 5, 6].map(j => (
-                                    <div key={j} className="flex-none bg-[#14141a] rounded-xl w-[45%] md:w-[20%] lg:w-[15%] aspect-poster" />
+                        <div key={i} className="px-[4%] md:px-[5%]">
+                            <div className="skeleton h-5 w-44 mb-4" />
+                            <div className="flex gap-2.5 md:gap-3.5 lg:gap-4 overflow-hidden">
+                                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(j => (
+                                    <div key={j} className="skeleton flex-none !rounded-xl" style={{ width: 'clamp(118px, 17vw, 208px)', aspectRatio: '2 / 3' }} />
                                 ))}
                             </div>
                         </div>
@@ -215,16 +215,19 @@ const Home = () => {
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.4, ease: "easeOut" }}
             >
-                {heroContent.length > 0 && <HeroBanner movies={heroContent} />}
+                {heroContent.length > 0 && <HeroBanner movies={heroContent} rankLabel={kids ? undefined : 'des tendances'} />}
             </motion.div>
 
             {/* Netflix carousels overlap the hero bottom */}
             <div className={`relative z-20 space-y-6 sm:space-y-8 ${heroContent.length ? '-mt-[3vh] sm:-mt-[10vh]' : 'pt-24'}`}>
                 {/* Reprendre la lecture */}
                 {catalogueFailed && (
-                    <div role="status" className="mx-[5%] rounded-lg bg-[#232323] p-5">
-                        <p>Le catalogue est temporairement indisponible.</p>
-                        <button type="button" className="mt-3 underline" onClick={() => setRequest(n => n + 1)}>Réessayer</button>
+                    <div role="status" className="mx-[4%] md:mx-[5%] flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-5">
+                        <div>
+                            <p className="font-semibold text-white">Le catalogue est temporairement indisponible.</p>
+                            <p className="mt-0.5 text-sm text-white/55">Vérifiez votre connexion, puis réessayez.</p>
+                        </div>
+                        <button type="button" className="h-10 rounded-lg bg-white px-5 text-sm font-bold text-black transition-colors hover:bg-white/85" onClick={() => setRequest(n => n + 1)}>Réessayer</button>
                     </div>
                 )}
                 <ResumeRow history={watchHistory} title={t('home.resume')} />
@@ -262,6 +265,7 @@ const Home = () => {
                         <ContentRow
                             title={category.title}
                             items={category.content}
+                            ranked={Boolean(category.ranked)}
                             isTV={category.title.toLowerCase().includes('série')}
                         />
                     </motion.div>

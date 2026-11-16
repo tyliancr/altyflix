@@ -1,12 +1,14 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { DEFAULT_AVATARS } from '../config/constants';
 import { useProfile } from '../contexts/ProfileContext';
 import { useTranslation } from '../hooks/useTranslation';
 import { playHoverSound, playClickSound } from '../utils/sounds';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import AltyflixLogo from '../components/common/AltyflixLogo';
+import Icon from '../components/ui/Icons';
 
 const Navbar = () => {
     const [isScrolled, setIsScrolled] = useState(false);
@@ -25,7 +27,8 @@ const Navbar = () => {
         const handleScroll = () => {
             setIsScrolled(window.scrollY > 20);
         };
-        window.addEventListener('scroll', handleScroll);
+        handleScroll();
+        window.addEventListener('scroll', handleScroll, { passive: true });
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
@@ -69,8 +72,8 @@ const Navbar = () => {
         <nav
             className={`hidden md:block fixed top-0 left-0 right-0 z-[200] transition-[padding,background-color,backdrop-filter] duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] select-none pointer-events-none
             ${isScrolled
-                    ? 'pt-3 pb-3 bg-[#060608]/90 backdrop-blur-3xl border-b border-white/[0.06] shadow-[0_10px_30px_rgba(0,0,0,0.8)]'
-                    : 'pt-7 pb-7 bg-gradient-to-b from-[#060608]/90 to-transparent'}`}
+                    ? 'pt-1.5 pb-1.5 bg-[#060608]/80 backdrop-blur-2xl'
+                    : 'pt-4 pb-4 bg-gradient-to-b from-[#060608]/85 to-transparent'}`}
         >
             <div className="flex items-center justify-between w-full px-[4%] md:px-[5%] h-16 relative max-w-[2000px] mx-auto pointer-events-auto">
 
@@ -87,20 +90,26 @@ const Navbar = () => {
 
                 {/* Center: Pill Navigation */}
                 <div className="flex items-center gap-2 md:gap-4 transition-all duration-500">
-                    <div className="hidden lg:flex items-center bg-black/20 backdrop-blur-[30px] border border-white/10 rounded-full py-2 px-2 shadow-2xl">
+                    <div className="hidden lg:flex items-center bg-white/[0.05] backdrop-blur-2xl border border-white/10 rounded-full p-1">
                         {navLinks.map((link) => {
                             const isActive = location.pathname === link.path;
                             return (
                                 <Link
-                                    key={link.name}
+                                    key={link.path}
                                     to={link.path}
+                                    aria-current={isActive ? 'page' : undefined}
                                     onMouseEnter={!isActive ? playHoverSound : undefined}
-                                    className={`px-8 py-2.5 rounded-full text-[14px] font-bold tracking-tight transition-all duration-300
-                                        ${isActive
-                                            ? 'bg-white text-black shadow-[0_10px_30px_rgba(255,255,255,0.2)]'
-                                            : 'text-white/60 hover:text-white hover:bg-white/5'}`}
+                                    className={`relative px-4 xl:px-5 py-2 rounded-full text-[13.5px] font-semibold whitespace-nowrap transition-colors duration-300
+                                        ${isActive ? 'text-black' : 'text-white/65 hover:text-white'}`}
                                 >
-                                    {link.name}
+                                    {isActive && (
+                                        <motion.span
+                                            layoutId="nav-active-pill"
+                                            className="absolute inset-0 rounded-full bg-white"
+                                            transition={{ type: 'spring', stiffness: 420, damping: 36 }}
+                                        />
+                                    )}
+                                    <span className="relative">{link.name}</span>
                                 </Link>
                             );
                         })}
@@ -130,6 +139,7 @@ const Navbar = () => {
                                         className="bg-transparent text-white text-sm w-full outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 border-none placeholder-white/35 pr-6"
                                         style={{ outline: 'none', border: 'none', boxShadow: 'none' }}
                                         autoFocus
+                                        onKeyDown={(e) => { if (e.key === 'Escape') { setSearchQuery(''); setIsSearchOpen(false); } }}
                                         onBlur={() => { if (!searchQuery) setIsSearchOpen(false); }}
                                     />
                                     <kbd className="hidden sm:inline-block text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/50 border border-white/10 pointer-events-none">
@@ -169,7 +179,7 @@ const Navbar = () => {
                         <button className="flex items-center gap-2 group">
                             <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl overflow-hidden border border-white/20 group-hover:border-white/60 transition-all shadow-xl active:scale-95 flex-shrink-0 group-hover:shadow-[0_0_20px_rgba(229,9,20,0.4)]">
                                 <img
-                                    src={currentProfile?.avatar || 'https://upload.wikimedia.org/wikipedia/commons/0/0b/Netflix-avatar.png'}
+                                    src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
                                     alt="Profile"
                                     className="w-full h-full object-cover"
                                 />
@@ -211,7 +221,10 @@ const Navbar = () => {
                                     </div>
                                     <div className="h-px bg-white/5 my-3" />
                                     <div className="px-2">
-                                        <button onClick={logout} className="w-full text-center px-4 py-3 text-sm text-ALTYFLIX-primary font-bold hover:bg-ALTYFLIX-primary/10 rounded-2xl transition-all">{t('nav.logout')}</button>
+                                        <button onClick={logout} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#ff5a63] font-semibold hover:bg-[#E50914]/10 rounded-2xl transition-all">
+                                            <span className="w-8 h-8 rounded-lg bg-[#E50914]/10 flex items-center justify-center"><Icon name="logout" className="w-4 h-4" /></span>
+                                            {t('nav.logout')}
+                                        </button>
                                     </div>
                                 </motion.div>
                             )}

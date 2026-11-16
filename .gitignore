@@ -37,6 +37,7 @@ scripts/posted-cache.json
 
 # Netlify local files
 .netlify
+.claude
 
 # Vidéo : médias encodés et données locales de développement
 media

@@ -142,6 +142,32 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
         cleanup();
 
         if (!response.ok) {
+            // If proxy returned 500+ or 503 (e.g. Render asleep / cold starting), fallback directly to TMDB
+            if (response.status >= 500) {
+                try {
+                    const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint}`);
+                    fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
+                    fallbackUrl.searchParams.append('language', userLanguage);
+                    Object.entries(params).forEach(([key, value]) => {
+                        if (value !== undefined && value !== null) {
+                            fallbackUrl.searchParams.append(key, value);
+                        }
+                    });
+                    const fbRes = await fetch(fallbackUrl);
+                    if (fbRes.ok) {
+                        const fbData = await fbRes.json();
+                        if (!options.skipCache && !options.signal?.aborted) {
+                            requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
+                            setSessionCache(cacheKey, fbData);
+                            pruneCache();
+                        }
+                        return fbData;
+                    }
+                } catch {
+                    // Fall through to error throw
+                }
+            }
+
             const status = response.status;
             let friendlyCode = `HTTP_${status}`;
             if (status === 401 || status === 403) friendlyCode = 'AUTH_ERROR';
@@ -178,6 +204,31 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
 
         return data;
     } catch (error) {
+        if (error.code === 'TIMEOUT' || error.name === 'TypeError') {
+            try {
+                const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint}`);
+                fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
+                const userLanguage = storage.get('language', 'fr-FR');
+                fallbackUrl.searchParams.append('language', userLanguage);
+                Object.entries(params).forEach(([key, value]) => {
+                    if (value !== undefined && value !== null) {
+                        fallbackUrl.searchParams.append(key, value);
+                    }
+                });
+                const fbRes = await fetch(fallbackUrl);
+                if (fbRes.ok) {
+                    const fbData = await fbRes.json();
+                    if (!options.skipCache) {
+                        requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
+                        setSessionCache(cacheKey, fbData);
+                        pruneCache();
+                    }
+                    return fbData;
+                }
+            } catch {
+                // Ignore fallback error
+            }
+        }
         if (error.name === 'AbortError' || error.code === 'TIMEOUT' || error.code === 'INVALID_JSON') {
             throw error;
         }
@@ -361,6 +412,29 @@ export const getSeriesDetails = async (seriesId) => {
         return normalizeLupinSeries(data);
     }
     return data;
+};
+
+/**
+ * Get the official title artwork (transparent logo) for a movie or series.
+ * Prefers the profile language, then English, then any wide logo.
+ * @param {'movie'|'tv'} type
+ * @param {number} id
+ * @returns {Promise<string|null>} Logo URL or null when none exists
+ */
+export const getTitleLogo = async (type, id, options = {}) => {
+    const lang = String(storage.get('language', 'fr-FR')).slice(0, 2);
+    try {
+        const data = await apiRequest(`/${type === 'tv' ? 'tv' : 'movie'}/${id}/images`, {
+            include_image_language: [...new Set([lang, 'en', 'null'])].join(',')
+        }, options);
+        const logos = (data?.logos || []).filter(l => l.file_path && !l.file_path.endsWith('.svg') && l.aspect_ratio >= 1.2);
+        if (!logos.length) return null;
+        const rank = (l) => (l.iso_639_1 === lang ? 0 : l.iso_639_1 === 'en' ? 1 : 2);
+        logos.sort((a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0));
+        return `${TMDB_CONFIG.IMAGE_BASE_URL}/w500${logos[0].file_path}`;
+    } catch {
+        return null;
+    }
 };
 
 /**
@@ -743,6 +817,7 @@ export default {
     getOnTheAirSeries,
     getMovieDetails,
     getSeriesDetails,
+    getTitleLogo,
     getContentDetails,
     getSeasonDetails,
     searchMulti,

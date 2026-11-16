@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getTrending, getContentByGenre } from '../services/tmdb.js';
 import { searchMedia } from '../services/searchService.js';
@@ -7,7 +7,8 @@ import { Helmet } from 'react-helmet-async';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getContentType } from '../utils/helpers';
 import { useTranslation } from '../hooks/useTranslation';
-import MovieCard from '../components/home/MovieCard';
+import PosterCard from '../components/ui/PosterCard';
+import { PosterGrid, GridSkeleton, SectionTitle, EmptyState, Button } from '../components/ui/Primitives';
 import { GENRE_CHIPS } from '../components/search/SearchConstants';
 import SearchInputBar from '../components/search/SearchInputBar';
 import SearchFilterChips from '../components/search/SearchFilterChips';
@@ -36,7 +37,6 @@ const SearchPage = () => {
     const [trending, setTrending] = useState([]);
     const [placeholderIndex, setPlaceholderIndex] = useState(0);
     const [recentSearches, setRecentSearches] = useState([]);
-    const [_inputFocused, setInputFocused] = useState(false);
 
     // Advanced search states: IDLE | LOADING | RESULTS | EMPTY | ERROR | OFFLINE
     const [searchState, setSearchState] = useState(initialQuery ? 'LOADING' : 'IDLE');
@@ -464,31 +464,46 @@ const SearchPage = () => {
         inputRef.current?.focus();
     };
 
-    return (
-        <div className="min-h-screen bg-[#08080C] text-white pb-28 relative overflow-x-hidden">
-            {/* Ambient Background Glows */}
-            <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-gradient-to-br from-purple-500/5 via-red-500/5 to-transparent blur-[120px] rounded-full pointer-events-none z-0" />
-            <div className="absolute top-[40%] left-[-100px] w-[400px] h-[400px] bg-[#E50914]/[0.02] blur-[100px] rounded-full pointer-events-none z-0" />
+    const typeOf = (item) => item.type || getContentType(item);
 
+    const personTile = (person, large = false) => {
+        const avatar = person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : null;
+        return (
+            <button
+                key={`person_${person.id}`}
+                type="button"
+                onClick={() => handleItemClick(person)}
+                className={`group flex flex-none flex-col items-center text-center ${large ? 'w-full' : 'w-24'}`}
+            >
+                <span className={`mb-2.5 block overflow-hidden rounded-full bg-[#101016] ring-1 ring-white/10 transition-all duration-300 group-hover:ring-2 group-hover:ring-white ${large ? 'h-24 w-24 sm:h-28 sm:w-28' : 'h-20 w-20'}`}>
+                    {avatar ? (
+                        <img src={avatar} alt="" loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                    ) : (
+                        <span className="grid h-full w-full place-items-center font-display text-xl font-bold text-white/30">{person.name.charAt(0)}</span>
+                    )}
+                </span>
+                <span className="w-full truncate text-[13px] font-semibold text-white/85 transition-colors group-hover:text-white">{person.name}</span>
+                {large && person.known_for_department && <span className="text-xs text-white/40">{person.known_for_department}</span>}
+            </button>
+        );
+    };
+
+    return (
+        <div className="min-h-screen bg-[#060608] pb-12 text-white">
             <Helmet>
                 <title>{t('search.title')} - ALTYFLIX</title>
                 <meta name="robots" content="noindex" />
             </Helmet>
 
-            <div className="max-w-[1920px] mx-auto pt-4 md:pt-24 pt-safe-top-search relative z-10">
-                {/* ── Search Header ── */}
-                <div className="px-4 md:px-[5%] mb-8">
-                    {/* Title */}
-                    <h1 className="hidden md:block text-4xl font-black text-white mb-6 uppercase tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
+            <div className="pt-safe-top-search pt-4 md:pt-32">
+                <div className="mb-7 px-4 md:px-[5%]">
+                    <h1 className="mb-6 hidden font-display text-4xl font-bold tracking-tight text-white sm:text-5xl md:block">
                         {t('search.title')}
                     </h1>
-
-                    {/* Search Input Container */}
                     <SearchInputBar
                         query={query}
                         setQuery={setQuery}
                         inputRef={inputRef}
-                        setInputFocused={setInputFocused}
                         debounceRef={debounceRef}
                         setDebouncedQuery={setDebouncedQuery}
                         setSelectedGenre={setSelectedGenre}
@@ -498,7 +513,6 @@ const SearchPage = () => {
                         isSpeechSupported={isSpeechSupported}
                         isListening={isListening}
                         toggleVoiceSearch={toggleVoiceSearch}
-                        t={t}
                     />
                 </div>
 
@@ -518,329 +532,159 @@ const SearchPage = () => {
                     t={t}
                 />
 
-                {/* ── Main Content Area ── */}
-                <div className="px-4 md:px-[5%] relative z-10">
-                    {/* Did you mean suggestion banner (Section 12 & 20) */}
-                    {isSearching && didYouMean && (
-                        <div className="mb-6 flex items-center gap-2 text-sm text-white/70 bg-white/[0.03] border border-white/10 px-4 py-2.5 rounded-2xl w-fit">
-                            <span>Essayez avec l&apos;orthographe :</span>
+                <div className="px-4 md:px-[5%]">
+                    {isSearching && didYouMean && searchState === 'RESULTS' && (
+                        <p className="mb-6 text-sm text-white/55">
+                            Essayez aussi{' '}
                             <button
                                 type="button"
-                                onClick={() => {
-                                    setQuery(didYouMean);
-                                    setDebouncedQuery(didYouMean);
-                                }}
-                                className="font-bold text-[#E50914] hover:underline underline-offset-4 flex items-center gap-1"
+                                onClick={() => { setQuery(didYouMean); setDebouncedQuery(didYouMean); }}
+                                className="font-semibold text-white underline underline-offset-4 hover:text-[#ff5a63]"
                             >
-                                <span>{didYouMean}</span>
-                                <span className="text-xs">→</span>
+                                {didYouMean}
                             </button>
-                        </div>
+                        </p>
                     )}
 
                     <AnimatePresence mode="wait">
-                        {/* Offline State */}
                         {searchState === 'OFFLINE' && (
-                            <motion.div
-                                key="offline"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0 }}
-                                className="text-center py-20 backdrop-blur-md bg-amber-500/10 border border-amber-500/30 rounded-3xl p-8 max-w-md mx-auto"
-                            >
-                                <span className="text-4xl mb-3 block">📡</span>
-                                <h3 className="text-lg font-bold text-amber-200 mb-2">Vous êtes hors ligne</h3>
-                                <p className="text-white/60 text-sm">Veuillez vérifier votre connexion internet pour effectuer des recherches.</p>
-                            </motion.div>
-                        )}
-
-                        {/* Error State */}
-                        {searchState === 'ERROR' && (
-                            <motion.div
-                                key="error"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0 }}
-                                className="text-center py-20 backdrop-blur-md bg-red-500/10 border border-red-500/30 rounded-3xl p-8 max-w-md mx-auto"
-                            >
-                                <span className="text-4xl mb-3 block">⚠️</span>
-                                <h3 className="text-lg font-bold text-red-200 mb-2">Erreur de chargement</h3>
-                                <p className="text-white/60 text-sm mb-4">{errorMessage || 'Impossible de contacter les serveurs de recherche.'}</p>
-                                <button
-                                    type="button"
-                                    onClick={() => executeMediaSearch(debouncedQuery, filter, 1)}
-                                    className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold uppercase tracking-wider transition-all"
+                            <motion.div key="offline" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="py-10">
+                                <EmptyState
+                                    title="Vous êtes hors ligne"
+                                    icon={<svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18M8.5 16.5a5 5 0 017 0M5 13a10 10 0 014-2.5m6 0A10 10 0 0119 13M2 9.5a15 15 0 014.5-3m5-1.4A15 15 0 0122 9.5M12 20h.01" /></svg>}
                                 >
-                                    Réessayer
-                                </button>
+                                    Vérifiez votre connexion internet pour lancer une recherche.
+                                </EmptyState>
                             </motion.div>
                         )}
 
-                        {/* Loading spinner */}
+                        {searchState === 'ERROR' && (
+                            <motion.div key="error" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="py-10">
+                                <EmptyState
+                                    tone="error"
+                                    title="La recherche a échoué"
+                                    icon={<svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.3 3.9L2.6 17.3A2 2 0 004.3 20h15.4a2 2 0 001.7-2.7L13.7 3.9a2 2 0 00-3.4 0z" /></svg>}
+                                    action={<Button onClick={() => executeMediaSearch(debouncedQuery, filter, 1)}>Réessayer</Button>}
+                                >
+                                    {errorMessage || 'Impossible de contacter le service de recherche.'}
+                                </EmptyState>
+                            </motion.div>
+                        )}
+
                         {loading && (
-                            <motion.div
-                                key="loading"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="flex flex-col items-center justify-center py-24 gap-4"
-                            >
-                                <div className="w-10 h-10 rounded-full animate-spin border-t-[#E50914]" style={{ border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#E50914' }} />
-                                <p className="text-xs font-bold uppercase tracking-widest text-white/40">Recherche en cours...</p>
+                            <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="status">
+                                <span className="sr-only">Recherche en cours…</span>
+                                <GridSkeleton count={14} />
                             </motion.div>
                         )}
 
-                        {/* Search Results Display */}
                         {!loading && searchState === 'RESULTS' && (
-                            <motion.div
-                                key="results"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0 }}
-                            >
-                                <p className="text-white/40 text-sm mb-6 font-light">
-                                    {results.length} {results.length === 1 ? t('search.results') : t('search.resultsPlural')} {t('search.for')} <span className="text-white font-semibold">{`"${debouncedQuery}"`}</span>
+                            <motion.div key="results" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                                <p className="mb-6 text-sm text-white/45">
+                                    {results.length} {results.length === 1 ? t('search.results') : t('search.resultsPlural')} {t('search.for')}{' '}
+                                    <span className="font-semibold text-white">«&nbsp;{debouncedQuery}&nbsp;»</span>
                                 </p>
-                                
-                                <div className="space-y-10">
-                                    {/* Split: People/Actors Row when on 'all' tab */}
+
+                                <div className="space-y-12">
                                     {filter === 'all' && people.length > 0 && (
-                                        <div className="backdrop-blur-md bg-white/[0.02] border border-white/[0.08] rounded-3xl p-6 shadow-xl relative overflow-hidden">
-                                            <div className="absolute top-0 left-0 w-1.5 h-full bg-[#E50914]" />
-                                            <h3 className="text-white/80 font-black text-xs uppercase tracking-widest mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                                                {t('search.people')}
-                                            </h3>
-                                            <div className="flex gap-6 overflow-x-auto no-scrollbar pb-2">
-                                                {people.map(person => {
-                                                    const avatar = person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : null;
-                                                    return (
-                                                        <motion.button
-                                                            key={`person_${person.id}`}
-                                                            onClick={() => handleItemClick(person)}
-                                                            whileHover={{ scale: 1.05 }}
-                                                            whileTap={{ scale: 0.95 }}
-                                                            className="flex flex-col items-center flex-shrink-0 text-center w-24 group"
-                                                        >
-                                                            <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-white/10 group-hover:border-[#E50914] transition-colors duration-300 bg-white/5 mb-2 shadow-md">
-                                                                {avatar ? (
-                                                                    <img src={avatar} alt={person.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                                                                ) : (
-                                                                    <div className="w-full h-full flex items-center justify-center text-white/30 text-base font-black">
-                                                                        {person.name.charAt(0)}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            <span className="text-white text-xs font-semibold truncate w-full group-hover:text-[#E50914] transition-colors">{person.name}</span>
-                                                        </motion.button>
-                                                    );
-                                                })}
+                                        <section>
+                                            <SectionTitle>{t('search.people')}</SectionTitle>
+                                            <div className="no-scrollbar -mx-4 flex gap-5 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0">
+                                                {people.map(person => personTile(person))}
                                             </div>
-                                        </div>
+                                        </section>
                                     )}
 
-                                    {/* Movies and Series Grid */}
                                     {moviesAndSeries.length > 0 && (
-                                        <div>
-                                            {filter === 'all' && people.length > 0 && (
-                                                <h3 className="text-white/40 font-black text-xs uppercase tracking-widest mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                                                    {t('search.titles')}
-                                                </h3>
-                                            )}
-                                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-x-4 gap-y-6">
-                                                {moviesAndSeries.map((item) => (
-                                                    <MovieCard
-                                                        key={`${item.type || getContentType(item)}_${item.id}`}
-                                                        content={item}
-                                                        portrait={true}
-                                                        contentType={item.type || getContentType(item)}
-                                                    />
+                                        <section>
+                                            {filter === 'all' && people.length > 0 && <SectionTitle>{t('search.titles')}</SectionTitle>}
+                                            <PosterGrid>
+                                                {moviesAndSeries.map(item => (
+                                                    <PosterCard key={`${typeOf(item)}_${item.id}`} item={item} type={typeOf(item)} showType />
                                                 ))}
-                                            </div>
-                                        </div>
+                                            </PosterGrid>
+                                        </section>
                                     )}
 
-                                    {/* Dedicated People-only Grid */}
                                     {filter === 'person' && people.length > 0 && (
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-5">
-                                            {people.map(person => {
-                                                const avatar = person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : null;
-                                                return (
-                                                    <motion.button
-                                                        key={`person_${person.id}`}
-                                                        onClick={() => handleItemClick(person)}
-                                                        whileHover={{ scale: 1.04 }}
-                                                        whileTap={{ scale: 0.96 }}
-                                                        className="flex flex-col items-center text-center p-4 bg-white/[0.02] border border-white/[0.06] hover:border-white/20 rounded-2xl transition-all shadow-md group"
-                                                    >
-                                                        <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-white/10 group-hover:border-[#E50914] transition-colors duration-300 bg-white/5 mb-3 shadow-md">
-                                                            {avatar ? (
-                                                                <img src={avatar} alt={person.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                                                            ) : (
-                                                                <div className="w-full h-full flex items-center justify-center text-white/30 text-lg font-black bg-[#141414]">
-                                                                    {person.name.charAt(0)}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                        <span className="text-white text-sm font-bold truncate w-full group-hover:text-[#E50914] transition-colors">{person.name}</span>
-                                                        {person.known_for_department && <span className="text-[10px] text-white/40 mt-1">{person.known_for_department}</span>}
-                                                    </motion.button>
-                                                );
-                                            })}
+                                        <div className="grid grid-cols-3 gap-x-4 gap-y-8 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8">
+                                            {people.map(person => personTile(person, true))}
                                         </div>
                                     )}
                                 </div>
 
-                                {/* Infinite Scroll sentinel */}
-                                <div ref={sentinelRef} className="h-16 flex items-center justify-center mt-8">
-                                    {loadingMore && (
-                                        <div className="flex items-center gap-2 text-white/50 text-xs font-semibold">
-                                            <div className="w-4 h-4 border-2 border-white/20 border-t-[#E50914] rounded-full animate-spin" />
-                                            <span>Chargement de résultats supplémentaires...</span>
-                                        </div>
-                                    )}
+                                <div ref={sentinelRef} className="mt-7 min-h-16">
+                                    {loadingMore && <GridSkeleton count={7} />}
                                 </div>
                             </motion.div>
                         )}
 
-                        {/* Section 20: Empty Results Display */}
                         {!loading && searchState === 'EMPTY' && (
-                            <motion.div
-                                key="empty"
-                                initial={{ opacity: 0, scale: 0.98 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="text-center py-20 backdrop-blur-md bg-white/[0.02] border border-dashed border-white/10 rounded-3xl p-8 max-w-lg mx-auto"
-                            >
-                                <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-4 text-white/30">
-                                    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                    </svg>
-                                </div>
-                                <h2 className="text-xl font-bold text-white mb-2">{t('search.noResults')}</h2>
-                                <p className="text-white/40 text-sm mb-4 leading-relaxed">
-                                    {`Nous n'avons rien trouvé pour « `}
-                                    <span className="text-white font-semibold">{debouncedQuery}</span>
-                                    {` ».`}
-                                </p>
-
-                                {didYouMean && (
-                                    <div className="mt-6 pt-6 border-t border-white/10 flex flex-col items-center gap-2">
-                                        <span className="text-xs text-white/50 uppercase tracking-widest font-semibold">Tu voulais peut-être dire :</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setQuery(didYouMean);
-                                                setDebouncedQuery(didYouMean);
-                                            }}
-                                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#E50914]/20 border border-[#E50914]/50 text-white font-bold text-sm hover:bg-[#E50914] transition-all duration-200 shadow-[0_0_20px_rgba(229,9,20,0.3)]"
-                                        >
-                                            <span>🔍</span>
-                                            <span>{didYouMean}</span>
-                                        </button>
-                                    </div>
-                                )}
+                            <motion.div key="empty" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="py-10">
+                                <EmptyState
+                                    title={t('search.noResults')}
+                                    icon={<svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>}
+                                    action={didYouMean && (
+                                        <Button variant="glass" onClick={() => { setQuery(didYouMean); setDebouncedQuery(didYouMean); }}>
+                                            Rechercher « {didYouMean} »
+                                        </Button>
+                                    )}
+                                >
+                                    Rien ne correspond à « <span className="font-semibold text-white">{debouncedQuery}</span> ». Vérifiez l’orthographe ou essayez un autre titre.
+                                </EmptyState>
                             </motion.div>
                         )}
 
-                        {/* Genre Selection Results */}
                         {!loading && showGenreSection && (
-                            <motion.div
-                                key="genre"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0 }}
-                            >
-                                <h2 className="text-white font-black text-xl mb-6 uppercase tracking-wider" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                                    {GENRE_CHIPS.find(g => g.id === selectedGenre)?.label}
-                                </h2>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-x-4 gap-y-6">
-                                    {genreResults.map((item) => (
-                                        <MovieCard
-                                            key={`${getContentType(item)}_${item.id}`}
-                                            content={item}
-                                            portrait={true}
-                                            contentType={getContentType(item)}
-                                        />
+                            <motion.section key="genre" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                                <SectionTitle>{GENRE_CHIPS.find(g => g.id === selectedGenre)?.label}</SectionTitle>
+                                <PosterGrid>
+                                    {genreResults.map(item => (
+                                        <PosterCard key={`${getContentType(item)}_${item.id}`} item={item} type={getContentType(item)} />
                                     ))}
-                                </div>
-                            </motion.div>
+                                </PosterGrid>
+                            </motion.section>
                         )}
 
-                        {/* Trending List (Default View) */}
-                        {!loading && showTrending && (
-                            <motion.div
-                                key="trending"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0 }}
-                            >
-                                <h2 className="text-white font-black text-xl mb-6 uppercase tracking-wider" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                                    {t('search.trending')}
-                                </h2>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-x-4 gap-y-6">
-                                    {trending.map((item) => (
-                                        <MovieCard
-                                            key={`${getContentType(item)}_${item.id}`}
-                                            content={item}
-                                            portrait={true}
-                                            contentType={getContentType(item)}
-                                        />
+                        {!loading && showTrending && trending.length > 0 && (
+                            <motion.section key="trending" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                                <SectionTitle>{t('search.trending')}</SectionTitle>
+                                <PosterGrid>
+                                    {trending.map(item => (
+                                        <PosterCard key={`${getContentType(item)}_${item.id}`} item={item} type={getContentType(item)} showType />
                                     ))}
-                                </div>
-                            </motion.div>
+                                </PosterGrid>
+                            </motion.section>
                         )}
                     </AnimatePresence>
                 </div>
             </div>
 
-            {/* Premium Voice Search Full-Screen Modal Overlay */}
+            {/* Voice search overlay */}
             <AnimatePresence>
                 {isListening && (
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center text-center p-6"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={t('search.voiceListening')}
+                        className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[#060608]/90 p-6 text-center backdrop-blur-xl"
                     >
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-[#E50914]/10 blur-[120px] rounded-full pointer-events-none" />
-                        
-                        {/* Bouncing Audio soundwave bars */}
-                        <div className="flex items-end justify-center gap-1.5 h-20 mb-8">
+                        <div className="mb-10 flex h-16 items-center justify-center gap-1.5" aria-hidden="true">
                             {[...Array(9)].map((_, i) => (
-                                <motion.div
+                                <motion.span
                                     key={i}
-                                    className="w-1.5 bg-[#E50914] rounded-full"
-                                    animate={{
-                                        height: [16, [32, 64, 48, 80][i % 4], 16],
-                                    }}
-                                    transition={{
-                                        duration: 0.6 + (i * 0.05),
-                                        repeat: Infinity,
-                                        ease: "easeInOut",
-                                    }}
-                                    style={{ originY: 1 }}
+                                    className="w-1.5 rounded-full bg-white"
+                                    animate={{ height: [10, [28, 56, 40, 64][i % 4], 10] }}
+                                    transition={{ duration: 0.6 + (i * 0.05), repeat: Infinity, ease: 'easeInOut' }}
                                 />
                             ))}
                         </div>
-
-                        {/* Microphone Icon glowing */}
-                        <motion.div
-                            animate={{ scale: [1, 1.08, 1] }}
-                            transition={{ duration: 1.5, repeat: Infinity }}
-                            className="w-20 h-20 rounded-full bg-[#E50914] text-white flex items-center justify-center shadow-[0_0_50px_rgba(229,9,20,0.6)] mb-6 cursor-pointer"
-                            onClick={toggleVoiceSearch}
-                        >
-                            <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-                            </svg>
-                        </motion.div>
-
-                        <h3 className="text-2xl font-black text-white mb-2 uppercase tracking-widest animate-pulse" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                            {t('search.voiceListening')}
-                        </h3>
-                        <p className="text-white/40 text-sm max-w-sm font-light">
-                            {t('search.voiceHint')}
-                        </p>
+                        <h2 className="font-display text-2xl font-bold text-white">{t('search.voiceListening')}</h2>
+                        <p className="mt-2 max-w-sm text-sm text-white/50">{t('search.voiceHint')}</p>
+                        <div className="mt-8"><Button variant="glass" onClick={toggleVoiceSearch}>Arrêter</Button></div>
                     </motion.div>
                 )}
             </AnimatePresence>

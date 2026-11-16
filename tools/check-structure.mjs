@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { ALL_AVATARS } from '../src/core/config/avatars.js';
+import { ALL_AVATARS } from '../src/config/avatars.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 async function exactPath(relative) {

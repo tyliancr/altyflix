@@ -577,13 +577,9 @@ const LoginPage = () => {
                         {/* ── FOOTER ── */}
                         <footer className="border-t border-white/5 bg-black py-10 px-6">
                             <div className="max-w-5xl mx-auto">
-                                <p className="text-white/30 text-sm mb-6">Des questions ? <a href="mailto:contact@ALTYFLIX.app" className="underline hover:text-white/60 transition-colors">Contactez-nous.</a></p>
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-white/25 text-xs">
-                                    {['FAQ', 'Centre d\'aide', 'Presse', 'Emplois', 'Conditions d\'utilisation', 'Confidentialité', 'Mentions légales', 'Contact'].map(l => (
-                                        <span key={l} className="hover:text-white/50 transition-colors cursor-pointer">{l}</span>
-                                    ))}
-                                </div>
-                                <div className="mt-6 text-white/15 text-xs">© 2025 ALTYFLIX. Tous droits réservés.</div>
+                                <p className="text-white/40 text-sm">Des questions ? <a href="mailto:contact@ALTYFLIX.app" className="underline underline-offset-4 hover:text-white transition-colors">Contactez-nous.</a></p>
+                                <p className="mt-4 max-w-2xl text-xs leading-relaxed text-white/30">Les fiches, images et bandes-annonces proviennent de TMDB. Ce produit utilise l’API TMDB mais n’est ni approuvé ni certifié par TMDB.</p>
+                                <div className="mt-4 text-white/30 text-xs">© {new Date().getFullYear()} ALTYFLIX</div>
                             </div>
                         </footer>
                     </motion.div>
@@ -638,6 +634,7 @@ const LoginPage = () => {
                                     <input
                                         id="auth-password"
                                         type="password"
+                                        autoComplete={isLogin ? 'current-password' : 'new-password'}
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
                                         className="w-full bg-white/[0.06] border border-white/15 rounded-xl px-4 pt-5 pb-2 text-white text-base focus:outline-none focus:border-[#E50914] focus:ring-2 focus:ring-[#E50914]/30 focus:bg-white/[0.09] transition-all peer backdrop-blur-md"
@@ -662,13 +659,7 @@ const LoginPage = () => {
                                 </motion.button>
 
 
-                                <div className="flex justify-between items-center text-gray-400 text-[13px] mt-2 mb-4">
-                                    <div className="flex items-center gap-2">
-                                        <input type="checkbox" id="remember" className="w-[18px] h-[18px] rounded-md border-gray-600 bg-black/50 accent-[#E50914] cursor-pointer" />
-                                        <label htmlFor="remember" className="cursor-pointer">
-                                            {t('login.remember')}
-                                        </label>
-                                    </div>
+                                <div className="flex justify-end items-center text-gray-400 text-[13px] mt-2 mb-4">
                                     <button
                                         type="button"
                                         onClick={() => setError('Pour toute assistance, contactez le support à contact@ALTYFLIX.app')}
@@ -701,14 +692,12 @@ const LoginPage = () => {
                                 </motion.button>
                             </form>
 
-                            <div className="mt-16 text-gray-400 text-[15px]">
-                                <p onClick={() => setIsLogin(!isLogin)} className="cursor-pointer">
-                                    {isLogin
-                                        ? <span>{t('login.noAccount')} <span className="text-white hover:underline">{t('login.register')}</span></span>
-                                        : <span>{t('login.hasAccount')} <span className="text-white hover:underline">{t('login.title')}</span></span>
-                                    }
-                                </p>
-                            </div>
+                            <p className="mt-10 text-gray-400 text-[15px]">
+                                {isLogin ? t('login.noAccount') : t('login.hasAccount')}{' '}
+                                <button type="button" onClick={() => { setIsLogin(!isLogin); setError(''); }} className="font-semibold text-white underline-offset-4 hover:underline">
+                                    {isLogin ? t('login.register') : t('login.title')}
+                                </button>
+                            </p>
                         </div>
                     </motion.div>
                 ) : (

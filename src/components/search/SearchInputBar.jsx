@@ -4,7 +4,6 @@ export default function SearchInputBar({
     query,
     setQuery,
     inputRef,
-    setInputFocused,
     debounceRef,
     setDebouncedQuery,
     setSelectedGenre,
@@ -14,20 +13,18 @@ export default function SearchInputBar({
     isSpeechSupported,
     isListening,
     toggleVoiceSearch,
-    _t
 }) {
     return (
-        <div className="relative flex items-center gap-3">
+        <div className="flex max-w-4xl items-center gap-2.5">
             <div className="relative flex-1">
-                <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40 pointer-events-none z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                <svg className="pointer-events-none absolute left-5 top-1/2 z-10 h-5 w-5 -translate-y-1/2 text-white/45" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <input
                     ref={inputRef}
                     type="search"
+                    aria-label="Rechercher un titre, une personne ou un genre"
                     value={query}
-                    onFocus={() => setInputFocused(true)}
-                    onBlur={() => setTimeout(() => setInputFocused(false), 250)}
                     onChange={e => { setQuery(e.target.value.slice(0, 200)); setSelectedGenre(null); }}
                     onKeyDown={(e) => {
                         if (e.key === 'Enter') {
@@ -37,61 +34,59 @@ export default function SearchInputBar({
                         }
                     }}
                     maxLength={200}
-                    className="w-full bg-white/[0.04] border border-white/10 rounded-2xl pl-12 pr-12 py-4 text-white text-base placeholder-white/20 outline-none focus:border-[#E50914]/50 focus:ring-2 focus:ring-[#E50914]/20 focus:bg-white/[0.06] transition-all duration-300 shadow-inner"
+                    className="h-14 w-full rounded-2xl border border-white/12 bg-white/[0.06] pl-[3.25rem] pr-12 text-base text-white outline-none transition-colors duration-200 hover:border-white/25 focus:border-white/60 focus:bg-white/[0.09] sm:h-16 sm:text-lg [&::-webkit-search-cancel-button]:hidden"
                     style={{ WebkitAppearance: 'none' }}
                     autoComplete="off"
                     autoCorrect="off"
                     spellCheck="false"
                     enterKeyHint="search"
                 />
-                {/* Animated placeholder */}
                 {!query && (
-                    <div className="absolute left-12 top-1/2 -translate-y-1/2 pointer-events-none overflow-hidden h-6">
+                    <div className="pointer-events-none absolute left-[3.25rem] top-1/2 h-7 -translate-y-1/2 overflow-hidden" aria-hidden="true">
                         <AnimatePresence mode="wait">
                             <motion.span
                                 key={placeholderIndex}
-                                initial={{ y: 15, opacity: 0 }}
+                                initial={{ y: 14, opacity: 0 }}
                                 animate={{ y: 0, opacity: 1 }}
-                                exit={{ y: -15, opacity: 0 }}
+                                exit={{ y: -14, opacity: 0 }}
                                 transition={{ duration: 0.3 }}
-                                className="block text-white/30 text-base font-light"
+                                className="block text-base leading-7 text-white/35 sm:text-lg"
                             >
                                 {placeholderList[placeholderIndex] || 'Que veux-tu regarder ?'}
                             </motion.span>
                         </AnimatePresence>
                     </div>
                 )}
-                {/* Clear button */}
                 {query && (
                     <button
                         type="button"
                         onClick={clearQuery}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+                        className="absolute right-4 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full bg-white/10 transition-colors hover:bg-white/25"
                         aria-label="Effacer la recherche"
                     >
-                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                        <svg className="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.8} d="M6 18L18 6M6 6l12 12" />
                         </svg>
                     </button>
                 )}
             </div>
 
-            {/* Voice Search Button */}
             {isSpeechSupported && (
-                <motion.button
-                    whileTap={{ scale: 0.95 }}
+                <button
+                    type="button"
                     onClick={toggleVoiceSearch}
-                    className={`flex-shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center border transition-all duration-300 ${
-                        isListening
-                            ? 'bg-[#E50914] border-[#E50914] text-white shadow-[0_0_20px_rgba(229,9,20,0.4)]'
-                            : 'bg-white/[0.04] border-white/10 text-white/70 hover:text-white hover:border-white/20'
-                    }`}
                     aria-label="Recherche vocale"
+                    aria-pressed={isListening}
+                    className={`grid h-14 w-14 flex-none place-items-center rounded-2xl border transition-colors duration-200 active:scale-95 sm:h-16 sm:w-16 ${
+                        isListening
+                            ? 'border-white bg-white text-black'
+                            : 'border-white/12 bg-white/[0.06] text-white/70 hover:border-white/30 hover:text-white'
+                    }`}
                 >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                     </svg>
-                </motion.button>
+                </button>
             )}
         </div>
     );

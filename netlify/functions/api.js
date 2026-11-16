@@ -3,7 +3,7 @@ import security from '../../server/security.cjs';
 const { SECURITY_HEADERS, HttpError, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter } = security;
 
 
-const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
+const TMDB_API_KEY = process.env.TMDB_API_KEY || 'a0819950449844817a0942ca79a4ccb0';
 
 const memoryCache = new BoundedCache(250);
 const getCache = key => memoryCache.get(key);

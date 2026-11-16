@@ -1,8 +1,9 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useProfile } from '../contexts/ProfileContext';
 import { useAuth } from '../contexts/AuthContext';
+import { DEFAULT_AVATARS } from '../config/constants';
 
 const MobileBottomNav = () => {
     const { currentProfile } = useProfile();
@@ -66,7 +67,7 @@ const MobileBottomNav = () => {
             icon: (_active) => (
                 <div className="w-7 h-7 rounded-lg overflow-hidden border-2 border-white/30">
                     <img
-                        src={currentProfile?.avatar || 'https://upload.wikimedia.org/wikipedia/commons/0/0b/Netflix-avatar.png'}
+                        src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
                         alt="Profil"
                         className="w-full h-full object-cover"
                     />
@@ -104,7 +105,7 @@ const MobileBottomNav = () => {
                             <div className="flex items-center gap-4 px-6 pb-5 border-b border-white/10 mb-2">
                                 <div className="w-14 h-14 rounded-xl overflow-hidden border-2 border-white/20">
                                     <img
-                                        src={currentProfile?.avatar || 'https://upload.wikimedia.org/wikipedia/commons/0/0b/Netflix-avatar.png'}
+                                        src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
                                         alt="Profil"
                                         className="w-full h-full object-cover"
                                     />

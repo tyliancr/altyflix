@@ -8,14 +8,13 @@ const CastMember = ({ member, onClick }) => {
         : null;
 
     return (
-        <div
-            onClick={(e) => {
-                e.preventDefault();
-                onClick(member.id);
-            }}
-            className="flex-shrink-0 w-[8.5rem] text-center cursor-pointer group select-none animate-fade-in relative transition-all duration-300 hover:-translate-y-1"
+        <button
+            type="button"
+            onClick={() => onClick(member.id)}
+            aria-label={`Voir la fiche de ${member.name}`}
+            className="flex-shrink-0 w-[7.5rem] text-left cursor-pointer group select-none relative transition-transform duration-300 hover:-translate-y-1"
         >
-            <div className="w-full aspect-[2/3] rounded-2xl overflow-hidden bg-white/[0.02] relative border border-white/[0.06] group-hover:border-white/20 shadow-md group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-all duration-300">
+            <div className="w-full aspect-[2/3] rounded-xl overflow-hidden bg-[#101016] relative ring-1 ring-inset ring-white/[0.07] group-hover:ring-white/25 transition-all duration-300">
                 {!loaded && !error && <div className="absolute inset-0 skeleton" />}
                 {photoUrl && !error ? (
                     <img
@@ -37,16 +36,10 @@ const CastMember = ({ member, onClick }) => {
                     </div>
                 )}
 
-                {/* Premium hover overlay for character/role */}
-                {member.character && (
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 flex flex-col justify-end p-2.5 text-left pointer-events-none">
-                        <span className="text-[8px] uppercase tracking-widest text-[#E50914] font-black mb-0.5">Rôle</span>
-                        <p className="text-white text-[10px] font-bold line-clamp-2 leading-tight">{member.character}</p>
-                    </div>
-                )}
             </div>
-            <p className="text-white/80 text-xs font-bold line-clamp-1 mt-2.5 transition-colors group-hover:text-white">{member.name}</p>
-        </div>
+            <p className="text-white/90 text-[13px] font-semibold line-clamp-1 mt-2.5 transition-colors group-hover:text-white">{member.name}</p>
+            {member.character && <p className="text-white/45 text-xs line-clamp-1">{member.character}</p>}
+        </button>
     );
 };
 

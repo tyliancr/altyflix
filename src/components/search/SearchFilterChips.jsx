@@ -1,5 +1,17 @@
-import { motion } from 'framer-motion';
 import { GENRE_CHIPS, SEARCH_TYPES } from './SearchConstants';
+import { SegmentedControl } from '../ui/Primitives';
+
+const SORTS = [
+    { id: 'popularity', label: 'Pertinence' },
+    { id: 'date', label: 'Récents' },
+    { id: 'rating', label: 'Mieux notés' },
+];
+
+const chip = (active) => `flex-none whitespace-nowrap rounded-full border px-4 py-2 text-[13px] font-semibold transition-colors duration-200 ${
+    active
+        ? 'border-white bg-white text-black'
+        : 'border-white/12 bg-white/[0.04] text-white/70 hover:border-white/30 hover:text-white'
+}`;
 
 export default function SearchFilterChips({
     isSearching,
@@ -16,119 +28,61 @@ export default function SearchFilterChips({
     setSortBy,
     t
 }) {
+    if (isSearching) {
+        return (
+            <div className="mb-7 flex flex-wrap items-center justify-between gap-3 px-4 md:px-[5%]">
+                <SegmentedControl
+                    label="Type de résultat"
+                    value={filter}
+                    onChange={setFilter}
+                    options={SEARCH_TYPES.map(type => ({ id: type.key, label: t(`search.filters.${type.labelKey}`) }))}
+                />
+                <label className="flex items-center gap-2.5 text-xs font-semibold text-white/45">
+                    <span className="hidden sm:inline">Trier par</span>
+                    <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="field-select h-9 text-xs" aria-label="Trier les résultats">
+                        {SORTS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                    </select>
+                </label>
+            </div>
+        );
+    }
+
     return (
-        <>
-            {/* ── Search History & Default States ── */}
-            {!isSearching && (
-                <div className="px-4 md:px-[5%]">
-                    {/* Recent Searches Panel */}
-                    {recentSearches.length > 0 && (
-                        <div className="mb-8">
-                            <div className="flex items-center justify-between mb-4">
-                                <h2 className="text-white/40 font-black text-xs uppercase tracking-widest" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                                    {t('search.recentSearches')}
-                                </h2>
-                                <button 
-                                    type="button"
-                                    onClick={clearAllRecentSearches}
-                                    className="text-white/30 hover:text-[#E50914] font-black text-[10px] uppercase tracking-widest transition-colors"
-                                >
-                                    {t('search.clearAll')}
+        <div className="px-4 md:px-[5%]">
+            {recentSearches.length > 0 && (
+                <div className="mb-7">
+                    <div className="mb-3 flex items-center justify-between">
+                        <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/40">{t('search.recentSearches')}</h2>
+                        <button type="button" onClick={clearAllRecentSearches} className="text-xs font-semibold text-white/40 transition-colors hover:text-white">
+                            {t('search.clearAll')}
+                        </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {recentSearches.map(term => (
+                            <span key={term} className="flex items-center rounded-full border border-white/12 bg-white/[0.04] text-[13px] font-semibold text-white/75 transition-colors hover:border-white/30 hover:text-white">
+                                <button type="button" onClick={() => { setQuery(term); setDebouncedQuery(term); }} className="flex items-center gap-2 py-2 pl-3.5 pr-1.5">
+                                    <svg className="h-3.5 w-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                    {term}
                                 </button>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                                {recentSearches.map((term, index) => (
-                                    <motion.div
-                                        key={index}
-                                        onClick={() => { setQuery(term); setDebouncedQuery(term); }}
-                                        whileHover={{ scale: 1.02 }}
-                                        whileTap={{ scale: 0.98 }}
-                                        className="flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.08] hover:border-white/20 px-4 py-2.5 rounded-full text-sm font-semibold text-white/80 hover:text-white cursor-pointer transition-all duration-300 shadow-md group/tag"
-                                    >
-                                        <span>{term}</span>
-                                        <button 
-                                            type="button"
-                                            onClick={(e) => deleteRecentSearch(e, term)}
-                                            className="w-4 h-4 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors scale-90 group-hover/tag:scale-100"
-                                        >
-                                            <svg className="w-2.5 h-2.5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                                            </svg>
-                                        </button>
-                                    </motion.div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Genre Chips */}
-                    <div className="mb-8 overflow-x-auto no-scrollbar">
-                        <div className="flex gap-2 pb-1" style={{ width: 'max-content' }}>
-                            {GENRE_CHIPS.map(genre => {
-                                const isActive = genre.id === null ? selectedGenre === null : selectedGenre === genre.id;
-                                return (
-                                    <motion.button
-                                        key={genre.id ?? 'all'}
-                                        onClick={() => setSelectedGenre(genre.id === null ? null : genre.id)}
-                                        whileTap={{ scale: 0.95 }}
-                                        className={`flex items-center px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap transition-all border duration-300 ${
-                                            isActive
-                                                ? 'bg-[#E50914] text-white border-[#E50914] shadow-[0_0_15px_rgba(229,9,20,0.4)]'
-                                                : 'bg-white/[0.03] backdrop-blur-md text-white/70 border-white/10 hover:bg-white/[0.08] hover:text-white hover:border-white/25'
-                                        }`}
-                                    >
-                                        <span>{genre.label}</span>
-                                    </motion.button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Search Type Filter Tabs + Sort (when actively searching) ── */}
-            {isSearching && (
-                <div className="px-4 md:px-[5%] mb-8 flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar py-1">
-                        {SEARCH_TYPES.map(type => (
-                            <motion.button
-                                key={type.key}
-                                onClick={() => setFilter(type.key)}
-                                whileTap={{ scale: 0.95 }}
-                                className={`flex-shrink-0 px-5 py-2.5 rounded-full text-xs font-black uppercase tracking-widest transition-all border ${
-                                    filter === type.key
-                                        ? 'bg-white text-black border-white shadow-md'
-                                        : 'bg-white/[0.04] text-white/70 border-white/10 hover:bg-white/10 hover:border-white/25 hover:text-white'
-                                }`}
-                            >
-                                {t(`search.filters.${type.labelKey}`)}
-                            </motion.button>
-                        ))}
-                    </div>
-
-                    {/* Sort selector */}
-                    <div className="flex items-center gap-2 text-xs font-bold text-white/50">
-                        <span className="hidden sm:inline">Trier par :</span>
-                        {[
-                            { key: 'popularity', label: 'Pertinence' },
-                            { key: 'date', label: 'Récents' },
-                            { key: 'rating', label: 'Mieux notés' },
-                        ].map(s => (
-                            <button
-                                key={s.key}
-                                onClick={() => setSortBy(s.key)}
-                                className={`px-3 py-1.5 rounded-xl border text-[11px] uppercase tracking-wider font-bold transition-all ${
-                                    sortBy === s.key
-                                        ? 'bg-white text-black border-white shadow-md'
-                                        : 'bg-white/[0.03] text-white/60 border-white/10 hover:text-white hover:border-white/25'
-                                }`}
-                            >
-                                {s.label}
-                            </button>
+                                <button type="button" onClick={(e) => deleteRecentSearch(e, term)} aria-label={`Supprimer « ${term} » de l’historique`} className="grid h-full place-items-center py-2 pl-1 pr-3 text-white/35 transition-colors hover:text-white">
+                                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </span>
                         ))}
                     </div>
                 </div>
             )}
-        </>
+
+            <div className="no-scrollbar -mx-4 mb-9 flex gap-2 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
+                {GENRE_CHIPS.map(genre => {
+                    const active = genre.id === null ? selectedGenre === null : selectedGenre === genre.id;
+                    return (
+                        <button key={genre.id ?? 'all'} type="button" aria-pressed={active} onClick={() => setSelectedGenre(genre.id)} className={chip(active)}>
+                            {genre.label}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
     );
 }

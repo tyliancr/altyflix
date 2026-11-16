@@ -75,7 +75,7 @@ export default function NetflixPlayer({
     // Navigation state
     const [season, setSeason] = useState(initialSeason);
     const [episode, setEpisode] = useState(initialEpisode);
-    const [audioLang, setAudioLang] = useState(preferredLang.toUpperCase().includes('VO') ? 'VOSTFR' : 'VF');
+    const [audioLang, setAudioLang] = useState('VOSTFR');
     const [tvDetails, setTvDetails] = useState(content);
     const [currentEpTitle, setCurrentEpTitle] = useState('');
     const [nextEpAvailable, setNextEpAvailable] = useState(false);
@@ -940,12 +940,6 @@ export default function NetflixPlayer({
                     <p className="text-gray-400 text-sm max-w-md mb-6">{errorMessage}</p>
                     <div className="flex gap-4">
                         <button
-                            onClick={() => setAudioLang(l => l === 'VF' ? 'VOSTFR' : 'VF')}
-                            className="px-6 py-2.5 rounded bg-white/10 hover:bg-white/20 text-white font-semibold text-sm transition-all"
-                        >
-                            Tester en {audioLang === 'VF' ? 'VOSTFR' : 'VF'}
-                        </button>
-                        <button
                             onClick={handleClose}
                             className="px-6 py-2.5 rounded bg-[#e50914] hover:bg-[#b80710] text-white font-semibold text-sm transition-all"
                         >
@@ -1238,20 +1232,10 @@ export default function NetflixPlayer({
                                                         </button>
                                                     ))
                                                 ) : (
-                                                    ['VF', 'VOSTFR'].map((l) => (
-                                                        <button
-                                                            key={l}
-                                                            onClick={() => handleVersionSwitch(l)}
-                                                            className={`w-full text-left px-2 py-1.5 rounded font-medium text-xs flex items-center justify-between outline-none focus:outline-none transition-colors ${
-                                                                audioLang === l
-                                                                    ? 'text-white font-bold bg-white/10'
-                                                                    : 'hover:text-white text-gray-400'
-                                                            }`}
-                                                        >
-                                                            <span>{l === 'VF' ? 'Français [VF]' : 'Original [VOSTFR]'}</span>
-                                                            {audioLang === l && <span className="text-[#e50914] font-bold">✓</span>}
-                                                        </button>
-                                                    ))
+                                                    <div className="w-full text-left px-2 py-1.5 rounded font-medium text-xs flex items-center justify-between text-white font-bold bg-white/10">
+                                                        <span>Version originale [VO]</span>
+                                                        <span className="text-[#e50914] font-bold">✓</span>
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>

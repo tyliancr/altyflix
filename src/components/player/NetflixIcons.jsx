@@ -1,5 +1,3 @@
-import React from 'react';
-
 /**
  * Official Ultra-HD Video Player Vector Icons (SVG)
  * 100% Pure Vector Paths — Matching the official Netflix Desktop Player

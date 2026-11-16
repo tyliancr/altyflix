@@ -13,30 +13,12 @@
   VITE_FIREBASE_APP_ID = "1:492409810550:web:2c177061482acb1b38f957"
   VITE_FIREBASE_MEASUREMENT_ID = "G-FEPTB7QJRK"
 
-# API vidéo (dossier /api) : ces règles doivent rester AVANT la règle générale /api/*.
-[functions.video]
-  node_bundler = "esbuild"
-  external_node_modules = ["firebase-admin", "express"]
-
-[[redirects]]
-  from = "/api/titles/*"
-  to = "/.netlify/functions/video/titles/:splat"
-  status = 200
-
-[[redirects]]
-  from = "/api/me/*"
-  to = "/.netlify/functions/video/me/:splat"
-  status = 200
-
-[[redirects]]
-  from = "/api/series/:id/seasons/:n/episodes"
-  to = "/.netlify/functions/video/series/:id/seasons/:n/episodes"
-  status = 200
-
+# Proxy transparent vers le backend Node.js hébergé sur Render
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
+  to = "https://altyflix-backend.onrender.com/api/:splat"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/avatars/Netflix/*"

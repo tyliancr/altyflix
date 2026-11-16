@@ -191,15 +191,24 @@ export default function NetflixPlayer({
                         });
                     }
                     setStreamState('ready');
+                } else if (data.fallbackUrl) {
+                    setFallbackEmbedUrl(data.fallbackUrl);
+                    setStreamState('fallback');
                 } else {
-                    setStreamState('error');
-                    setErrorMessage(data.error || 'Ce titre n\'est pas encore disponible en streaming (Film à venir ou source indisponible).');
+                    const embed = isTv
+                        ? `https://vidlink.pro/tv/${id}/${season}/${episode}`
+                        : `https://vidlink.pro/movie/${id}`;
+                    setFallbackEmbedUrl(embed);
+                    setStreamState('fallback');
                 }
             })
             .catch(err => {
                 if (!live || err.name === 'AbortError') return;
-                setStreamState('error');
-                setErrorMessage('Erreur de connexion au serveur de streaming.');
+                const embed = isTv
+                    ? `https://vidlink.pro/tv/${id}/${season}/${episode}`
+                    : `https://vidlink.pro/movie/${id}`;
+                setFallbackEmbedUrl(embed);
+                setStreamState('fallback');
             });
 
         return () => {

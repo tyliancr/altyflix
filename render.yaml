@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: altyflix-backend
+    runtime: node
+    plan: free
+    region: frankfurt # Plus proche de la France pour la latence
+    buildCommand: npm install && npx playwright install chromium
+    startCommand: node server/server-vf-api.cjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TMDB_API_KEY
+        value: a0819950449844817a0942ca79a4ccb0

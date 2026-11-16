@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function ownsProfile(id) {
+      return signedIn() && id is string &&
+        get(/databases/$(database)/documents/profiles/$(id)).data.userId == request.auth.uid;
+    }
+    match /users/{userId}/{document=**} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+    // Catalogue vidéo : lecture pour les comptes connectés, écriture uniquement par le serveur
+    // (firebase-admin ignore ces règles). Le chemin des médias seul ne permet pas la lecture :
+    // il faut une URL signée délivrée par l'API.
+    match /titles/{titleId} {
+      allow read: if signedIn() && resource.data.published == true;
+      allow write: if false;
+    }
+    match /episodes/{episodeId} {
+      allow read: if signedIn() && resource.data.published == true;
+      allow write: if false;
+    }
+    // users/{uid}/progress et users/{uid}/preferences sont couverts par la règle users ci-dessus.
+    match /profiles/{profileId} {
+      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId;
+    }
+    function validReview() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['id','contentId','userId','profileId','authorName','authorAvatar','rating','text','updatedAt']) &&
+        d.userId == request.auth.uid && ownsProfile(d.profileId) &&
+        d.contentId is string && d.contentId.size() <= 20 &&
+        d.rating is int && d.rating >= 1 && d.rating <= 5 &&
+        d.text is string && d.text.size() <= 5000 &&
+        d.authorName is string && d.authorName.size() <= 100 &&
+        d.authorAvatar is string && d.authorAvatar.size() <= 2000 &&
+        d.updatedAt == request.time;
+    }
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if signedIn() && validReview() && reviewId == request.resource.data.contentId + '_' + request.resource.data.profileId;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid && validReview() &&
+        request.resource.data.profileId == resource.data.profileId &&
+        request.resource.data.contentId == resource.data.contentId &&
+        request.resource.data.id == resource.data.id;
+      allow delete: if signedIn() && resource.data.userId == request.auth.uid;
+    }
+    match /progress/{progressId} {
+      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid && ownsProfile(request.resource.data.profileId);
+      allow update: if signedIn() && resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.profileId == resource.data.profileId &&
+        request.resource.data.contentId == resource.data.contentId && ownsProfile(resource.data.profileId);
+    }
+    function validStat() {
+      return request.resource.data.keys().hasOnly(['count','lastWatched']) &&
+        request.resource.data.count is int && request.resource.data.lastWatched == request.time;
+    }
+    match /{statsCollection}/{contentId} {
+      allow read: if statsCollection in ['stats_movies','stats_series'];
+      allow create: if statsCollection in ['stats_movies','stats_series'] && signedIn() && validStat() && request.resource.data.count == 1;
+      allow update: if statsCollection in ['stats_movies','stats_series'] && signedIn() && validStat() && request.resource.data.count == resource.data.count + 1;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

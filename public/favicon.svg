@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+    <defs>
+        <!-- Left leg and crossbar gradient: dark red -->
+        <linearGradient id="leftLegGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#9e1218" />
+            <stop offset="100%" stop-color="#5c0a0d" />
+        </linearGradient>
+
+        <!-- Right leg gradient: fades to black -->
+        <linearGradient id="rightLegGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#8a0f12" />
+            <stop offset="100%" stop-color="#0e0102" />
+        </linearGradient>
+
+        <!-- Diagonal slash gradient: vibrant bright red -->
+        <linearGradient id="diagonalGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#b8090f" />
+            <stop offset="50%" stop-color="#e50914" />
+            <stop offset="100%" stop-color="#ff2e35" />
+        </linearGradient>
+
+        <!-- Drop shadow for the diagonal slash -->
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="-1.5" dy="1.5" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.8" />
+        </filter>
+    </defs>
+
+    <!-- Left Leg -->
+    <path d="M 30 20 L 43 20 L 43 51.11 L 30 80 Z" fill="url(#leftLegGrad)" />
+
+    <!-- Crossbar -->
+    <rect x="43" y="44" width="14" height="12" fill="url(#leftLegGrad)" />
+
+    <!-- Right Leg -->
+    <path d="M 57 48.89 L 70 20 L 70 80 L 57 80 Z" fill="url(#rightLegGrad)" />
+
+    <!-- Diagonal Slash (on top with drop shadow) -->
+    <path d="M 30 80 L 43 80 L 70 20 L 57 20 Z" fill="url(#diagonalGrad)" filter="url(#shadow)" />
+</svg>

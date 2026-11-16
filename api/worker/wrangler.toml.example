@@ -1,0 +1,17 @@
+# Copier en wrangler.toml, adapter, puis : npx wrangler deploy
+name = "altyflix-media"
+main = "media-worker.js"
+compatibility_date = "2026-01-01"
+
+# Domaine public des médias (= MEDIA_BASE_URL côté API).
+routes = [{ pattern = "media.exemple.fr", custom_domain = true }]
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "altyflix-media"
+
+[vars]
+ALLOWED_ORIGINS = "https://altyflix.netlify.app"
+
+# Le secret ne va PAS dans ce fichier :
+#   npx wrangler secret put PLAYBACK_SIGNING_SECRET

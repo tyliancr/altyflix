@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: altyflix-discord-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node bot-reaction.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000

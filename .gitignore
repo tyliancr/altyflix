@@ -1,0 +1,44 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+discord-config.json
+scripts/bot-config.json
+scripts/user-data.json
+scripts/posted-cache.json
+*.zip
+
+# Netlify local files
+.netlify
+
+# Vidéo : médias encodés et données locales de développement
+media
+.data
+api/worker/wrangler.toml

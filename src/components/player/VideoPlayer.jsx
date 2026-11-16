@@ -13,31 +13,19 @@ export default function VideoPlayer({ content, onClose, initialSeason = 1, initi
     const navigate = useNavigate();
     const tmdbId = content.id || content.contentId;
     // null = vérification en cours ; false = pas de vidéo hébergée pour cette fiche.
-    const [hosted, setHosted] = useState(null);
+    const [hosted, setHosted] = useState(false);
 
     // Si cette fiche TMDB a une vidéo hébergée par ALTYFLIX, on ouvre le lecteur HLS (/watch).
     useEffect(() => {
         let cancelled = false;
-        findHostedTitle(type, tmdbId).then(id => {
-            if (cancelled) return;
-            if (!id) return setHosted(false);
-            // Épisode choisi explicitement : on l'ouvre. Sinon l'API reprend là où le profil s'était arrêté.
+        findHostedTitle(type, tmdbId, { timeout: 1500 }).then(id => {
+            if (cancelled || !id) return;
             const explicit = type === 'tv' && (content.season || content.episode);
             navigate(`/watch/${id}${explicit ? `?s=${initialSeason}&e=${initialEpisode}` : ''}`);
             onClose();
-            return undefined;
-        });
+        }).catch(() => {});
         return () => { cancelled = true; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- une seule vérification par ouverture
     }, [type, tmdbId]);
-
-    if (hosted === null) {
-        return (
-            <div className="fixed inset-0 z-[300] bg-black">
-                <LoadingOverlay />
-            </div>
-        );
-    }
 
     return (
         <NetflixPlayer

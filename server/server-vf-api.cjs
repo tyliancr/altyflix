@@ -571,23 +571,33 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // Direct Stream Extractor (HLS .m3u8 direct pour lecteur Netflix natif)
+  // Direct Stream Extractor (HLS / MP4 direct avec fallback automatique immédiat)
   if (pathname === '/api/direct-stream') {
     const { id, type = 'movie', season = 1, episode = 1, lang = 'vf' } = query;
     try { validateStreams({ id, type, season, episode, lang }); }
     catch (err) { return sendJSON(res, err.status || 400, { error: err.message }); }
 
+    const isTv = type === 'tv';
+    const fallbackUrl = isTv
+      ? `https://vidlink.pro/tv/${id}/${season}/${episode}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`
+      : `https://vidlink.pro/movie/${id}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`;
+
     const version = String(lang).toLowerCase().includes('vost') ? 'vostfr' : 'vf';
 
     try {
-      const extracted = await extractDirectStream({ id, type, season, episode, lang: version });
+      // Timeout de 3 secondes max pour l'extraction afin de ne jamais faire patienter l'utilisateur
+      const extracted = await Promise.race([
+        extractDirectStream({ id, type, season, episode, lang: version }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Extraction timeout')), 3000))
+      ]);
+
       if (extracted && extracted.streamUrl) {
         const payload = {
           success: true,
           tmdb_id: id,
           content_type: type,
-          season: type === 'tv' ? parseInt(season) : null,
-          episode: type === 'tv' ? parseInt(episode) : null,
+          season: isTv ? parseInt(season) : null,
+          episode: isTv ? parseInt(episode) : null,
           streamUrl: extracted.streamUrl,
           rawStreamUrl: extracted.rawStreamUrl,
           format: extracted.format || 'mp4',
@@ -598,15 +608,16 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 200, payload);
       }
     } catch (err) {
-      console.error('[direct-stream] Error:', err.message);
+      // Timeout ou indisponibilité -> bascule immédiate sur fallback
     }
 
     return sendJSON(res, 200, {
       success: false,
       tmdb_id: id,
       content_type: type,
+      fallbackUrl,
       provider: 'Altyflix Native Stream',
-      error: 'Ce titre n\'est pas encore disponible en streaming (Non sorti ou indisponible).'
+      error: 'Flux natif direct indisponible, bascule sur lecteur alternatif.'
     });
   }
 

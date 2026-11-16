@@ -61,43 +61,23 @@ export const handler = async function (event, _context) {
   const apiPath = pathname.startsWith('/api/') ? pathname : '/api' + pathname;
   if (event.httpMethod === 'POST' && apiPath !== '/api/playback/progress') return jsonResponse(405,{error:'Méthode non autorisée.'});
 
-  if (apiPath === '/api/direct-stream') {
+  if (apiPath === '/api/direct-stream' || pathname === '/api/direct-stream' || pathname === '/direct-stream') {
     const { id, type = 'movie', season = 1, episode = 1, lang = 'vf' } = queryParams;
     try { validateStreams({ id, type, season, episode, lang }); }
     catch (err) { return jsonResponse(err.status || 400, { error: err.message }); }
 
-    const version = String(lang).toLowerCase().includes('vost') ? 'vostfr' : 'vf';
-    const cacheKey = `direct_stream_${type}_${id}_${season}_${episode}_${version}`;
-    const cachedData = getCache(cacheKey);
-    if (cachedData) {
-      return jsonResponse(200, { ...cachedData, cached: true });
-    }
-
-    try {
-      const extracted = await extractDirectStream({ id, type, season, episode, lang: version });
-      if (extracted && extracted.streamUrl) {
-        const payload = {
-          success: true,
-          tmdb_id: id,
-          content_type: type,
-          season: type === 'tv' ? parseInt(season) : null,
-          episode: type === 'tv' ? parseInt(episode) : null,
-          streamUrl: extracted.streamUrl,
-          format: extracted.format,
-          lang: extracted.lang
-        };
-        setCache(cacheKey, payload, 30 * 60 * 1000);
-        return jsonResponse(200, payload);
-      }
-    } catch { /* ignore and fallback */ }
-
-    const fallbackUrl = type === 'movie'
-      ? `https://videasy.xyz/embed/movie/${id}?color=e50914&autoplay=1`
-      : `https://videasy.xyz/embed/tv/${id}/${season}/${episode}?color=e50914&autoplay=1`;
+    const isTv = type === 'tv';
+    const fallbackUrl = isTv
+      ? `https://vidlink.pro/tv/${id}/${season}/${episode}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`
+      : `https://vidlink.pro/movie/${id}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`;
 
     return jsonResponse(200, {
       success: false,
       tmdb_id: id,
+      content_type: type,
+      fallbackUrl
+    });
+  }
       content_type: type,
       fallbackUrl
     });

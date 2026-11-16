@@ -563,15 +563,9 @@ const server = http.createServer(async (req, res) => {
 
   // Debug Extractor
   if (pathname === '/api/debug-extractor') {
-    const pw = require('playwright-core');
     try {
-      const b = await pw.chromium.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-      });
-      const v = b.version();
-      await b.close();
-      return sendJSON(res, 200, { ok: true, version: v });
+      const resStream = await extractDirectStream({ id: 1288069, type: 'movie' });
+      return sendJSON(res, 200, { ok: true, result: resStream ? 'stream_found' : 'not_found', format: resStream?.format, url: resStream?.streamUrl?.slice(0, 80) });
     } catch (err) {
       return sendJSON(res, 200, { ok: false, error: err.message, stack: err.stack });
     }

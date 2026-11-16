@@ -6,25 +6,40 @@
 
 const pw = require('playwright-core');
 
+process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || '0';
+
 let browser = null;
 let browserBusy = false;
 
 async function getBrowser() {
   if (browser && browser.isConnected()) return browser;
+  const launchOptions = {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--mute-audio'
+    ]
+  };
+
   try {
-    browser = await pw.chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--mute-audio'
-      ]
-    });
+    browser = await pw.chromium.launch(launchOptions);
     return browser;
   } catch (e) {
     console.error('[Extractor] Browser launch failed:', e.message);
+    if (e.message.includes("Executable doesn't exist") || e.message.includes("npx playwright install")) {
+      try {
+        console.log('[Extractor] Auto-installing Playwright Chromium binary...');
+        const { execSync } = require('child_process');
+        execSync('npx playwright install chromium', { stdio: 'inherit', env: process.env });
+        browser = await pw.chromium.launch(launchOptions);
+        return browser;
+      } catch (installErr) {
+        console.error('[Extractor] Auto-install failed:', installErr.message);
+      }
+    }
     return null;
   }
 }

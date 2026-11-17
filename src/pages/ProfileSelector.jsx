@@ -25,14 +25,26 @@ const MAX_PROFILES = 5;
 const prefersReducedMotion = () =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const Avatar = ({ profile, className = '' }) => {
-    const [failed, setFailed] = useState(null);
-    return profile.avatar && profile.avatar !== failed ? (
-        <img src={profile.avatar} alt="" draggable="false" className={`h-full w-full object-cover ${className}`} onError={() => setFailed(profile.avatar)} />
-    ) : (
-        <span aria-hidden="true" className={`grid h-full w-full place-items-center bg-[#53212c] font-display text-4xl font-bold text-white ${className}`}>
-            {Array.from(profile.name?.trim() || '?')[0]}
-        </span>
+const Avatar = ({ profile, className = '', index = 0 }) => {
+    const fallbackAvatar = DEFAULT_AVATARS[index % DEFAULT_AVATARS.length] || '/avatars/users-1.png';
+    const [imgSrc, setImgSrc] = useState(profile?.avatar || fallbackAvatar);
+
+    useEffect(() => {
+        setImgSrc(profile?.avatar || fallbackAvatar);
+    }, [profile?.avatar, fallbackAvatar]);
+
+    return (
+        <img
+            src={imgSrc}
+            alt={profile?.name || ''}
+            draggable="false"
+            className={`h-full w-full object-cover ${className}`}
+            onError={() => {
+                if (imgSrc !== fallbackAvatar) {
+                    setImgSrc(fallbackAvatar);
+                }
+            }}
+        />
     );
 };
 
@@ -109,7 +121,7 @@ const ProfileCard = ({ profile, index, onClick, manageMode, onDelete, isSelected
                         {/* The selected avatar is handed over to the welcome stage (shared layoutId) */}
                         {isSelected ? null : (
                             <motion.span layoutId={`avatar-${profile.id}`} className="block h-full w-full overflow-hidden rounded-[26%]">
-                                <Avatar profile={profile} />
+                                <Avatar profile={profile} index={index} />
                             </motion.span>
                         )}
                         <motion.span aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" style={{ background: glare }} />

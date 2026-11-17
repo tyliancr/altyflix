@@ -70,6 +70,7 @@ const MobileBottomNav = () => {
                         src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
                         alt="Profil"
                         className="w-full h-full object-cover"
+                        onError={(e) => { e.currentTarget.src = DEFAULT_AVATARS[0]; }}
                     />
                 </div>
             )
@@ -108,6 +109,7 @@ const MobileBottomNav = () => {
                                         src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
                                         alt="Profil"
                                         className="w-full h-full object-cover"
+                                        onError={(e) => { e.currentTarget.src = DEFAULT_AVATARS[0]; }}
                                     />
                                 </div>
                                 <div>

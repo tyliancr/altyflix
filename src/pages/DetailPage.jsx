@@ -2,7 +2,7 @@ import { seasonLabel } from '../utils/seasons';
 // Title page: cinematic header (artwork, facts, actions), then tabbed content
 // — episodes first for a series, details first for a film.
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useProfile } from '../contexts/ProfileContext';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlayer } from '../contexts/PlayerContext';
@@ -423,7 +423,7 @@ const DetailPage = () => {
                             label={isWatched ? 'Marquer comme non vu' : 'Marquer comme vu'}
                             active={isWatched}
                             aria-pressed={isWatched}
-                            onClick={() => markAsWatched(content, type === 'tv' ? selectedSeason : null, type === 'tv' ? (resumeInfo?.episode || 1) : null)}
+                            onClick={() => markAsWatched(content, isTV ? selectedSeason : null, isTV ? (resumeInfo?.episode || 1) : null)}
                         >
                             <svg className={`h-5 w-5 ${isWatched ? 'text-[#46d369]' : ''}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
@@ -571,7 +571,16 @@ const DetailPage = () => {
                                 <dl className="h-fit space-y-5 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6">
                                     {director && <Fact label="Réalisation">{director}</Fact>}
                                     {creators && <Fact label="Création">{creators}</Fact>}
-                                    {content.genres?.length > 0 && <Fact label="Genres">{content.genres.map(g => g.name).join(', ')}</Fact>}
+                                    {content.genres?.length > 0 && (
+                                        <Fact label="Genres">
+                                            {content.genres.map((g, i) => (
+                                                <span key={g.id}>
+                                                    {i > 0 && ', '}
+                                                    {isTV ? g.name : <Link to={`/category/${g.id}`} className="underline-offset-4 hover:text-white hover:underline">{g.name}</Link>}
+                                                </span>
+                                            ))}
+                                        </Fact>
+                                    )}
                                     {releaseDate && (
                                         <Fact label={isTV ? 'Première diffusion' : 'Sortie'}>
                                             {new Date(releaseDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}

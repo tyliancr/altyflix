@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
     getUpcomingMovies, getUpcomingSeries, getReturningSeries,
-    getSeriesDetails, getNowPlayingMovies
+    getSeriesDetails, getNowPlayingMovies, getMovieDetails
 } from '../services/tmdb';
 import { getPosterUrl, getBackdropUrl } from '../utils/helpers';
 import { format, differenceInCalendarDays } from 'date-fns';
@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Helmet } from 'react-helmet-async';
 import { useToast } from '../contexts/ToastContext';
-import { PosterGrid, GridSkeleton, SectionTitle, SegmentedControl, EmptyState, Button } from '../components/ui/Primitives';
+import { PosterGrid, GridSkeleton, SectionTitle, SegmentedControl, EmptyState, Button, TrailerModal } from '../components/ui/Primitives';
 
 const BELL = 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9';
 const CHECK = 'M5 13l4 4L19 7';
@@ -26,11 +26,9 @@ const countdown = (dateStr) => {
 
 const pathOf = (item) => `/${item.type === 'movie' ? 'movie' : 'tv'}/${item.id}`;
 
-const trailerSearchUrl = (item) =>
-    `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item?.title || ''} bande annonce officielle`)}`;
 
 // ─── Featured release ────────────────────────────────────────────────────────
-const HeroUpcoming = ({ item, onReminder, isReminded }) => (
+const HeroUpcoming = ({ item, onReminder, isReminded, onTrailer, trailerLoading }) => (
     <header className="relative flex min-h-[70vh] flex-col justify-end overflow-hidden pt-32">
         <div className="absolute inset-0">
             {item.backdrop_path && (
@@ -69,14 +67,9 @@ const HeroUpcoming = ({ item, onReminder, isReminded }) => (
                     <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d={isReminded ? CHECK : BELL} /></svg>
                     {isReminded ? 'Rappel activé' : 'Me prévenir'}
                 </Button>
-                <a
-                    href={trailerSearchUrl(item)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-12 items-center gap-2 rounded-xl border border-white/15 bg-white/[0.12] px-6 text-base font-semibold text-white backdrop-blur-xl transition-colors hover:bg-white/20 sm:h-[52px] sm:px-7 sm:text-lg"
-                >
-                    Bande-annonce
-                </a>
+                <Button size="lg" variant="glass" onClick={onTrailer} disabled={trailerLoading}>
+                    {trailerLoading ? 'Chargement…' : 'Bande-annonce'}
+                </Button>
                 <Link to={pathOf(item)} className="px-3 py-3 text-sm font-semibold text-white/70 underline-offset-4 hover:text-white hover:underline">
                     {"Plus d'infos"}
                 </Link>
@@ -227,6 +220,25 @@ const UpcomingPage = () => {
         : activeFilter === 'returning' ? returningSeries
         : allItems;
 
+    const [trailerKey, setTrailerKey] = useState(null);
+    const [trailerLoading, setTrailerLoading] = useState(false);
+
+    // TMDB lists each title's videos: play the official trailer in place
+    const openTrailer = async (item) => {
+        setTrailerLoading(true);
+        try {
+            const details = await (item.type === 'movie' ? getMovieDetails : getSeriesDetails)(item.id);
+            const videos = details?.videos?.results || [];
+            const trailer = videos.find(v => v.site === 'YouTube' && v.type === 'Trailer') || videos.find(v => v.site === 'YouTube');
+            if (trailer?.key) setTrailerKey(trailer.key);
+            else addToast('Aucune bande-annonce disponible pour ce titre.', 'info');
+        } catch {
+            addToast('La bande-annonce n’a pas pu être chargée.', 'error');
+        } finally {
+            setTrailerLoading(false);
+        }
+    };
+
     const toggleReminder = (item) => {
         const exists = isRemindedIn(reminders, item);
         const next = exists
@@ -266,6 +278,8 @@ const UpcomingPage = () => {
                             item={heroItem}
                             isReminded={isRemindedIn(reminders, heroItem)}
                             onReminder={() => toggleReminder(heroItem)}
+                            onTrailer={() => openTrailer(heroItem)}
+                            trailerLoading={trailerLoading}
                         />
                     )}
 
@@ -305,6 +319,7 @@ const UpcomingPage = () => {
                     </div>
                 </>
             )}
+            <TrailerModal videoKey={trailerKey} onClose={() => setTrailerKey(null)} />
         </div>
     );
 };

@@ -5,7 +5,7 @@ import { searchMedia } from '../services/searchService.js';
 import { useProfile } from '../contexts/ProfileContext';
 import { Helmet } from 'react-helmet-async';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getContentType } from '../utils/helpers';
+import { getContentType, departmentLabel } from '../utils/helpers';
 import { useTranslation } from '../hooks/useTranslation';
 import PosterCard from '../components/ui/PosterCard';
 import { PosterGrid, GridSkeleton, SectionTitle, EmptyState, Button } from '../components/ui/Primitives';
@@ -483,7 +483,7 @@ const SearchPage = () => {
                     )}
                 </span>
                 <span className="w-full truncate text-[13px] font-semibold text-white/85 transition-colors group-hover:text-white">{person.name}</span>
-                {large && person.known_for_department && <span className="text-xs text-white/40">{person.known_for_department}</span>}
+                {large && person.known_for_department && <span className="text-xs text-white/40">{departmentLabel(person.known_for_department)}</span>}
             </button>
         );
     };

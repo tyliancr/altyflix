@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getPersonDetails } from '../services/tmdb';
-import { getPosterUrl } from '../utils/helpers';
+import { getPosterUrl, departmentLabel } from '../utils/helpers';
 import { Helmet } from 'react-helmet-async';
 import { motion } from 'framer-motion';
 import { useTranslation } from '../hooks/useTranslation';
@@ -91,7 +91,7 @@ const PersonPage = () => {
     const bio = person.biography || '';
     const longBio = bio.length > BIO_PREVIEW;
     const facts = [
-        person.known_for_department,
+        person.known_for_department && departmentLabel(person.known_for_department),
         person.birthday && `${t('person.born')} ${new Date(person.birthday).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })}`,
         person.place_of_birth,
     ].filter(Boolean);

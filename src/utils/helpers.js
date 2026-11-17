@@ -234,3 +234,9 @@ export const getContentType = (item, defaultType = 'movie') => {
     return defaultType;
 };
 
+const DEPARTMENTS = {
+    Acting: 'Interprétation', Directing: 'Réalisation', Writing: 'Scénario', Production: 'Production',
+    Sound: 'Musique', Camera: 'Image', Editing: 'Montage', Art: 'Décors', 'Costume & Make-Up': 'Costumes et maquillage',
+    Crew: 'Équipe technique', 'Visual Effects': 'Effets visuels', Lighting: 'Lumière', Creator: 'Création',
+};
+export const departmentLabel = (dept) => DEPARTMENTS[dept] || dept;

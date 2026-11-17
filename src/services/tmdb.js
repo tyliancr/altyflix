@@ -342,6 +342,9 @@ export const getOnTheAirSeries = async (page = 1) => {
     return apiRequest('/tv/on_the_air', { page });
 };
 
+// Trailers are often English-only: ask for the profile language, English, then untagged videos
+const videoLanguages = () => [...new Set([String(storage.get('language', 'fr-FR')).slice(0, 2), 'en', 'null'])].join(',');
+
 /**
  * Get movie details
  * @param {number} movieId - Movie ID
@@ -349,7 +352,8 @@ export const getOnTheAirSeries = async (page = 1) => {
  */
 export const getMovieDetails = async (movieId) => {
     return apiRequest(`/movie/${movieId}`, {
-        append_to_response: 'videos,credits,similar,recommendations,external_ids'
+        append_to_response: 'videos,credits,similar,recommendations,external_ids',
+        include_video_language: videoLanguages()
     });
 };
 
@@ -409,7 +413,8 @@ const normalizeLupinSeries = (data) => {
  */
 export const getSeriesDetails = async (seriesId) => {
     const data = await apiRequest(`/tv/${seriesId}`, {
-        append_to_response: 'videos,credits,similar,recommendations,external_ids'
+        append_to_response: 'videos,credits,similar,recommendations,external_ids',
+        include_video_language: videoLanguages()
     });
     if (Number(seriesId) === 96677 && data) {
         return normalizeLupinSeries(data);

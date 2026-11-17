@@ -617,50 +617,139 @@ export async function testGatewayToken({ provider, token }) {
 }
 
 /**
- * Recherche les sous-titres disponibles pour un film ou un épisode (OpenSubtitles via strem.io)
+ * Recherche les sous-titres disponibles pour un film ou un épisode (Multi-sources : OpenSubtitles v3 + OpenSubtitles REST)
  */
-export async function fetchSubtitlesForContent({ imdbId, type = 'movie', season = 1, episode = 1 }) {
-    if (!imdbId) return [];
+export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type = 'movie', season = 1, episode = 1 }) {
+    let imdbId = initialImdbId;
+
+    // Si l'identifiant IMDb est absent ou mal formaté, le résoudre automatiquement depuis TMDB
+    if ((!imdbId || !/^tt\d+$/i.test(String(imdbId))) && id) {
+        try {
+            imdbId = await getImdbIdForContent({ id, type });
+        } catch {
+            imdbId = null;
+        }
+    }
+
+    if (!imdbId || !/^tt\d+$/i.test(String(imdbId))) {
+        return [];
+    }
+
+    const cleanImdbId = String(imdbId).toLowerCase();
+    const numericImdbId = cleanImdbId.replace(/^tt/, '');
+    const isTv = type === 'tv';
+    const stremKey = isTv ? `${cleanImdbId}:${season}:${episode}` : `${cleanImdbId}`;
+
+    // 1. Source 1 : Stremio OpenSubtitles v3
+    const stremPromise = (async () => {
+        try {
+            const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${stremKey}.json`;
+            const res = await fetch(endpoint, {
+                headers: { 'Accept': 'application/json' },
+                signal: AbortSignal.timeout(6000)
+            });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return Array.isArray(data?.subtitles) ? data.subtitles : [];
+        } catch {
+            return [];
+        }
+    })();
+
+    // 2. Source 2 : OpenSubtitles REST (très riche en sous-titres français)
+    const restPromise = (async () => {
+        try {
+            const restUrl = isTv
+                ? `https://rest.opensubtitles.org/search/episode-${episode}/imdbid-${numericImdbId}/season-${season}/sublanguageid-fre`
+                : `https://rest.opensubtitles.org/search/imdbid-${numericImdbId}/sublanguageid-fre`;
+            const res = await fetch(restUrl, {
+                headers: { 'User-Agent': 'TemporaryUserAgent' },
+                signal: AbortSignal.timeout(6000)
+            });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return Array.isArray(data) ? data : [];
+        } catch {
+            return [];
+        }
+    })();
 
     try {
-        const isTv = type === 'tv';
-        const key = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
-        const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${key}.json`;
-
-        const res = await fetch(endpoint, {
-            headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(6000)
-        });
-
-        if (!res.ok) return [];
-        const data = await res.json();
-        const rawSubs = Array.isArray(data?.subtitles) ? data.subtitles : [];
+        const [stremSubs, restSubs] = await Promise.all([stremPromise, restPromise]);
 
         const normalized = [];
-        const langMap = {
-            fre: 'Français',
-            fra: 'Français',
-            fr: 'Français',
-            eng: 'Anglais',
-            en: 'Anglais',
-            spa: 'Espagnol',
-            es: 'Espagnol'
-        };
+        const seenUrls = new Set();
+        let frCount = 0;
+        let enCount = 0;
+        let esCount = 0;
 
-        for (const sub of rawSubs) {
-            const rawLang = String(sub.lang || '').toLowerCase();
-            const label = langMap[rawLang];
-            if (label && sub.url) {
-                if (!normalized.some(s => s.label === label)) {
-                    normalized.push({
-                        id: sub.id || `${rawLang}-${normalized.length}`,
-                        lang: rawLang,
-                        label,
-                        url: sub.url
-                    });
-                }
+        // A. Sous-titres français depuis OpenSubtitles REST
+        for (const sub of restSubs) {
+            const downloadUrl = sub.SubDownloadLink || sub.ZipDownloadLink;
+            if (downloadUrl && !seenUrls.has(downloadUrl) && frCount < 3) {
+                frCount++;
+                seenUrls.add(downloadUrl);
+                normalized.push({
+                    id: `rest-fr-${frCount}-${sub.IDSubtitleFile || sub.IDSubtitle || frCount}`,
+                    lang: 'fr',
+                    label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
+                    url: downloadUrl,
+                    encoding: sub.SubEncoding || 'windows-1252',
+                    fileName: sub.SubFileName || ''
+                });
             }
         }
+
+        // B. Sous-titres depuis Stremio OpenSubtitles v3
+        const langMap = {
+            fre: 'fr', fra: 'fr', fr: 'fr',
+            eng: 'en', en: 'en',
+            spa: 'es', es: 'es'
+        };
+
+        for (const sub of stremSubs) {
+            const rawLang = String(sub.lang || '').toLowerCase();
+            const standardLang = langMap[rawLang];
+            if (!standardLang || !sub.url || seenUrls.has(sub.url)) continue;
+
+            if (standardLang === 'fr' && frCount < 3) {
+                frCount++;
+                seenUrls.add(sub.url);
+                normalized.push({
+                    id: sub.id || `strem-fr-${frCount}`,
+                    lang: 'fr',
+                    label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
+                    url: sub.url,
+                    encoding: sub.SubEncoding || 'utf-8'
+                });
+            } else if (standardLang === 'en' && enCount < 2) {
+                enCount++;
+                seenUrls.add(sub.url);
+                normalized.push({
+                    id: sub.id || `strem-en-${enCount}`,
+                    lang: 'en',
+                    label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
+                    url: sub.url,
+                    encoding: sub.SubEncoding || 'utf-8'
+                });
+            } else if (standardLang === 'es' && esCount < 1) {
+                esCount++;
+                seenUrls.add(sub.url);
+                normalized.push({
+                    id: sub.id || `strem-es-${esCount}`,
+                    lang: 'es',
+                    label: 'Espagnol',
+                    url: sub.url,
+                    encoding: sub.SubEncoding || 'utf-8'
+                });
+            }
+        }
+
+        // Tri : Français d'abord, puis Anglais, puis Espagnol
+        normalized.sort((a, b) => {
+            const order = { fr: 1, en: 2, es: 3 };
+            return (order[a.lang] || 99) - (order[b.lang] || 99);
+        });
 
         return normalized;
     } catch {
@@ -673,7 +762,7 @@ export async function fetchSubtitlesForContent({ imdbId, type = 'movie', season 
  */
 export function parseVttCues(rawText) {
     if (!rawText) return [];
-    const text = String(rawText).replace(/\r\n|\r/g, '\n');
+    const text = String(rawText).replace(/^\uFEFF/, '').replace(/\r\n|\r/g, '\n');
     const cues = [];
     const blocks = text.split(/\n\s*\n/);
 
@@ -704,16 +793,36 @@ export function parseVttCues(rawText) {
 }
 
 /**
- * Récupère et parse directement les sous-titres en mémoire
+ * Récupère et parse directement les sous-titres en mémoire (avec support transparent .gz et encodages Windows-1252 / UTF-8)
  */
-export async function fetchSubtitleCues(subUrl) {
+export async function fetchSubtitleCues(subUrl, subEncoding = null) {
     if (!subUrl) return [];
     try {
-        const res = await fetch(subUrl, { signal: AbortSignal.timeout(8000) });
+        const isGz = subUrl.endsWith('.gz') || subUrl.includes('/filead/');
+        const res = await fetch(subUrl, {
+            headers: isGz ? { 'User-Agent': 'TemporaryUserAgent' } : {},
+            signal: AbortSignal.timeout(8000)
+        });
         if (!res.ok) return [];
-        const rawText = await res.text();
+
+        let rawText;
+        if (isGz && typeof DecompressionStream !== 'undefined') {
+            const ds = new DecompressionStream('gzip');
+            const decompressedStream = res.body.pipeThrough(ds);
+            const buf = await new Response(decompressedStream).arrayBuffer();
+            const enc = subEncoding && !/ascii|utf-?8/i.test(subEncoding) ? 'windows-1252' : (subEncoding || 'utf-8');
+            try {
+                rawText = new TextDecoder(enc).decode(buf);
+            } catch {
+                rawText = new TextDecoder('utf-8').decode(buf);
+            }
+        } else {
+            rawText = await res.text();
+        }
+
         return parseVttCues(rawText);
-    } catch {
+    } catch (err) {
+        console.warn('[Altyflix Subtitles] Erreur chargement/décodage :', err);
         return [];
     }
 }

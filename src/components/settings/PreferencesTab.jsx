@@ -12,6 +12,8 @@ export default function PreferencesTab({
     setAutoplayNext,
     autoplayTrailers,
     setAutoplayTrailers,
+    subtitlesAlwaysOn,
+    setSubtitlesAlwaysOn,
     videoQuality,
     setVideoQuality,
     subtitlesSize,
@@ -59,8 +61,19 @@ export default function PreferencesTab({
             </Card>
 
             <Card>
-                <SectionHeader icon={<Icon name="subtitles" />} title="Sous-titres" subtitle="Taille et couleur du texte pendant la lecture." />
+                <SectionHeader icon={<Icon name="subtitles" />} title="Sous-titres" subtitle="Activation par défaut, taille et couleur du texte." />
                 <div className="space-y-6 p-6">
+                    <Row
+                        title={t('settings.subtitlesAlwaysOnLabel') || 'Toujours activer les sous-titres'}
+                        description={t('settings.subtitlesAlwaysOnDesc') || 'Active automatiquement les sous-titres au lancement de chaque film ou épisode. Vous pouvez les désactiver à tout moment via le lecteur ou la touche C.'}
+                    >
+                        <Toggle
+                            checked={subtitlesAlwaysOn}
+                            onChange={setSubtitlesAlwaysOn}
+                            label={t('settings.subtitlesAlwaysOnLabel') || 'Toujours activer les sous-titres'}
+                        />
+                    </Row>
+
                     <div className="flex flex-wrap items-center justify-between gap-4">
                         <span className="text-[15px] font-semibold text-white">{t('settings.subtitleSizeLabel')}</span>
                         <SegmentedControl

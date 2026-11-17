@@ -4,6 +4,8 @@ import { getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
 import { resolvePlaybackStreams, getGatewayConfig, saveGatewayConfig, fetchSubtitlesForContent, fetchSubtitleCues, DEFAULT_PROVIDER, DEFAULT_TOKEN } from '../../services/streamingGateway';
 import { UnifiedStreamingEngine } from './engine/UnifiedStreamingEngine';
+import { useProfile } from '../../contexts/ProfileContext';
+import { SUBTITLE_SIZE_MAP, SUBTITLE_COLOR_MAP } from '../settings/SettingsConstants';
 import {
     NetflixBackIcon,
     NetflixPlayIcon,
@@ -94,6 +96,23 @@ export default function NetflixPlayer({
     const [showDrawer, setShowDrawer] = useState(false);
     const [showQualityMenu, setShowQualityMenu] = useState(false);
     const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+    const { currentProfile, updateProfile } = useProfile?.() || {};
+    const [subtitlesAlwaysOn, setSubtitlesAlwaysOn] = useState(() => {
+        const local = typeof localStorage !== 'undefined' ? localStorage.getItem('altyflix_subtitles_always_on') : null;
+        if (local !== null) return local === 'true';
+        return currentProfile?.subtitlesAlwaysOn !== false;
+    });
+    const [subToast, setSubToast] = useState(null);
+    const subToastTimeoutRef = useRef(null);
+
+    const triggerSubToast = useCallback((msg) => {
+        if (subToastTimeoutRef.current) clearTimeout(subToastTimeoutRef.current);
+        setSubToast(msg);
+        subToastTimeoutRef.current = setTimeout(() => {
+            setSubToast(null);
+        }, 2200);
+    }, []);
+
     const [showAudioSubsMenu, setShowAudioSubsMenu] = useState(false);
     const [availableSubtitles, setAvailableSubtitles] = useState([]);
     const [selectedSubtitleId, setSelectedSubtitleId] = useState('off');
@@ -129,6 +148,7 @@ export default function NetflixPlayer({
     watchHistoryRef.current = watchHistory;
     const loadedUrlRef = useRef(null);
     const resolvedKeyRef = useRef('');
+    const resolvedImdbIdRef = useRef('');
     const currentTimeRef = useRef(currentTime);
     currentTimeRef.current = currentTime;
     const volumeRef = useRef(volume);
@@ -198,6 +218,7 @@ export default function NetflixPlayer({
 
             if (res.success && res.activeStream) {
                 resolvedKeyRef.current = streamKey;
+                if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
                 setAvailableStreams(res.streams || []);
                 // Priorité absolue à la VF avec son compatible navigateur au lancement
                 const vfStream = res.streams?.find(s => s.isFrench && s.isWebAudioSafe) || res.streams?.find(s => s.isFrench);
@@ -219,6 +240,7 @@ export default function NetflixPlayer({
                 });
                 if (retry.success && retry.activeStream) {
                     resolvedKeyRef.current = streamKey;
+                    if (retry.imdbId) resolvedImdbIdRef.current = retry.imdbId;
                     setAvailableStreams(retry.streams || []);
                     const vfStream = retry.streams?.find(s => s.isFrench);
                     const selectedStream = (retry.hasTrueVf && vfStream) ? vfStream : retry.activeStream;
@@ -674,7 +696,7 @@ export default function NetflixPlayer({
     updateSubtitleLinesRef.current = updateSubtitleLines;
 
     // Sélection d'une piste de sous-titres (sécurisée en mémoire pour éliminer les bugs d'empilement)
-    const handleSelectSubtitle = useCallback(async (subId, customList = null) => {
+    const handleSelectSubtitle = useCallback(async (subId, customList = null, showFeedback = false) => {
         const reqId = ++activeSubRequestIdRef.current;
         setSelectedSubtitleId(subId);
         selectedSubtitleIdRef.current = subId;
@@ -691,6 +713,7 @@ export default function NetflixPlayer({
         if (subId === 'off') {
             cuesRef.current = [];
             setCurrentSubtitleLines([]);
+            if (showFeedback) triggerSubToast('Sous-titres : Désactivés');
             return;
         }
 
@@ -698,15 +721,31 @@ export default function NetflixPlayer({
         const sub = list.find(s => s.id === subId);
         if (!sub) return;
 
+        if (showFeedback) triggerSubToast(`Sous-titres : ${sub.label}`);
+
         try {
-            const cues = await fetchSubtitleCues(sub.url);
+            const cues = await fetchSubtitleCues(sub.url, sub.encoding);
             if (reqId !== activeSubRequestIdRef.current || !videoRef.current) return;
             cuesRef.current = cues;
             if (updateSubtitleLinesRef.current) updateSubtitleLinesRef.current();
         } catch (err) {
             console.warn('[Altyflix Subtitles] Erreur chargement VTT :', err);
         }
-    }, []);
+    }, [triggerSubToast]);
+
+    // Raccourci bascule rapide sous-titres (Touche C ou bouton direct)
+    const toggleSubtitles = useCallback(() => {
+        const subs = availableSubtitlesRef.current || [];
+        if (selectedSubtitleIdRef.current !== 'off') {
+            handleSelectSubtitle('off', null, true);
+        } else if (subs.length > 0) {
+            const frSub = subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
+            const target = frSub || subs[0];
+            handleSelectSubtitle(target.id, subs, true);
+        } else {
+            triggerSubToast('Aucun sous-titre disponible');
+        }
+    }, [handleSelectSubtitle, triggerSubToast]);
 
     // Chargement automatique des sous-titres disponibles
     useEffect(() => {
@@ -714,10 +753,11 @@ export default function NetflixPlayer({
         const currentMediaKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}`;
         if (!id) return;
 
-        const imdbId = contentRef.current?.external_ids?.imdb_id || contentRef.current?.imdb_id;
+        const imdbId = contentRef.current?.external_ids?.imdb_id || contentRef.current?.imdb_id || resolvedImdbIdRef.current;
 
         fetchSubtitlesForContent({
-            imdbId: imdbId || `tt${id}`,
+            id,
+            imdbId,
             type: isTv ? 'tv' : 'movie',
             season,
             episode
@@ -726,20 +766,21 @@ export default function NetflixPlayer({
             setAvailableSubtitles(subs);
             availableSubtitlesRef.current = subs;
 
-            // Auto-sélection des sous-titres français une seule fois par média/épisode
+            // Auto-sélection des sous-titres : activés par défaut selon la préférence utilisateur (VF comme VO)
             if (autoSubAppliedKeyRef.current !== currentMediaKey) {
                 autoSubAppliedKeyRef.current = currentMediaKey;
-                if (!hasTrueVf || activeStream?.isVostfr) {
+                if (subtitlesAlwaysOn && subs.length > 0) {
                     const frSub = subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
-                    if (frSub) {
-                        handleSelectSubtitle(frSub.id, subs);
+                    const targetSub = frSub || subs[0];
+                    if (targetSub) {
+                        handleSelectSubtitle(targetSub.id, subs, false);
                     }
                 }
             }
         }).catch(() => {});
 
         return () => { active = false; };
-    }, [id, isTv, season, episode, hasTrueVf, activeStream?.isVostfr, handleSelectSubtitle]);
+    }, [id, isTv, season, episode, subtitlesAlwaysOn, handleSelectSubtitle]);
 
     // Sélection de la langue audio (VF vs VO)
     const handleSelectAudioLang = (lang) => {
@@ -808,6 +849,11 @@ export default function NetflixPlayer({
                         handleClose();
                     }
                     break;
+                case 'c':
+                case 's':
+                    e.preventDefault();
+                    toggleSubtitles();
+                    break;
                 case 'n':
                     if (isTv && nextEpAvailable) {
                         e.preventDefault();
@@ -825,7 +871,7 @@ export default function NetflixPlayer({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode]);
+    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles]);
 
     // Synchronisation permanente de l'état plein écran (Desktop, iOS Safari et Android)
     useEffect(() => {
@@ -893,9 +939,11 @@ export default function NetflixPlayer({
                         {currentSubtitleLines.map((line, idx) => (
                             <span
                                 key={`${idx}-${line}`}
-                                className="max-w-[94%] sm:max-w-[82%] md:max-w-[72%] px-3.5 py-1.5 rounded-md bg-black/80 text-white text-center font-bold text-base sm:text-xl md:text-2xl lg:text-[1.75rem] leading-snug whitespace-pre-line shadow-2xl backdrop-blur-sm"
+                                className="max-w-[94%] sm:max-w-[82%] md:max-w-[72%] px-3.5 py-1.5 rounded-md bg-black/85 text-center font-bold leading-snug whitespace-pre-line shadow-2xl backdrop-blur-sm transition-all"
                                 style={{
                                     fontFamily: 'Netflix Sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                                    fontSize: SUBTITLE_SIZE_MAP[currentProfile?.subtitlesSize]?.fontSize || '1.5rem',
+                                    color: SUBTITLE_COLOR_MAP[currentProfile?.subtitlesColor] || '#FFFFFF',
                                     textShadow: '0 0 4px #000, 0 1px 3px rgba(0,0,0,0.9), 1px 1px 2px #000, -1px -1px 2px #000',
                                     letterSpacing: '0.015em'
                                 }}
@@ -988,6 +1036,16 @@ export default function NetflixPlayer({
                         >
                             ✕
                         </button>
+                    </div>
+                )}
+
+                {/* Notification Toast Sous-titres (Bascule touche C / changement rapide) */}
+                {subToast && (
+                    <div className="absolute top-20 right-6 sm:right-10 z-50 flex items-center gap-2.5 bg-black/90 border border-white/20 backdrop-blur-xl px-4 py-2 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none">
+                        <NetflixSubtitlesIcon className="w-4 h-4 text-[#e50914]" />
+                        <span className="text-xs sm:text-sm text-white font-medium">
+                            {subToast}
+                        </span>
                     </div>
                 )}
 
@@ -1408,10 +1466,13 @@ export default function NetflixPlayer({
                                             </div>
 
                                             {/* Colonne 2 : Sous-titres */}
-                                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                                                <div className="text-[11px] font-bold text-white/50 uppercase pb-1">Sous-titres</div>
+                                            <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                                                <div className="text-[11px] font-bold text-white/50 uppercase pb-1 flex items-center justify-between">
+                                                    <span>Sous-titres</span>
+                                                    <span className="text-[9px] font-mono text-white/40 font-normal">Touche C</span>
+                                                </div>
                                                 <button
-                                                    onClick={() => handleSelectSubtitle('off')}
+                                                    onClick={() => handleSelectSubtitle('off', null, true)}
                                                     className={`w-full text-left px-2.5 py-1.5 rounded-lg font-medium transition-colors flex items-center justify-between cursor-pointer ${
                                                         selectedSubtitleId === 'off' ? 'bg-[#e50914] text-white' : 'text-white/80 hover:bg-white/10'
                                                     }`}
@@ -1424,18 +1485,42 @@ export default function NetflixPlayer({
                                                     availableSubtitles.map((sub) => (
                                                         <button
                                                             key={sub.id}
-                                                            onClick={() => handleSelectSubtitle(sub.id)}
+                                                            onClick={() => handleSelectSubtitle(sub.id, null, true)}
                                                             className={`w-full text-left px-2.5 py-1.5 rounded-lg font-medium transition-colors flex items-center justify-between cursor-pointer ${
                                                                 selectedSubtitleId === sub.id ? 'bg-[#e50914] text-white' : 'text-white/80 hover:bg-white/10'
                                                             }`}
                                                         >
-                                                            <span>{sub.label}</span>
+                                                            <span className="truncate pr-1">{sub.label}</span>
                                                             {selectedSubtitleId === sub.id && <span className="text-[10px]">✓</span>}
                                                         </button>
                                                     ))
                                                 ) : (
                                                     <span className="block text-[11px] text-white/40 italic px-2 py-1">Sous-titres intégrés au flux</span>
                                                 )}
+
+                                                <div className="pt-2 mt-2 border-t border-white/10 flex items-center justify-between">
+                                                    <span className="text-[10px] text-white/70">Activer par défaut</span>
+                                                    <button
+                                                        type="button"
+                                                        title="Activer ou désactiver les sous-titres automatiques au début de chaque vidéo"
+                                                        onClick={() => {
+                                                            const next = !subtitlesAlwaysOn;
+                                                            setSubtitlesAlwaysOn(next);
+                                                            localStorage.setItem('altyflix_subtitles_always_on', next ? 'true' : 'false');
+                                                            if (currentProfile?.id && updateProfile) {
+                                                                updateProfile(currentProfile.id, { subtitlesAlwaysOn: next });
+                                                            }
+                                                            triggerSubToast(next ? 'Sous-titres par défaut : Activés' : 'Sous-titres par défaut : Désactivés');
+                                                        }}
+                                                        className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer p-0.5 ${
+                                                            subtitlesAlwaysOn ? 'bg-[#e50914]' : 'bg-white/20'
+                                                        }`}
+                                                    >
+                                                        <div className={`w-3 h-3 rounded-full bg-white transition-transform ${
+                                                            subtitlesAlwaysOn ? 'translate-x-3' : 'translate-x-0'
+                                                        }`} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -1619,6 +1704,10 @@ export default function NetflixPlayer({
                             <div className="flex items-center justify-between py-1.5 border-b border-white/5">
                                 <span className="text-white/80">Plein écran</span>
                                 <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">F</kbd>
+                            </div>
+                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
+                                <span className="text-white/80">Sous-titres (Activer / Désactiver)</span>
+                                <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">C</kbd>
                             </div>
                             {isTv && (
                                 <div className="flex items-center justify-between py-1.5 border-b border-white/5">

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ALTYFLIX for Android TV: a full-screen WebView on the live site. -->
+<!-- ALTYFLIX for Android TV and phones: a full-screen WebView on the live site. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="fr.altyflix.tv"
-    android:versionCode="1"
-    android:versionName="1.0">
+    android:versionCode="2"
+    android:versionName="1.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -26,7 +26,6 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation|uiMode"
             android:launchMode="singleTask">
             <intent-filter>

@@ -1,6 +1,8 @@
 package fr.altyflix.tv;
 
 import android.app.Activity;
+import android.app.UiModeManager;
+import android.content.res.Configuration;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
@@ -17,12 +19,15 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
 /**
- * Full-screen ALTYFLIX on Android TV.
+ * Full-screen ALTYFLIX on Android TV and phones.
  *
  * The app shows the live site, so every Netlify deploy reaches the TV without
  * reinstalling. Accounts, lists and history come from Firebase as on any other
  * device. The remote's arrows and OK are handled by the site itself; Back
  * returns to the previous page and leaves the app from the home page.
+ *
+ * On a TV the app hides the system bars and keeps the screen on; on a phone it
+ * keeps the status bar and only keeps the screen on during full-screen video.
  */
 public class MainActivity extends Activity {
 
@@ -33,11 +38,14 @@ public class MainActivity extends Activity {
     private FrameLayout root;
     private View fullscreenView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
+    private boolean isTv;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        UiModeManager uiMode = (UiModeManager) getSystemService(UI_MODE_SERVICE);
+        isTv = uiMode != null && uiMode.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
+        if (isTv) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.parseColor("#060608"));
@@ -56,8 +64,9 @@ public class MainActivity extends Activity {
         s.setUseWideViewPort(true);
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
-        // Tell the site it runs in the TV app (kept alongside the normal user agent)
-        s.setUserAgentString(s.getUserAgentString() + " AltyflixTV/1.0");
+        // Tell the site where it runs (kept alongside the normal user agent): the TV app
+        // switches the site to remote-control mode and lighter rendering
+        s.setUserAgentString(s.getUserAgentString() + (isTv ? " AltyflixTV/1.1" : " AltyflixApp/1.1"));
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -89,6 +98,8 @@ public class MainActivity extends Activity {
                 root.addView(view, new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
                 webView.setVisibility(View.GONE);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                hideSystemUi();
             }
 
             @Override
@@ -100,7 +111,7 @@ public class MainActivity extends Activity {
         root.addView(webView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         setContentView(root);
-        hideSystemUi();
+        applySystemUi();
 
         if (savedInstanceState != null) webView.restoreState(savedInstanceState);
         else webView.loadUrl(HOME_URL);
@@ -115,6 +126,19 @@ public class MainActivity extends Activity {
         fullscreenCallback = null;
         webView.setVisibility(View.VISIBLE);
         webView.requestFocus();
+        if (!isTv) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            showSystemUi();
+        }
+    }
+
+    private void showSystemUi() {
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+    }
+
+    // TV: always full screen. Phone: full screen only while a video is.
+    private void applySystemUi() {
+        if (isTv || fullscreenView != null) hideSystemUi();
     }
 
     private void hideSystemUi() {
@@ -146,7 +170,7 @@ public class MainActivity extends Activity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) hideSystemUi();
+        if (hasFocus) applySystemUi();
     }
 
     @Override
@@ -166,7 +190,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         webView.onResume();
-        hideSystemUi();
+        applySystemUi();
     }
 
     @Override

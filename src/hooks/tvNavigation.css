@@ -16,3 +16,18 @@ html.tv-nav article a:focus {
 html.tv-nav article:focus-within h3 {
   color: #fff;
 }
+
+/* Inside the Android TV app: TV boxes have weak GPUs. Blur behind menus and
+   panels is the most expensive effect to draw, so it is replaced by the
+   panel's own (already dark) background. No pointer on a TV either. */
+html.tv-app *,
+html.tv-app *::before,
+html.tv-app *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html.tv-app,
+html.tv-app * {
+  cursor: none !important;
+}

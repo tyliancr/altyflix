@@ -43,12 +43,30 @@ const candidates = () => [...scope().querySelectorAll(FOCUSABLE)].filter(isVisib
 
 const center = (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
 
-/** Nearest element in a direction: distance along the axis, plus a penalty for drifting sideways. */
+/** The horizontally scrolling shelf an element sits in, if any. */
+const rowOf = (el) => {
+    let row = el.parentElement;
+    while (row && row !== document.body) {
+        const style = getComputedStyle(row);
+        if (/(auto|scroll)/.test(style.overflowX) && row.scrollWidth > row.clientWidth) return row;
+        row = row.parentElement;
+    }
+    return null;
+};
+
+// Last focused card of each shelf: coming back to a row returns to the same card, as on Netflix
+const rowMemory = new WeakMap();
+
+/**
+ * Nearest element in a direction.
+ * Left/right: same line only, closest first. Up/down: the nearest line first, then the
+ * element closest to the current column (so moving down never skips a row).
+ */
 const findNext = (from, direction) => {
     const a = from.getBoundingClientRect();
     const ac = center(a);
-    let best = null;
-    let bestScore = Infinity;
+    const horizontal = direction === 'left' || direction === 'right';
+    const found = [];
 
     for (const el of candidates()) {
         if (el === from || from.contains(el) || el.contains(from)) continue;
@@ -58,13 +76,31 @@ const findNext = (from, direction) => {
         let across;
         if (direction === 'right') { if (bc.x <= ac.x) continue; along = b.left - a.right; across = Math.abs(bc.y - ac.y); }
         if (direction === 'left') { if (bc.x >= ac.x) continue; along = a.left - b.right; across = Math.abs(bc.y - ac.y); }
-        if (direction === 'down') { if (bc.y <= ac.y) continue; along = b.top - a.bottom; across = Math.abs(bc.x - ac.x); }
-        if (direction === 'up') { if (bc.y >= ac.y) continue; along = a.top - b.bottom; across = Math.abs(bc.x - ac.x); }
-        const horizontal = direction === 'left' || direction === 'right';
+        if (direction === 'down') { if (bc.y <= ac.y + 4) continue; along = b.top - a.bottom; across = Math.abs(bc.x - ac.x); }
+        if (direction === 'up') { if (bc.y >= ac.y - 4) continue; along = a.top - b.bottom; across = Math.abs(bc.x - ac.x); }
         // Left/right stay on the same line (a row of cards); at its end, focus stays put
         if (horizontal && (b.bottom <= a.top + 4 || b.top >= a.bottom - 4)) continue;
-        const score = Math.max(along, 0) + across * (horizontal ? 3 : 0.6);
-        if (score < bestScore) { bestScore = score; best = el; }
+        found.push({ el, along: Math.max(along, 0), across, height: b.height });
+    }
+    if (!found.length) return null;
+
+    if (horizontal) {
+        found.sort((p, q) => (p.along + p.across * 3) - (q.along + q.across * 3));
+        return found[0].el;
+    }
+
+    // Keep only the nearest line, then pick the element under the current column
+    const nearest = Math.min(...found.map(f => f.along));
+    const band = Math.max(24, Math.min(a.height, 120) * 0.5);
+    const line = found.filter(f => f.along <= nearest + band);
+    line.sort((p, q) => p.across - q.across);
+    const best = line[0].el;
+
+    // Entering a shelf: go back to the card last focused there
+    const row = rowOf(best);
+    if (row && row !== rowOf(from)) {
+        const remembered = rowMemory.get(row);
+        if (remembered && remembered.isConnected && row.contains(remembered) && isVisible(remembered)) return remembered;
     }
     return best;
 };
@@ -77,15 +113,9 @@ const firstInView = () => {
     }) || els[0] || null;
 };
 
-const scrollRowTo = (el) => {
-    // Bring the element fully inside its horizontally scrolling row (shelves of cards)
-    let row = el.parentElement;
-    while (row && row !== document.body) {
-        const style = getComputedStyle(row);
-        if (/(auto|scroll)/.test(style.overflowX) && row.scrollWidth > row.clientWidth) break;
-        row = row.parentElement;
-    }
-    if (!row || row === document.body) return;
+const scrollRowTo = (el, row) => {
+    // Bring the element fully inside its shelf of cards
+    if (!row) return;
     const r = el.getBoundingClientRect();
     const box = row.getBoundingClientRect();
     const pad = Math.min(80, box.width * 0.06);
@@ -93,15 +123,27 @@ const scrollRowTo = (el) => {
     else if (r.left < box.left + pad) row.scrollLeft -= box.left + pad - r.left;
 };
 
-const moveFocus = (el, direction) => {
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const moveFocus = (el, direction, repeating) => {
     el.focus({ preventScroll: true });
-    scrollRowTo(el);
+    const row = rowOf(el);
+    if (row) rowMemory.set(row, el);
+    scrollRowTo(el, row);
     if (direction === 'up' || direction === 'down') {
         const r = el.getBoundingClientRect();
-        const target = window.scrollY + r.top + r.height / 2 - window.innerHeight / 2;
-        window.scrollTo({ top: Math.max(0, target), behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        // Elements near the top of the page scroll it back to the very top (hero, menu)
+        const target = window.scrollY + r.top < window.innerHeight * 0.5
+            ? 0
+            : window.scrollY + r.top + r.height / 2 - window.innerHeight * 0.45;
+        // Holding a key: jump instead of stacking smooth scrolls, which lags on TV boxes
+        window.scrollTo({ top: Math.max(0, target), behavior: repeating || reducedMotion() ? 'auto' : 'smooth' });
     }
 };
+
+// The Android app adds "AltyflixTV" to its user agent: remote mode from the start,
+// and the TV gets the lighter rendering defined in tvNavigation.css
+const IN_TV_APP = typeof navigator !== 'undefined' && /AltyflixTV/.test(navigator.userAgent);
 
 const useTVNavigation = () => {
     useEffect(() => {
@@ -132,11 +174,16 @@ const useTVNavigation = () => {
             const next = from ? findNext(from, direction) : firstInView();
             if (next) {
                 e.preventDefault();
-                moveFocus(next, direction);
+                moveFocus(next, direction, e.repeat);
+            } else if (from && !vertical) {
+                // End of a row: stay put instead of letting the browser scroll sideways
+                e.preventDefault();
             }
         };
 
-        const onPointer = () => root.classList.remove('tv-nav');
+        if (IN_TV_APP) root.classList.add('tv-nav', 'tv-app');
+
+        const onPointer = () => { if (!IN_TV_APP) root.classList.remove('tv-nav'); };
 
         window.addEventListener('keydown', onKeyDown);
         window.addEventListener('mousemove', onPointer, { passive: true });
@@ -145,7 +192,7 @@ const useTVNavigation = () => {
             window.removeEventListener('keydown', onKeyDown);
             window.removeEventListener('mousemove', onPointer);
             window.removeEventListener('pointerdown', onPointer);
-            root.classList.remove('tv-nav');
+            root.classList.remove('tv-nav', 'tv-app');
         };
     }, []);
 };

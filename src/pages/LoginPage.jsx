@@ -363,7 +363,7 @@ const LoginPage = () => {
 
                         <button
                             onClick={() => { setIsLogin(true); setStep(2); }}
-                            className="bg-gradient-to-r from-[#E50914] to-[#B81D24] hover:from-[#f40612] hover:to-[#c11119] text-white text-[15px] font-bold px-5 py-2 rounded-xl transition-all shadow-[0_4px_20px_rgba(229,9,20,0.4)] hover:shadow-[0_6px_25px_rgba(229,9,20,0.6)] hover:scale-[1.02] active:scale-[0.98]"
+                            className="bg-[#E50914] hover:bg-[#f6121d] text-white text-[15px] font-bold px-5 py-2 rounded-xl transition-all active:scale-[0.98]"
                         >
                             {t('login.title')}
                         </button>
@@ -390,8 +390,6 @@ const LoginPage = () => {
                                 <div className="absolute inset-0 bg-black/70" />
                                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-black/70" />
                                 <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.6)_100%)]" />
-                                {/* Red glow from center */}
-                                <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_60%_at_50%_55%,rgba(229,9,20,0.12),transparent)]" />
                             </div>
 
                             {/* Content */}
@@ -400,9 +398,8 @@ const LoginPage = () => {
                                     initial={{ opacity: 0, y: -10 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ duration: 0.6, delay: 0.1 }}
-                                    className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-red-500/30 bg-red-500/10 text-red-400 text-sm font-semibold mb-6 backdrop-blur-sm"
+                                    className="mb-5 text-xs font-semibold uppercase tracking-[0.24em] text-white/60"
                                 >
-                                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                                     {t('landing.badge')}
                                 </motion.div>
 
@@ -460,7 +457,7 @@ const LoginPage = () => {
                                         </div>
                                         <button
                                             type="submit"
-                                            className="w-auto bg-gradient-to-r from-[#E50914] to-[#B81D24] hover:from-[#f40612] hover:to-[#c11119] text-white font-black text-lg sm:text-[1.35rem] px-8 sm:px-10 h-[3.5rem] sm:h-[4rem] rounded-2xl transition-all flex items-center justify-center gap-2 whitespace-nowrap min-w-[200px] shadow-[0_4px_30px_rgba(229,9,20,0.5)] hover:shadow-[0_8px_45px_rgba(229,9,20,0.7)] hover:scale-[1.02] active:scale-[0.98]"
+                                            className="w-auto bg-[#E50914] hover:bg-[#f6121d] text-white font-black text-lg sm:text-[1.35rem] px-8 sm:px-10 h-[3.5rem] sm:h-[4rem] rounded-2xl transition-all flex items-center justify-center gap-2 whitespace-nowrap min-w-[200px] active:scale-[0.98]"
                                         >
                                             {t('landing.startBtn')}
                                             <ChevronRight />
@@ -472,7 +469,7 @@ const LoginPage = () => {
                                             type="button"
                                             onClick={handleGoogleAuth}
                                             disabled={googleLoading}
-                                            className="inline-flex items-center gap-3 px-6 py-3 bg-white/10 hover:bg-white/15 border border-white/20 hover:border-white/30 rounded-2xl text-white text-sm font-bold transition-all backdrop-blur-xl hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-[0_8px_25px_rgba(0,0,0,0.4)]"
+                                            className="inline-flex items-center gap-3 px-6 py-3 bg-white/10 hover:bg-white/15 border border-white/20 hover:border-white/30 rounded-2xl text-white text-sm font-bold transition-all backdrop-blur-xl active:scale-[0.98] cursor-pointer shadow-[0_8px_25px_rgba(0,0,0,0.4)]"
                                         >
                                             <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
                                                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -566,7 +563,7 @@ const LoginPage = () => {
                                                 {t('landing.emailPlaceholder')}
                                             </label>
                                         </div>
-                                        <button type="submit" className="w-auto bg-gradient-to-r from-[#E50914] to-[#B81D24] hover:from-[#f40612] hover:to-[#c11119] text-white font-black text-lg px-8 h-[3.5rem] sm:h-[4rem] rounded-2xl transition-all flex items-center justify-center gap-2 whitespace-nowrap min-w-[200px] shadow-[0_4px_25px_rgba(229,9,20,0.45)] hover:scale-[1.02] active:scale-[0.98]">
+                                        <button type="submit" className="w-auto bg-[#E50914] hover:bg-[#f6121d] text-white font-black text-lg px-8 h-[3.5rem] sm:h-[4rem] rounded-2xl transition-all flex items-center justify-center gap-2 whitespace-nowrap min-w-[200px] active:scale-[0.98]">
                                             {t('landing.startBtn')} <ChevronRight />
                                         </button>
                                     </form>
@@ -601,7 +598,6 @@ const LoginPage = () => {
                                 <PosterRow images={POSTER_ROWS[2]} direction={1} speed={24} />
                             </div>
                             <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/50" />
-                            <div className="absolute top-0 inset-x-0 h-[80vh] bg-[radial-gradient(ellipse_at_top,rgba(229,9,20,0.15),transparent_70%)] pointer-events-none" />
                         </div>
 
                         <div className="relative z-10 w-full max-w-[450px] p-7 sm:p-12 mx-auto bg-[#101015]/85 backdrop-blur-3xl sm:border border-white/15 rounded-3xl flex-grow sm:flex-grow-0 mt-6 sm:mt-12 shadow-[0_25px_70px_rgba(0,0,0,0.9)]">
@@ -650,9 +646,8 @@ const LoginPage = () => {
                                     type="submit"
                                     disabled={loading}
                                     id="auth-submit"
-                                    className="w-full relative group overflow-hidden bg-gradient-to-r from-[#E50914] to-[#B81D24] hover:from-[#f40612] hover:to-[#c11119] text-white font-black text-base sm:text-lg py-4 rounded-xl mt-6 transition-all disabled:opacity-50 shadow-[0_4px_25px_rgba(229,9,20,0.45)] hover:shadow-[0_8px_35px_rgba(229,9,20,0.65)] hover:scale-[1.01] active:scale-[0.98]"
+                                    className="w-full relative group overflow-hidden bg-[#E50914] hover:bg-[#f6121d] text-white font-black text-base sm:text-lg py-4 rounded-xl mt-6 transition-all disabled:opacity-50 active:scale-[0.98]"
                                 >
-                                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-[150%] skew-x-[-20deg] group-hover:animate-shine" />
                                     <span className="relative z-10">
                                         {loading ? t('login.loading') : (isLogin ? t('login.title') : t('login.register'))}
                                     </span>
@@ -680,7 +675,7 @@ const LoginPage = () => {
                                     type="button"
                                     onClick={handleGoogleAuth}
                                     disabled={loading || googleLoading}
-                                    className="w-full flex items-center justify-center gap-3 bg-white/10 hover:bg-white/15 border border-white/20 hover:border-white/30 text-white font-bold text-[15px] py-3.5 px-4 rounded-xl transition-all disabled:opacity-50 backdrop-blur-xl shadow-lg cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                                    className="w-full flex items-center justify-center gap-3 bg-white/10 hover:bg-white/15 border border-white/20 hover:border-white/30 text-white font-bold text-[15px] py-3.5 px-4 rounded-xl transition-all disabled:opacity-50 backdrop-blur-xl shadow-lg cursor-pointer active:scale-[0.98]"
                                 >
                                     <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
                                         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -737,7 +732,7 @@ const LoginPage = () => {
                             <div className="space-y-3">
                                 <button
                                     onClick={() => navigate('/profiles')}
-                                    className="w-full py-3.5 px-6 rounded-xl bg-[#E50914] hover:bg-[#c11119] text-white font-bold text-base shadow-[0_0_25px_rgba(229,9,20,0.4)] transition-all hover:scale-[1.02]"
+                                    className="w-full py-3.5 px-6 rounded-xl bg-[#E50914] hover:bg-[#c11119] text-white font-bold text-base transition-all"
                                 >
                                     J&apos;ai vérifié mon email — Continuer
                                 </button>

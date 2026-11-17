@@ -92,7 +92,7 @@ const Navbar = () => {
                         <AltyflixLogo
                             size={36}
                             showText={true}
-                            className="drop-shadow-[0_0_15px_rgba(229,9,20,0.4)]"
+                            
                         />
                     </Link>
                 </div>
@@ -185,8 +185,15 @@ const Navbar = () => {
                         }}
                         onMouseLeave={() => setIsProfileMenuOpen(false)}
                     >
-                        <button className="flex items-center gap-2 group">
-                            <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl overflow-hidden border border-white/20 group-hover:border-white/60 transition-all shadow-xl active:scale-95 flex-shrink-0 group-hover:shadow-[0_0_20px_rgba(229,9,20,0.4)]">
+                        <button
+                            type="button"
+                            aria-label="Menu du profil"
+                            aria-haspopup="menu"
+                            aria-expanded={isProfileMenuOpen}
+                            onClick={() => setIsProfileMenuOpen(open => !open)}
+                            className="flex items-center gap-2 group"
+                        >
+                            <div className="w-9 h-9 rounded-md overflow-hidden ring-1 ring-white/20 group-hover:ring-white/70 transition-all flex-shrink-0">
                                 <img
                                     src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
                                     alt="Profile"
@@ -203,7 +210,7 @@ const Navbar = () => {
                                     animate={{ opacity: 1, y: 0, scale: 1 }}
                                     exit={{ opacity: 0, y: 10, scale: 0.95 }}
                                     transition={{ duration: 0.15 }}
-                                    className="absolute top-full right-0 mt-3 w-64 bg-[#0a0a0f]/90 backdrop-blur-3xl rounded-3xl py-3 border border-white/15 shadow-[0_30px_70px_rgba(0,0,0,0.8)] overflow-hidden z-[300]"
+                                    className="absolute top-full right-0 mt-2 w-60 bg-[#141418] rounded-xl py-2 border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.7)] overflow-hidden z-[300]"
                                 >
                                     <div className="px-2 space-y-1">
                                         <Link
@@ -241,9 +248,11 @@ const Navbar = () => {
                         </AnimatePresence>
                     </div>
 
-                    {/* Mobile Hamburger — hidden on mobile (bottom nav handles navigation) */}
+                    {/* Menu button for tablet widths, where the link pill is hidden (phones use the bottom bar) */}
                     <button
-                        className="hidden lg:hidden xl:hidden text-white/80 hover:text-white p-2.5 rounded-full hover:bg-white/10 transition-all"
+                        type="button"
+                        aria-label="Ouvrir le menu"
+                        className="hidden md:block lg:hidden text-white/80 hover:text-white p-2.5 rounded-full hover:bg-white/10 transition-all"
                         onClick={() => setIsMobileMenuOpen(true)}
                     >
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -261,7 +270,7 @@ const Navbar = () => {
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            className="fixed inset-0 bg-black/90 backdrop-blur-lg z-[400]"
+                            className="pointer-events-auto fixed inset-0 bg-black/80 z-[400]"
                             onClick={() => setIsMobileMenuOpen(false)}
                         />
                         <motion.div
@@ -269,7 +278,7 @@ const Navbar = () => {
                             animate={{ y: 0 }}
                             exit={{ y: '100%' }}
                             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                            className="fixed bottom-0 left-0 right-0 bg-[#0B0B0F]/95 backdrop-blur-3xl border-t border-white/10 z-[401] rounded-t-[40px] px-8 pt-10 pb-12 shadow-[0_-20px_50px_rgba(0,0,0,0.5)]"
+                            className="pointer-events-auto fixed bottom-0 left-0 right-0 bg-[#111116] border-t border-white/10 z-[401] rounded-t-2xl px-8 pt-10 pb-12"
                         >
                             <div className="flex flex-col gap-6">
                                 {navLinks.map((link) => (
@@ -277,16 +286,18 @@ const Navbar = () => {
                                         key={link.name}
                                         to={link.path}
                                         onClick={() => setIsMobileMenuOpen(false)}
-                                        className="text-white text-3xl font-bold tracking-tighter active:text-ALTYFLIX-primary transition-colors"
+                                        className="text-white/85 hover:text-white text-2xl font-semibold tracking-tight transition-colors"
                                     >
                                         {link.name}
                                     </Link>
                                 ))}
                                 <div className="h-px bg-white/10 my-4" />
-                                <button onClick={() => { logout(); setIsMobileMenuOpen(false); }} className="text-ALTYFLIX-primary text-xl font-bold text-left">{t('nav.logout')}</button>
+                                <button type="button" onClick={() => { logout(); setIsMobileMenuOpen(false); }} className="text-[#ff5a63] text-lg font-semibold text-left">{t('nav.logout')}</button>
                             </div>
                             <button
-                                className="absolute top-8 right-8 p-3 rounded-full bg-white/5 text-white/50"
+                                type="button"
+                                aria-label="Fermer le menu"
+                                className="absolute top-6 right-6 p-3 rounded-full bg-white/5 text-white/60 hover:text-white"
                                 onClick={() => setIsMobileMenuOpen(false)}
                             >
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

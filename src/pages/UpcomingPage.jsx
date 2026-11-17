@@ -37,7 +37,7 @@ const HeroUpcoming = ({ item, onReminder, isReminded }) => (
                 <img
                     src={getBackdropUrl(item.backdrop_path, 'w1280')}
                     alt=""
-                    className="h-full w-full object-cover object-[center_20%] animate-hero-pan"
+                    className="h-full w-full object-cover object-[center_20%]"
                     decoding="async"
                 />
             )}

@@ -1,3 +1,17 @@
 /api/*  https://altyflix-backend.onrender.com/api/:splat  200!
 /avatars/Netflix/* /avatars/netflix/:splat 301
+# Old lowercase avatar folders (removed duplicates) keep working for existing profiles
+/avatars/baby-boss/avatar_2duas2d.png /avatars/Baby%20Boss/avatar_2DuaS2D.png 301
+/avatars/baby-boss/avatar_yhnwhe1.png /avatars/Baby%20Boss/avatar_yhnwhe1.png 301
+/avatars/bojack-horseman/avatar_4efihc6.png /avatars/Bojack%20Horseman/avatar_4EFiHC6.png 301
+/avatars/bojack-horseman/avatar_sqtzyqv.png /avatars/Bojack%20Horseman/avatar_sQtzYQV.png 301
+/avatars/bojack-horseman/avatar_u1djo5h.png /avatars/Bojack%20Horseman/avatar_u1DJo5h.png 301
+/avatars/casa-del-papel/avatar_0tstsw8.png /avatars/Casa%20Del%20Papel/avatar_0tsTsw8.png 301
+/avatars/casa-del-papel/avatar_siylyin.png /avatars/Casa%20Del%20Papel/avatar_siylyIN.png 301
+/avatars/stranger-things/avatar_1sdlymc.png /avatars/Stranger%20Things/avatar_1SdlYmc.png 301
+/avatars/stranger-things/avatar_2xn9a1h.png /avatars/Stranger%20Things/avatar_2Xn9a1H.png 301
+/avatars/stranger-things/avatar_4hp8ngk.png /avatars/Stranger%20Things/avatar_4HP8NGK.png 301
+/avatars/stranger-things/avatar_canzj7p.png /avatars/Stranger%20Things/avatar_CANzj7P.png 301
+/avatars/stranger-things/avatar_cjmhery.png /avatars/Stranger%20Things/avatar_CjMherY.png 301
+/avatars/stranger-things/avatar_jdyifkw.png /avatars/Stranger%20Things/avatar_JdYIFkw.png 301
 /*      /index.html              200

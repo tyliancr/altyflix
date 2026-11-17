@@ -93,8 +93,7 @@ const AltyflixLogo = ({ size = 40, showText = false, textFirst = false, classNam
                 color: '#ffffff',
                 letterSpacing: '-0.03em',
                 lineHeight: 1,
-                userSelect: 'none',
-                textShadow: '0 0 15px rgba(229, 9, 20, 0.4)'
+                userSelect: 'none'
             }}
         >
             ALTYFLIX

@@ -9,7 +9,6 @@ import { ProfileProvider } from './contexts/ProfileContext';
 import { PlayerProvider } from './contexts/PlayerContext';
 import PageTransition from './components/common/PageTransition';
 import MainLayout from './layouts/MainLayout';
-import SpotlightEffect from './components/common/SpotlightEffect';
 import { sanitizeReturnUrl } from './utils/helpers';
 import './index.css';
 
@@ -376,7 +375,6 @@ function App() {
         <ToastProvider>
           <ProfileProvider>
             <PlayerProvider>
-              <SpotlightEffect />
               <AppRoutes />
             </PlayerProvider>
           </ProfileProvider>

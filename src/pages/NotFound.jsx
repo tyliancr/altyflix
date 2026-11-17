@@ -17,12 +17,6 @@ const NotFound = () => {
                 <meta name="robots" content="noindex" />
             </Helmet>
 
-            <div
-                aria-hidden="true"
-                className="pointer-events-none absolute left-1/2 top-1/2 h-[80vmin] w-[80vmin] -translate-x-1/2 -translate-y-1/2 rounded-full"
-                style={{ background: 'radial-gradient(closest-side, rgba(229,9,20,0.16), transparent)' }}
-            />
-
             <motion.p
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}

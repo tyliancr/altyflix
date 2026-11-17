@@ -193,7 +193,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                             srcSet={`${backdrop(movie.backdrop_path, 'w780')} 780w, ${backdrop(movie.backdrop_path, 'w1280')} 1280w, ${backdrop(movie.backdrop_path, 'original')} 2560w`}
                             sizes="100vw"
                             alt=""
-                            className="w-full h-full object-cover object-[center_20%] animate-hero-pan"
+                            className="w-full h-full object-cover object-[center_20%]"
                             // eslint-disable-next-line react/no-unknown-property -- React 18 only forwards the lowercase attribute
                             fetchpriority="high"
                             decoding="async"
@@ -228,7 +228,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                         </span>
                         {rankLabel && movies.length > 1 && (
                             <span className="inline-flex items-center gap-2 text-[11px] sm:text-xs font-semibold text-white/90">
-                                <span className="grid place-items-center min-w-[26px] h-[26px] px-1 rounded-md bg-[#E50914] text-white font-black text-[11px] leading-none shadow-[0_4px_14px_rgba(229,9,20,0.45)]">
+                                <span className="grid place-items-center min-w-[26px] h-[26px] px-1 rounded-md bg-[#E50914] text-white font-black text-[11px] leading-none">
                                     {activeIndex + 1}
                                 </span>
                                 N° {activeIndex + 1} {rankLabel}

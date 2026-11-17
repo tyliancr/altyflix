@@ -31,7 +31,7 @@ export default function ResumeRow({ history, title }) {
                             onClick={() => { playHaptic(); play({ ...item, id, media_type: type }); }}
                             onKeyDown={(e) => { if (e.key === 'Enter') { playHaptic(); play({ ...item, id, media_type: type }); } }}
                             aria-label={['Reprendre ' + name, episode, percent + ' %'].filter(Boolean).join(', ')}
-                            className="group relative aspect-video w-64 shrink-0 snap-start overflow-hidden rounded-xl bg-[#101016] text-left sm:w-80 shadow-[0_6px_20px_rgba(0,0,0,0.45)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.8)] hover:scale-[1.03] transition-all duration-300 ring-1 ring-inset ring-white/[0.07] hover:ring-white/25 cursor-pointer select-none"
+                            className="group relative aspect-video w-64 shrink-0 snap-start overflow-hidden rounded-xl bg-[#101016] text-left sm:w-80 shadow-[0_6px_20px_rgba(0,0,0,0.45)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.8)] transition-all duration-300 ring-1 ring-inset ring-white/[0.07] hover:ring-white/25 cursor-pointer select-none"
                         >
                             {art && <img src={art} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" />}
                             <span className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-transparent" />
@@ -53,9 +53,9 @@ export default function ResumeRow({ history, title }) {
                                 </svg>
                             </button>
 
-                            {/* Hover Play Icon Badge with Ruby Glow */}
+                            {/* Play icon on hover */}
                             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-                                <div className="w-14 h-14 rounded-full bg-black/60 border border-white/40 flex items-center justify-center text-white backdrop-blur-xl shadow-[0_0_30px_rgba(229,9,20,0.5)] scale-90 group-hover:scale-100 transition-transform">
+                                <div className="w-14 h-14 rounded-full bg-black/60 border border-white/40 flex items-center justify-center text-white backdrop-blur-xl scale-90 group-hover:scale-100 transition-transform">
                                     <svg className="w-6 h-6 ml-0.5 fill-current" viewBox="0 0 24 24">
                                         <path d="M8 5v14l11-7z" />
                                     </svg>
@@ -70,7 +70,7 @@ export default function ResumeRow({ history, title }) {
                                 </span>
                             </span>
                             <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-1 bg-white/20 z-10">
-                                <span className="block h-full bg-gradient-to-r from-[#E50914] to-[#ff2b36] shadow-[0_0_12px_rgba(229,9,20,0.9)]" style={{ width: Math.max(percent, 5) + '%' }} />
+                                <span className="block h-full bg-[#E50914]" style={{ width: Math.max(percent, 5) + '%' }} />
                             </span>
                         </div>
                     );

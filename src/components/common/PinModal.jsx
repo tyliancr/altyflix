@@ -21,7 +21,7 @@ const Padlock = ({ error }) => (
     </svg>
 );
 
-const PinModal = ({ isOpen, onClose, onSubmit, profileName, avatar }) => {
+const PinModal = ({ isOpen, onClose, onSubmit, profileName }) => {
     const [pin, setPin] = useState(EMPTY);
     const [error, setError] = useState(false);
     const inputRefs = useRef([]);
@@ -98,9 +98,6 @@ const PinModal = ({ isOpen, onClose, onSubmit, profileName, avatar }) => {
                         className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0e0e14] p-8 text-center shadow-[0_30px_80px_rgba(0,0,0,0.8)]"
                     >
                         <div className="relative mx-auto mb-6 grid h-20 w-20 place-items-center">
-                            {avatar && (
-                                <img src={avatar} alt="" className="absolute inset-0 h-full w-full rounded-[26%] object-cover opacity-25 blur-[1px]" />
-                            )}
                             <span className="relative"><Padlock error={error} /></span>
                         </div>
 

@@ -6,7 +6,7 @@ process.on('unhandledRejection', reason => {
 });
 
 const streamApi = require('./stream-api.cjs');
-const { extractDirectStream } = require('./streamExtractor.cjs');
+const { resolveNativeStream, getDemoVtt } = require('./nativeStreamingEngine.cjs');
 const { SECURITY_HEADERS, HttpError, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter } = require('./security.cjs');
 /**
  * ALTYFLIX Backend Server - Node.js (Built-in HTTP, Zero Dependances External)
@@ -561,75 +561,61 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // Debug Extractor
-  if (pathname === '/api/debug-extractor') {
-    try {
-      const b = await require('./streamExtractor.cjs').getBrowser();
-      if (!b) return sendJSON(res, 200, { ok: false, error: 'No browser' });
-      const ctx = await b.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      });
-      const page = await ctx.newPage();
-      const urls = [];
-      page.on('response', r => {
-        const u = r.url();
-        if (!u.includes('.woff') && !u.includes('.css')) {
-          urls.push({ status: r.status(), url: u.slice(0, 100) });
-        }
-      });
-      await page.goto('https://vidlink.pro/movie/1248832', { timeout: 12000, waitUntil: 'domcontentloaded' }).catch(e => urls.push({ error: e.message }));
-      await new Promise(r => setTimeout(r, 4000));
-      const title = await page.title().catch(() => 'no title');
-      await ctx.close().catch(() => {});
-      return sendJSON(res, 200, { ok: true, title, urlsCount: urls.length, urls: urls.slice(0, 25) });
-    } catch (err) {
-      return sendJSON(res, 200, { ok: false, error: err.message, stack: err.stack });
-    }
+  // Diagnostic ALTYFLIX Native Streaming Engine
+  if (pathname === '/api/debug-engine') {
+    const { AUTHORIZED_STREAMS } = require('./nativeStreamingEngine.cjs');
+    return sendJSON(res, 200, {
+      status: 'operational',
+      engine: 'Altyflix Native Streaming Engine v2.0',
+      technologies: ['HTML5 Video', 'HLS.js', 'Shaka Player (DASH)', 'Node.js Core'],
+      iframes: 0,
+      thirdPartyPlayerDependencies: 0,
+      authorizedSources: Object.keys(AUTHORIZED_STREAMS).map(k => ({
+        id: AUTHORIZED_STREAMS[k].id,
+        title: AUTHORIZED_STREAMS[k].title,
+        hlsUrl: AUTHORIZED_STREAMS[k].hlsUrl,
+        dashUrl: AUTHORIZED_STREAMS[k].dashUrl,
+        qualities: AUTHORIZED_STREAMS[k].qualities.map(q => q.label)
+      }))
+    });
   }
 
-  // Direct Stream Extractor (HLS / MP4 direct avec fallback automatique immédiat)
+  // ALTYFLIX NATIVE STREAMING ENGINE (100% Natif HLS / DASH - Zéro iframe - Sources autorisées)
   if (pathname === '/api/direct-stream') {
-    const { id, type = 'movie', season = 1, episode = 1, lang = 'vf' } = query;
+    const { id, type = 'movie', season = 1, episode = 1, lang = 'vf', format = 'hls' } = query;
     try { validateStreams({ id, type, season, episode, lang }); }
     catch (err) { return sendJSON(res, err.status || 400, { error: err.message }); }
 
-    const isTv = type === 'tv';
-    const version = String(lang).toLowerCase().includes('vost') ? 'vostfr' : 'vf';
-
     try {
-      // Timeout de 20 secondes pour l'extraction (stealth + Cloudflare challenge)
-      const extracted = await Promise.race([
-        extractDirectStream({ id, type, season, episode, lang: version }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Extraction timeout')), 20000))
-      ]);
-
-      if (extracted && extracted.streamUrl) {
-        const payload = {
-          success: true,
-          tmdb_id: id,
-          content_type: type,
-          season: isTv ? parseInt(season) : null,
-          episode: isTv ? parseInt(episode) : null,
-          streamUrl: extracted.streamUrl,
-          rawStreamUrl: extracted.rawStreamUrl,
-          format: extracted.format || 'mp4',
-          lang: extracted.lang,
-          provider: extracted.provider,
-          captions: extracted.captions || []
-        };
-        return sendJSON(res, 200, payload);
-      }
+      const streamData = resolveNativeStream({
+        id,
+        type,
+        season,
+        episode,
+        lang,
+        format
+      });
+      return sendJSON(res, 200, streamData);
     } catch (err) {
-      // Timeout ou indisponibilité -> bascule immédiate sur fallback
+      console.error('[Native Engine] Resolution error:', err);
+      return sendJSON(res, 500, {
+        success: false,
+        error: 'Erreur interne du moteur de lecture natif : ' + err.message
+      });
     }
+  }
 
-    return sendJSON(res, 200, {
-      success: false,
-      tmdb_id: id,
-      content_type: type,
-      provider: 'Altyflix Native Stream',
-      error: 'Flux natif direct indisponible. Réessayez dans quelques instants.'
+  // Sous-titres WebVTT de démonstration natifs synchronisés
+  if (pathname === '/api/subtitles-demo') {
+    const { stream = 'tears-of-steel', lang = 'fr' } = query;
+    const vtt = getDemoVtt(stream, lang);
+    res.writeHead(200, {
+      'Content-Type': 'text/vtt; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Cache-Control': 'public, max-age=86400'
     });
+    return res.end(vtt);
   }
 
   if (req.method === 'POST' && pathname !== '/api/playback/progress') return sendJSON(res,405,{error:'Méthode non autorisée.'});
@@ -652,8 +638,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control','private, no-store');
     return sendJSON(res,result.status,result.data);
   }
-  // Altyflix Embedded Player API (Comme Vidzy / VidSrc mais sous votre propre marque)
-  // Usage: /player/movie/:id ou /player/tv/:id/:season/:episode
+  // Redirection automatique des anciennes URLs de lecture vers l'application native Altyflix
   if (pathname.startsWith('/player/')) {
     const segments = pathname.split('/').filter(Boolean); // ['player', 'movie'|'tv', id, s?, e?]
     const pType = segments[1] || 'movie';
@@ -663,43 +648,9 @@ const server = http.createServer(async (req, res) => {
 
     if (!pId) return sendJSON(res, 400, { error: 'ID TMDB requis.' });
 
-    const isTv = pType === 'tv';
-    const primaryUrl = isTv
-      ? `https://vidlink.pro/tv/${pId}/${pSeason}/${pEpisode}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`
-      : `https://vidlink.pro/movie/${pId}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`;
-    const backupUrl = isTv
-      ? `https://vidsrc.me/embed/tv?tmdb=${pId}&season=${pSeason}&episode=${pEpisode}`
-      : `https://vidsrc.me/embed/movie?tmdb=${pId}`;
-
-    const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Altyflix Player</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body, html { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    #player-frame { width: 100%; height: 100%; border: none; }
-    .source-btn {
-      position: absolute; top: 12px; right: 12px; z-index: 999;
-      background: rgba(20,20,20,0.85); color: #fff; border: 1px solid rgba(255,255,255,0.2);
-      padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;
-      display: flex; align-items: center; gap: 6px; backdrop-filter: blur(8px);
-      transition: all 0.2s;
-    }
-    .source-btn:hover { background: #e50914; border-color: #e50914; }
-  </style>
-</head>
-<body>
-  <iframe id="player-frame" src="${primaryUrl}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen></iframe>
-</body>
-</html>`;
-    res.writeHead(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Access-Control-Allow-Origin': '*'
-    });
-    return res.end(html);
+    const targetWatchUrl = `/watch/${pType}-${pId}${pType === 'tv' ? `?s=${pSeason}&e=${pEpisode}` : ''}`;
+    res.writeHead(302, { Location: targetWatchUrl });
+    return res.end();
   }
 
   // Health Check

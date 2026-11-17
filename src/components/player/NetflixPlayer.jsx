@@ -18,7 +18,8 @@ import {
     NetflixHelpIcon,
     NetflixPipIcon,
     NetflixFullscreenIcon,
-    NetflixExitFullscreenIcon
+    NetflixExitFullscreenIcon,
+    NetflixQualityIcon
 } from './NetflixIcons';
 
 function formatTime(seconds) {
@@ -122,6 +123,13 @@ export default function NetflixPlayer({
     const hasAutoSelectedSubRef = useRef(false);
     const userDisabledSubsRef = useRef(false);
 
+    // Quality selection
+    const [qualities, setQualities] = useState([
+        { id: -1, label: 'Auto (Adaptatif)' }
+    ]);
+    const [selectedQuality, setSelectedQuality] = useState(-1);
+    const [showQualityMenu, setShowQualityMenu] = useState(false);
+
     // Audio tracks (HLS embedded multi-track audio)
     const [audioTracks, setAudioTracks] = useState([]);
     const [selectedAudioTrack, setSelectedAudioTrack] = useState(0);
@@ -130,6 +138,7 @@ export default function NetflixPlayer({
     const containerRef = useRef(null);
     const videoRef = useRef(null);
     const hlsRef = useRef(null);
+    const shakaPlayerRef = useRef(null);
     const hideTimeoutRef = useRef(null);
     const lastSaveRef = useRef(0);
     const hasRecordedView = useRef(false);
@@ -176,16 +185,22 @@ export default function NetflixPlayer({
                 if (!live) return;
                 if (data.success && data.streamUrl) {
                     setStreamUrl(data.streamUrl);
+                    if (Array.isArray(data.qualities) && data.qualities.length > 0) {
+                        setQualities(data.qualities);
+                    }
+                    if (Array.isArray(data.audioTracks) && data.audioTracks.length > 0) {
+                        setAudioTracks(data.audioTracks);
+                    }
                     if (Array.isArray(data.captions) && data.captions.length > 0) {
                         setSubtitles(prev => {
                             const existingUrls = new Set(prev.map(s => s.url));
                             const newTracks = data.captions
                                 .filter(c => c.url && !existingUrls.has(c.url))
                                 .map((c, idx) => ({
-                                    id: `cap-${idx}`,
+                                    id: c.id || `cap-${idx}`,
                                     label: c.language || 'Français',
-                                    lang: (c.language || '').toLowerCase().includes('fran') ? 'fr' : 'en',
-                                    url: `/api/subtitles-vtt?url=${encodeURIComponent(c.url)}`
+                                    lang: c.lang || ((c.language || '').toLowerCase().includes('fran') ? 'fr' : 'en'),
+                                    url: c.url
                                 }));
                             return [...prev, ...newTracks];
                         });
@@ -336,7 +351,54 @@ export default function NetflixPlayer({
             : ((saved?.progress < 90 && saved?.lastWatchedPosition) ? Number(saved.lastWatchedPosition) : 0);
 
         const isHls = streamUrl.includes('.m3u8');
-        if (isHls && Hls.isSupported()) {
+        const isDash = streamUrl.includes('.mpd');
+
+        if (isDash) {
+            import('shaka-player').then(({ default: shaka }) => {
+                if (!shaka.Player.isBrowserSupported()) {
+                    video.src = streamUrl;
+                    video.play().catch(() => {});
+                    return;
+                }
+                shaka.polyfill.installAll();
+                const player = new shaka.Player(video);
+                shakaPlayerRef.current = player;
+                player.configure({
+                    streaming: {
+                        bufferingGoal: 60,
+                        rebufferingGoal: 2,
+                        bufferBehind: 90
+                    }
+                });
+                player.load(streamUrl).then(() => {
+                    if (startPos > 0) video.currentTime = startPos;
+                    const tracks = player.getVariantTracks();
+                    const dashQualities = [{ id: -1, label: 'Auto (Adaptatif)' }];
+                    const seenHeights = new Set();
+                    tracks.forEach(t => {
+                        if (t.height && !seenHeights.has(t.height)) {
+                            seenHeights.add(t.height);
+                            dashQualities.push({
+                                id: t.id,
+                                height: t.height,
+                                label: `${t.height}p ${t.height >= 720 ? 'HD' : ''}`.trim()
+                            });
+                        }
+                    });
+                    dashQualities.sort((a, b) => (b.height || 0) - (a.height || 0));
+                    setQualities(dashQualities);
+                    setIsBuffering(false);
+                    video.play().catch(() => {});
+                }).catch(err => {
+                    console.error('[Shaka] Error:', err);
+                    setStreamState('error');
+                    setErrorMessage('Erreur lors du chargement du flux DASH.');
+                });
+            }).catch(() => {
+                video.src = streamUrl;
+                video.play().catch(() => {});
+            });
+        } else if (isHls && Hls.isSupported()) {
             hls = new Hls({
                 enableWorker: true,
                 lowLatencyMode: false,
@@ -352,10 +414,18 @@ export default function NetflixPlayer({
             hls.attachMedia(video);
 
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                // Verrouiller la meilleure qualité disponible (1080p / 4K)
+                // Initialiser les qualités HLS disponibles
                 if (hls.levels && hls.levels.length > 0) {
-                    const highestLevel = hls.levels.length - 1;
-                    hls.currentLevel = highestLevel;
+                    const parsedQualities = [
+                        { id: -1, label: 'Auto (Adaptatif)' },
+                        ...hls.levels.map((lvl, idx) => ({
+                            id: idx,
+                            height: lvl.height || 0,
+                            label: lvl.height ? `${lvl.height}p ${lvl.height >= 720 ? 'HD' : ''}`.trim() : `Niveau ${idx + 1}`
+                        })).sort((a, b) => (b.height || 0) - (a.height || 0))
+                    ];
+                    setQualities(parsedQualities);
+                    hls.currentLevel = -1; // Adaptatif par défaut
                 }
                 if (hls.audioTracks?.length) {
                     setAudioTracks(hls.audioTracks.map((t, idx) => ({
@@ -448,6 +518,10 @@ export default function NetflixPlayer({
             if (hls) {
                 hls.destroy();
                 hlsRef.current = null;
+            }
+            if (shakaPlayerRef.current) {
+                shakaPlayerRef.current.destroy().catch(() => {});
+                shakaPlayerRef.current = null;
             }
         };
     }, [streamState, streamUrl]);
@@ -625,6 +699,11 @@ export default function NetflixPlayer({
                 case 'C':
                     e.preventDefault();
                     toggleSubtitles();
+                    break;
+                case 'q':
+                case 'Q':
+                    e.preventDefault();
+                    setShowQualityMenu(q => !q);
                     break;
                 case 'f':
                 case 'F':
@@ -848,6 +927,24 @@ export default function NetflixPlayer({
             videoRef.current.playbackRate = spd;
         }
         setShowSpeedMenu(false);
+    };
+
+    const handleQualitySelect = (levelId) => {
+        setSelectedQuality(levelId);
+        if (hlsRef.current) {
+            hlsRef.current.currentLevel = levelId;
+        } else if (shakaPlayerRef.current) {
+            const player = shakaPlayerRef.current;
+            if (levelId === -1) {
+                player.configure({ abr: { enabled: true } });
+            } else {
+                player.configure({ abr: { enabled: false } });
+                const tracks = player.getVariantTracks();
+                const target = tracks.find(t => t.id === levelId || t.height === levelId);
+                if (target) player.selectVariantTrack(target, true);
+            }
+        }
+        setShowQualityMenu(false);
     };
 
     const currentPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
@@ -1262,6 +1359,54 @@ export default function NetflixPlayer({
                             )}
                         </div>
 
+                        {/* Video Quality Selection Menu */}
+                        <div className="relative">
+                            <button
+                                onClick={() => { setShowQualityMenu(q => !q); setShowAudioMenu(false); setShowSpeedMenu(false); }}
+                                className={`px-2.5 py-1 rounded text-xs font-bold transition-all outline-none focus:outline-none flex items-center space-x-1.5 ${
+                                    selectedQuality !== -1
+                                        ? 'bg-[#E50914] text-white shadow'
+                                        : 'text-white/90 hover:text-white hover:bg-white/10'
+                                }`}
+                                title="Qualité vidéo"
+                                aria-label="Qualité vidéo"
+                            >
+                                <NetflixQualityIcon className="w-4 h-4 inline" />
+                                <span>{selectedQuality === -1 ? 'Auto' : (qualities.find(q => q.id === selectedQuality)?.label || 'HD')}</span>
+                            </button>
+
+                            {showQualityMenu && (
+                                <>
+                                    <div
+                                        className="fixed inset-0 z-40 bg-transparent cursor-default"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowQualityMenu(false);
+                                        }}
+                                    />
+                                    <div className="absolute right-0 bottom-12 w-48 bg-[#141414]/98 border border-white/10 rounded-md shadow-2xl p-2 text-sm backdrop-blur-2xl z-50 space-y-1">
+                                        <div className="px-2 py-1 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-white/10 mb-1">
+                                            Qualité vidéo
+                                        </div>
+                                        {qualities.map((q) => (
+                                            <button
+                                                key={q.id}
+                                                onClick={() => handleQualitySelect(q.id)}
+                                                className={`w-full text-left px-3 py-1.5 rounded text-xs flex items-center justify-between outline-none transition-colors ${
+                                                    selectedQuality === q.id
+                                                        ? 'text-[#E50914] font-bold bg-white/10'
+                                                        : 'text-gray-300 hover:text-white hover:bg-white/5'
+                                                }`}
+                                            >
+                                                <span>{q.label}</span>
+                                                {selectedQuality === q.id && <span className="text-[#E50914] font-bold">✓</span>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
                         {/* Playback Speed Menu */}
                         <div className="relative">
                             <button
@@ -1378,6 +1523,10 @@ export default function NetflixPlayer({
                             <div className="flex justify-between py-1 border-b border-white/5">
                                 <span className="text-gray-300">Sous-titres (On / Off)</span>
                                 <kbd className="px-2 py-0.5 bg-white/10 rounded text-white font-mono">C</kbd>
+                            </div>
+                            <div className="flex justify-between py-1 border-b border-white/5">
+                                <span className="text-gray-300">Qualité vidéo</span>
+                                <kbd className="px-2 py-0.5 bg-white/10 rounded text-white font-mono">Q</kbd>
                             </div>
                             <div className="flex justify-between py-1 border-b border-white/5">
                                 <span className="text-gray-300">Plein écran</span>

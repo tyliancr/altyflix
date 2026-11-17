@@ -142,10 +142,56 @@ const moveFocus = (el, direction, repeating) => {
 };
 
 // The Android app adds "AltyflixTV" to its user agent: remote mode from the start,
-// and the TV gets the lighter rendering defined in tvNavigation.css
-const IN_TV_APP = typeof navigator !== 'undefined' && /AltyflixTV/.test(navigator.userAgent);
+// and the TV gets the lighter rendering defined in tvNavigation.css.
+// `?tv=1` turns the same mode on in any browser (testing); `?tv=0` turns it off.
+const detectTvApp = () => {
+    if (typeof window === 'undefined') return false;
+    try {
+        const flag = new URLSearchParams(window.location.search).get('tv');
+        if (flag === '1') sessionStorage.setItem('altyflix_tv', '1');
+        if (flag === '0') sessionStorage.removeItem('altyflix_tv');
+        if (sessionStorage.getItem('altyflix_tv') === '1') return true;
+    } catch { /* storage blocked: rely on the user agent */ }
+    return /AltyflixTV/.test(navigator.userAgent);
+};
+const IN_TV_APP = detectTvApp();
+
+// TVs report 960×540 CSS pixels (1080p at density 2), a tablet layout with a collapsed
+// menu. Lay the page out at 1280×720, as TV apps do, and let the WebView scale it to the screen.
+if (IN_TV_APP && typeof document !== 'undefined' && /AltyflixTV/.test(navigator.userAgent)) {
+    document.querySelector('meta[name="viewport"]')?.setAttribute('content', 'width=1280, user-scalable=no');
+}
+
+// After a page change, focus its main action (first control in view, outside the menu)
+// as soon as it is rendered, so the remote works without a first "wake up" press.
+const focusPage = () => {
+    let tries = 0;
+    const attempt = () => {
+        const active = document.activeElement;
+        if (active && active !== document.body && isVisible(active) && !active.closest('nav')) return;
+        const el = candidates().find(c => {
+            const r = c.getBoundingClientRect();
+            // Never a text field: focusing one opens the TV's on-screen keyboard
+            return r.top >= 0 && r.bottom <= window.innerHeight && !c.closest('nav, header') && !TYPING.has(c.tagName);
+        });
+        if (el) el.focus({ preventScroll: true });
+        else if (++tries < 20) setTimeout(attempt, 150);
+    };
+    setTimeout(attempt, 250);
+};
 
 const useTVNavigation = () => {
+    // Page changes (the hook runs above the router, so watch the address itself)
+    useEffect(() => {
+        if (!IN_TV_APP) return undefined;
+        let last = window.location.pathname;
+        focusPage();
+        const timer = setInterval(() => {
+            if (window.location.pathname !== last) { last = window.location.pathname; focusPage(); }
+        }, 300);
+        return () => clearInterval(timer);
+    }, []);
+
     useEffect(() => {
         const root = document.documentElement;
 

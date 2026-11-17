@@ -1,0 +1,18 @@
+/* Remote-control mode: the focused element must be obvious from the sofa. */
+html.tv-nav :focus-visible,
+html.tv-nav :focus {
+  outline: 3px solid #fff !important;
+  outline-offset: 4px !important;
+}
+
+/* Cards grow a little when focused, as they do on mouse hover */
+html.tv-nav [role="link"]:focus,
+html.tv-nav article a:focus {
+  transform: scale(1.06);
+  transition: transform 180ms ease;
+  z-index: 5;
+}
+
+html.tv-nav article:focus-within h3 {
+  color: #fff;
+}

@@ -81,10 +81,10 @@ export default function NetflixPlayer({
     const [nextEpAvailable, setNextEpAvailable] = useState(false);
 
     // Player state
-    const [streamState, setStreamState] = useState('loading'); // 'loading' | 'ready' | 'fallback' | 'error'
+    const [streamState, setStreamState] = useState('loading'); // 'loading' | 'ready' | 'error'
     const [streamUrl, setStreamUrl] = useState('');
-    const [fallbackEmbedUrl, setFallbackEmbedUrl] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
+    const [retryCount, setRetryCount] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
@@ -155,24 +155,12 @@ export default function NetflixPlayer({
         return () => { live = false; };
     }, [isTv, id, season, episode, tvDetails?.seasons]);
 
-    // Stream resolver from /api/direct-stream with immediate 2.5s fallback
+    // Stream resolver from /api/direct-stream — native player only, no fallback
     useEffect(() => {
         const ctrl = new AbortController();
         let live = true;
         setStreamState('loading');
         setErrorMessage('');
-
-        const defaultEmbed = isTv
-            ? `https://vidlink.pro/tv/${id}/${season}/${episode}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`
-            : `https://vidlink.pro/movie/${id}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`;
-
-        // Si l'extraction directe prend plus de 2.5 secondes (cold start, blocage datacenter),
-        // on lance immédiatement le lecteur alternatif pour éviter tout blocage de chargement.
-        const fallbackTimer = setTimeout(() => {
-            if (!live) return;
-            setFallbackEmbedUrl(defaultEmbed);
-            setStreamState('fallback');
-        }, 2500);
 
         const params = new URLSearchParams({
             id: String(id),
@@ -186,7 +174,6 @@ export default function NetflixPlayer({
             .then(res => res.json())
             .then(data => {
                 if (!live) return;
-                clearTimeout(fallbackTimer);
                 if (data.success && data.streamUrl) {
                     setStreamUrl(data.streamUrl);
                     if (Array.isArray(data.captions) && data.captions.length > 0) {
@@ -205,23 +192,21 @@ export default function NetflixPlayer({
                     }
                     setStreamState('ready');
                 } else {
-                    setFallbackEmbedUrl(data.fallbackUrl || defaultEmbed);
-                    setStreamState('fallback');
+                    setErrorMessage('Ce titre n\'est pas encore disponible en streaming. La source est temporairement inaccessible.');
+                    setStreamState('error');
                 }
             })
             .catch(err => {
                 if (!live || err.name === 'AbortError') return;
-                clearTimeout(fallbackTimer);
-                setFallbackEmbedUrl(defaultEmbed);
-                setStreamState('fallback');
+                setErrorMessage('Impossible de charger le flux vidéo. Vérifiez votre connexion ou réessayez plus tard.');
+                setStreamState('error');
             });
 
         return () => {
             live = false;
-            clearTimeout(fallbackTimer);
             ctrl.abort();
         };
-    }, [id, isTv, season, episode, audioLang]);
+    }, [id, isTv, season, episode, audioLang, retryCount]);
 
     // Fetch external French & English subtitles from API
     useEffect(() => {
@@ -904,17 +889,7 @@ export default function NetflixPlayer({
                     }
                 ` : ''}
             `}} />
-            {/* Player Viewport (Native Video or Clean Fallback) */}
-            {streamState === 'fallback' ? (
-                <iframe
-                    src={fallbackEmbedUrl}
-                    title="Lecteur vidéo"
-                    allow="autoplay; fullscreen; picture-in-picture; encrypted-media; gyroscope; accelerometer"
-                    allowFullScreen={true}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full border-0 absolute inset-0 bg-black z-10"
-                />
-            ) : (
+            {/* Player Viewport (Native Video Player) */}
                 <video
                     ref={videoRef}
                     className="w-full h-full object-contain bg-black cursor-pointer"
@@ -924,9 +899,8 @@ export default function NetflixPlayer({
                     onClick={togglePlay}
                     onDoubleClick={toggleFullscreen}
                 />
-            )}
 
-            {/* Spinner Overlay - Pure Netflix Circular Loader (only for native loading/buffering, not fallback iframe) */}
+            {/* Spinner Overlay - Pure Netflix Circular Loader */}
             {(streamState === 'loading' || (isBuffering && isPlaying && streamState === 'ready')) && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 z-20 transition-opacity duration-300">
                     <div className="relative w-16 h-16 flex items-center justify-center">
@@ -945,6 +919,12 @@ export default function NetflixPlayer({
                     <h3 className="text-xl font-bold text-white mb-2">Lecture impossible</h3>
                     <p className="text-gray-400 text-sm max-w-md mb-6">{errorMessage}</p>
                     <div className="flex gap-4">
+                        <button
+                            onClick={() => setRetryCount(c => c + 1)}
+                            className="px-6 py-2.5 rounded bg-white/10 hover:bg-white/20 text-white font-semibold text-sm transition-all"
+                        >
+                            Réessayer
+                        </button>
                         <button
                             onClick={handleClose}
                             className="px-6 py-2.5 rounded bg-[#e50914] hover:bg-[#b80710] text-white font-semibold text-sm transition-all"
@@ -1014,8 +994,7 @@ export default function NetflixPlayer({
                 </button>
             </div>
 
-            {/* Bottom Bar - Official Netflix PC Desktop 2-Row Layout (hidden in fallback iframe mode) */}
-            {streamState !== 'fallback' && (
+            {/* Bottom Bar - Official Netflix PC Desktop 2-Row Layout */}
             <div
                 className={`absolute inset-x-0 bottom-0 pb-7 pt-16 px-8 z-40 bg-gradient-to-t from-black/95 via-black/60 to-transparent transition-opacity duration-300 flex flex-col space-y-3.5 ${
                     controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -1355,7 +1334,6 @@ export default function NetflixPlayer({
                     </div>
                 </div>
             </div>
-            )}
 
             {/* Keyboard Shortcuts Modal */}
             {showShortcuts && (

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayer } from '../../contexts/PlayerContext';
 import { getContentType, formatRuntime } from '../../utils/helpers';
@@ -248,7 +248,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                                     src={logo}
                                     alt=""
                                     className="max-h-[16vh] sm:max-h-[24vh] max-w-[78%] sm:max-w-[min(520px,42vw)] w-auto object-contain object-left-bottom"
-                                    style={{ filter: 'drop-shadow(0 6px 24px rgba(0,0,0,0.65))' }}
+                                    style={{ filter: 'drop-shadow(0 0 1px rgba(255,255,255,0.55)) drop-shadow(0 6px 24px rgba(0,0,0,0.65))' }}
                                     onError={() => setLogos(prev => ({ ...prev, [movieId]: null }))}
                                     decoding="async"
                                 />

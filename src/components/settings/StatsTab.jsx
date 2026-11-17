@@ -1,6 +1,21 @@
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import { Card, SectionHeader } from './SettingsUI';
 import { playHaptic } from '../../utils/interactions';
+import Icon from '../ui/Icons';
+
+/** Small progress ring used for the completion rate. */
+const Ring = ({ value }) => (
+    <svg viewBox="0 0 36 36" className="h-11 w-11 -rotate-90" aria-hidden="true">
+        <circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
+        <motion.circle
+            cx="18" cy="18" r="15.5" fill="none" stroke="#E50914" strokeWidth="3" strokeLinecap="round"
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: Math.max(0, Math.min(1, value / 100)) }}
+            transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
+        />
+    </svg>
+);
 
 export default function StatsTab({
     totalTitles,
@@ -11,134 +26,104 @@ export default function StatsTab({
     removeFromHistory,
     t
 }) {
+    const stats = [
+        { label: t('settings.statTitlesSeen'), value: totalTitles, icon: <Icon name="film" /> },
+        { label: t('settings.statTimeEst'), value: `${Math.round(estimatedHours)} h`, icon: <Icon name="clock" /> },
+        { label: t('settings.statCompRate'), value: `${completionRate} %`, icon: <Ring value={completionRate} /> },
+    ];
+    const history = watchHistory || [];
+
     return (
         <motion.div
-            key="stats"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.22 }}
             className="space-y-6"
         >
-            {/* Statistics grid panel */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                {[
-                    { label: t('settings.statTitlesSeen'), val: totalTitles, sub: t('settings.statWatchCumulative'), icon: (
-                        <svg className="w-5 h-5 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
-                        </svg>
-                    ) },
-                    { label: t('settings.statTimeEst'), val: `${Math.round(estimatedHours)} hrs`, sub: t('settings.statWatchCumulative'), icon: (
-                        <svg className="w-5 h-5 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                    ) },
-                    { label: t('settings.statCompRate'), val: `${completionRate}%`, sub: t('settings.statCompletedDesc'), icon: (
-                        <svg className="w-5 h-5 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                        </svg>
-                    ) },
-                    { label: t('settings.statProfileStatus'), val: totalTitles > 15 ? 'Cinéphile' : 'Novice', sub: t('settings.statEngagementLevel'), icon: (
-                        <svg className="w-5 h-5 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138z" />
-                        </svg>
-                    ) }
-                ].map((stat, i) => (
-                    <div key={i} className="bg-white/[0.02] border border-white/[0.05] rounded-2xl p-4 flex flex-col justify-between">
-                        <div className="flex justify-between items-start">
-                            <span className="text-2xs font-bold uppercase tracking-widest text-white/30">{stat.label}</span>
-                            <span>{stat.icon}</span>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {stats.map((stat, i) => (
+                    <motion.div
+                        key={stat.label}
+                        initial={{ opacity: 0, y: 14 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.4, delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
+                        className="flex items-center justify-between gap-4 rounded-3xl border border-white/[0.08] bg-white/[0.03] p-5"
+                    >
+                        <div className="min-w-0">
+                            <p className="font-display text-3xl font-bold tracking-tight text-white">{stat.value}</p>
+                            <p className="mt-1 truncate text-[13px] text-white/50">{stat.label}</p>
                         </div>
-                        <div className="mt-3">
-                            <p className="text-xl sm:text-2xl font-black text-white">{stat.val}</p>
-                            <p className="text-[10px] text-white/40">{stat.sub}</p>
-                        </div>
-                    </div>
+                        <span className="flex-none text-white/40">{stat.icon}</span>
+                    </motion.div>
                 ))}
             </div>
 
-            {/* Watch History Interactive List */}
             <Card>
                 <SectionHeader
-                    icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
+                    icon={<Icon name="clock" />}
                     title={t('settings.watchHistoryTitle')}
                     subtitle={t('settings.watchHistoryDesc')}
-                    action={
-                        watchHistory && watchHistory.length > 0 ? (
-                            <button
-                                onClick={() => setShowClearHistoryModal(true)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-all"
-                            >
-                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                                {t('settings.clearAllHistoryBtn')}
-                            </button>
-                        ) : null
-                    }
-                />
-                <div className="p-6">
-                    {watchHistory && watchHistory.length > 0 ? (
-                        <div className="divide-y divide-white/[0.05] space-y-4">
-                            {watchHistory.map((item, idx) => (
-                                <div key={idx} className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
-                                    {/* Cover */}
-                                    <div className="w-16 h-10 sm:w-20 sm:h-12 rounded-lg overflow-hidden shrink-0 bg-white/5 border border-white/10">
-                                        {item.backdrop_path ? (
-                                            <img src={`https://image.tmdb.org/t/p/w185${item.backdrop_path}`} alt="" className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-[10px] text-white/30">N/A</div>
-                                        )}
-                                    </div>
-
-                                    {/* Infos */}
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-xs sm:text-sm font-bold text-white truncate">{item.title}</p>
-                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                            <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 bg-white/5 rounded font-black text-white/40">
-                                                {item.type === 'tv' ? 'Série' : 'Film'}
-                                            </span>
-                                            {item.type === 'tv' && (
-                                                <span className="text-[10px] text-white/40">S{item.season} E{item.episode}</span>
-                                            )}
-                                            <span className="text-[10px] text-white/40">
-                                                {new Date(item.lastWatchedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                                            </span>
-                                        </div>
-
-                                        {/* Progress bar */}
-                                        <div className="w-full max-w-[200px] mt-2">
-                                            <div className="h-1 bg-white/10 rounded-full w-full overflow-hidden">
-                                                <div className="h-full bg-[#E50914]" style={{ width: `${item.progress || 10}%` }} />
-                                            </div>
-                                            <span className="text-[8px] text-white/30 font-bold mt-0.5 block">{Math.round(item.progress || 10)}% {t('detail.watched_pct')}</span>
-                                        </div>
-                                    </div>
-
-                                    {/* Remove */}
-                                    <button
-                                        onClick={() => { playHaptic(); removeFromHistory(item.contentId); }}
-                                        className="p-2 text-white/20 hover:text-[#E50914] rounded-lg hover:bg-white/[0.04] transition-all"
-                                        title="Retirer de l'historique"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="text-center py-10 space-y-3">
-                            <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-                                <svg className="w-6 h-6 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                            </div>
-                            <p className="text-white/30 text-xs">{t('settings.historyEmpty')}</p>
-                        </div>
+                    action={history.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowClearHistoryModal(true)}
+                            className="flex h-9 items-center gap-2 rounded-xl border border-white/15 bg-white/[0.06] px-3.5 text-[13px] font-semibold text-white/75 transition-colors hover:border-[#E50914]/60 hover:text-[#ff5a63]"
+                        >
+                            <Icon name="trash" className="h-4 w-4" />
+                            <span className="hidden sm:inline">{t('settings.clearAllHistoryBtn')}</span>
+                        </button>
                     )}
-                </div>
+                />
+                {history.length > 0 ? (
+                    <ul className="divide-y divide-white/[0.07]">
+                        {history.map(item => {
+                            const title = item.title || item.name;
+                            const isTv = item.type === 'tv';
+                            const progress = Math.round(item.progress || 0);
+                            const when = item.lastWatchedAt || item.timestamp;
+                            const meta = [
+                                isTv ? `S${item.season || 1} · E${item.episode || 1}` : 'Film',
+                                when && new Date(when).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }),
+                                progress >= 90 ? 'Terminé' : `${progress} %`,
+                            ].filter(Boolean).join(' · ');
+
+                            return (
+                                <li key={`${item.type}-${item.contentId}`} className="group flex items-center gap-4 px-6 py-3.5 transition-colors hover:bg-white/[0.025]">
+                                    <Link to={`/${isTv ? 'tv' : 'movie'}/${item.contentId}`} className="relative aspect-video w-28 flex-none overflow-hidden rounded-lg bg-[#101016] ring-1 ring-inset ring-white/[0.07]">
+                                        {item.backdrop_path && (
+                                            <img src={`https://image.tmdb.org/t/p/w300${item.backdrop_path}`} alt="" loading="lazy" className="h-full w-full object-cover" />
+                                        )}
+                                        <span className="absolute inset-x-0 bottom-0 h-1 bg-white/20">
+                                            <span className="block h-full bg-[#E50914]" style={{ width: `${Math.min(100, Math.max(progress, 4))}%` }} />
+                                        </span>
+                                    </Link>
+                                    <div className="min-w-0 flex-1">
+                                        <Link to={`/${isTv ? 'tv' : 'movie'}/${item.contentId}`} className="block truncate text-[15px] font-semibold text-white hover:underline">
+                                            {title}
+                                        </Link>
+                                        <p className="mt-0.5 truncate text-[13px] text-white/50">{meta}</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => { playHaptic(); removeFromHistory(item.contentId); }}
+                                        aria-label={`Retirer ${title} de l’historique`}
+                                        className="grid h-9 w-9 flex-none place-items-center rounded-full text-white/35 transition-colors hover:bg-white/10 hover:text-white"
+                                    >
+                                        <Icon name="close" className="h-4 w-4" strokeWidth={2.2} />
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                ) : (
+                    <div className="px-6 py-14 text-center">
+                        <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full border border-white/10 bg-white/5 text-white/40">
+                            <Icon name="clock" className="h-6 w-6" />
+                        </span>
+                        <p className="text-sm text-white/50">{t('settings.historyEmpty')}</p>
+                    </div>
+                )}
             </Card>
         </motion.div>
     );

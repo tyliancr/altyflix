@@ -1,5 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo } from 'react';
-import { fadeIn } from '../utils/animations';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
 import { deleteUser, verifyBeforeUpdateEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -12,10 +11,10 @@ import { db } from '../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import tmdb from '../services/tmdb';
 import { useTranslation } from '../hooks/useTranslation';
+import Icon from '../components/ui/Icons';
 
 // Modular Settings Components
 import { Toast, ConfirmModal } from '../components/settings/SettingsUI';
-import { LANGUAGES } from '../components/settings/SettingsConstants';
 import ProfileTab from '../components/settings/ProfileTab';
 import PreferencesTab from '../components/settings/PreferencesTab';
 import AccountTab from '../components/settings/AccountTab';
@@ -33,6 +32,7 @@ const Settings = () => {
     const [message, setMessage] = useState({ type: '', text: '' });
     const [activeTab, setActiveTab] = useState('profile');
     const [showClearHistoryModal, setShowClearHistoryModal] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
 
     // Profile Settings States
     const [profileName, setProfileName] = useState(() => currentProfile?.name || '');
@@ -40,7 +40,6 @@ const Settings = () => {
     const [pinCode, setPinCode] = useState(() => currentProfile?.pin || '');
     const [selectedAvatar, setSelectedAvatar] = useState(() => currentProfile?.avatar || '');
     const [selectedLanguage, setSelectedLanguage] = useState(() => currentProfile?.language || 'fr');
-    const [isLangOpen, setIsLangOpen] = useState(false);
     const [showAvatarSelector, setShowAvatarSelector] = useState(false);
 
     // Preferences Settings States
@@ -84,7 +83,7 @@ const Settings = () => {
         if (window.performance && window.performance.timing) {
             const perfTime = window.performance.timing;
             const diff = perfTime.loadEventEnd - perfTime.navigationStart;
-            setLoadTime(diff > 0 ? diff : 380);
+            setLoadTime(diff > 0 ? diff : 0);
         }
     }, [currentProfile]);
 
@@ -236,14 +235,12 @@ const Settings = () => {
     };
 
     const handleDeleteAccount = async () => {
-        if (window.confirm(t('settings.deleteConfirmPrompt'))) {
-            try {
-                await deleteUser(currentUser);
-                await logout();
-                navigate('/');
-            } catch {
-                triggerToast('error', t('settings.deleteReauthError'));
-            }
+        try {
+            await deleteUser(currentUser);
+            await logout();
+            navigate('/');
+        } catch {
+            triggerToast('error', t('settings.deleteReauthError'));
         }
     };
 
@@ -266,244 +263,179 @@ const Settings = () => {
     }, [watchHistory]);
 
     const tabs = [
-        {
-            id: 'profile',
-            label: t('settings.profileTab'),
-            icon: (
-                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-            )
-        },
-        {
-            id: 'preferences',
-            label: t('settings.preferencesTab'),
-            icon: (
-                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-            )
-        },
-        {
-            id: 'account',
-            label: t('settings.accountTab'),
-            icon: (
-                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-            )
-        },
-        {
-            id: 'stats',
-            label: t('settings.statsTab'),
-            icon: (
-                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-            )
-        },
-        {
-            id: 'diagnostics',
-            label: t('settings.diagnosticsTab'),
-            icon: (
-                <svg className="w-4 h-4 shrink-0 text-emerald-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-            )
-        }
+        { id: 'profile', label: t('settings.profileTab'), icon: 'user' },
+        { id: 'preferences', label: t('settings.preferencesTab'), icon: 'sliders' },
+        { id: 'account', label: t('settings.accountTab'), icon: 'shield' },
+        { id: 'stats', label: t('settings.statsTab'), icon: 'chart' },
+        { id: 'diagnostics', label: t('settings.diagnosticsTab'), icon: 'pulse' },
     ];
 
-    const currentLang = LANGUAGES.find(l => l.code === selectedLanguage) || LANGUAGES[0];
-
     return (
-        <div className="min-h-screen bg-[#07070A] text-white pt-28 pb-24 selection:bg-[#E50914]/30 select-none">
+        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-10 text-white md:px-[5%] md:pt-32">
             <Helmet>
                 <title>{t('settings.title')} - ALTYFLIX</title>
                 <meta name="robots" content="noindex" />
             </Helmet>
 
-            {/* Premium Ambient Background */}
-            <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[140vw] h-[60vh] bg-[radial-gradient(ellipse_60%_50%_at_50%_0%,rgba(229,9,20,0.1),transparent)] blur-xl" />
-                <div className="absolute bottom-0 right-10 w-[40vw] h-[40vw] bg-[radial-gradient(circle_at_center,rgba(0,255,100,0.015),transparent_60%)]" />
-            </div>
+            <div className="mx-auto max-w-6xl">
+                <motion.header
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                    className="mb-10"
+                >
+                    <h1 className="font-display text-4xl font-bold tracking-tight text-white sm:text-5xl">Paramètres</h1>
+                    <p className="mt-2 text-sm text-white/50 sm:text-base">Votre profil, la lecture et votre compte.</p>
+                </motion.header>
 
-            <main className="container-ALTYFLIX max-w-5xl relative z-10 px-4 sm:px-6">
-                <motion.div variants={fadeIn} initial="hidden" animate="visible">
-                    
-                    {/* Header */}
-                    <div className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight font-display bg-gradient-to-r from-white via-white to-white/60 bg-clip-text text-transparent">
-                                {t('settings.title')}
-                            </h1>
-                            <p className="text-white/40 text-xs sm:text-sm mt-1">{t('settings.subtitle')}</p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <Link to="/profiles" onClick={() => playHaptic()} className="px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-xs font-bold tracking-wider uppercase rounded-xl transition-all flex items-center gap-2">
-                                <svg className="w-3.5 h-3.5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                                </svg>
-                                {t('nav.switchProfile')}
+                <div className="flex flex-col items-start gap-8 lg:flex-row lg:gap-10">
+                    {/* ── Sidebar ── */}
+                    <aside className="w-full flex-none lg:sticky lg:top-28 lg:w-64">
+                        <div className="mb-5 flex items-center gap-3.5 rounded-3xl border border-white/[0.08] bg-white/[0.03] p-4">
+                            <span className="block h-12 w-12 flex-none overflow-hidden rounded-[26%] bg-[#101016] ring-1 ring-white/10">
+                                <img src={selectedAvatar || currentProfile?.avatar} alt="" className="h-full w-full object-cover" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                                <p className="truncate text-[15px] font-semibold text-white">{profileName || currentProfile?.name}</p>
+                                <p className="truncate text-xs text-white/45">{currentUser?.email || (isKid ? t('settings.kidProfile') : 'Profil')}</p>
+                            </div>
+                            <Link
+                                to="/profiles"
+                                onClick={() => playHaptic()}
+                                aria-label={t('nav.switchProfile')}
+                                title={t('nav.switchProfile')}
+                                className="grid h-9 w-9 flex-none place-items-center rounded-full text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+                            >
+                                <Icon name="users" className="h-[18px] w-[18px]" />
                             </Link>
                         </div>
-                    </div>
 
-                    {/* Toast Alert */}
-                    <AnimatePresence mode="wait">
-                        {message.text && <Toast key={message.text} message={message} />}
-                    </AnimatePresence>
-
-                    {/* Main Layout Grid */}
-                    <div className="flex flex-col lg:flex-row gap-8 items-start">
-                        
-                        {/* ── Sidebar Navigation ── */}
-                        <aside className="w-full lg:w-64 shrink-0">
-                            {/* Profile Mini Badge Card */}
-                            <div className="flex items-center gap-3 px-4 py-3 mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.05] backdrop-blur-md">
-                                <div className="relative shrink-0">
-                                    <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/15 shadow-md">
-                                        <img src={selectedAvatar || currentProfile?.avatar} alt="Avatar" className="w-full h-full object-cover" />
-                                    </div>
-                                    <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 rounded-full border-[2.5px] border-[#07070A]" />
-                                </div>
-                                <div className="min-w-0">
-                                    <p className="text-xs font-bold text-white truncate">{profileName || currentProfile?.name}</p>
-                                    <span className="text-[9px] uppercase tracking-widest text-[#E50914] font-black">{isKid ? t('settings.kidProfile') : 'Standard'}</span>
-                                </div>
-                            </div>
-
-                            {/* Tabs list */}
-                            <nav className="flex lg:flex-col gap-1.5 overflow-x-auto no-scrollbar pb-3 lg:pb-0 w-full">
-                                {tabs.map(tab => (
+                        <nav aria-label="Sections des paramètres" className="no-scrollbar -mx-[4%] flex gap-1 overflow-x-auto px-[4%] lg:mx-0 lg:flex-col lg:px-0">
+                            {tabs.map(tab => {
+                                const active = activeTab === tab.id;
+                                return (
                                     <button
                                         key={tab.id}
+                                        type="button"
+                                        aria-current={active ? 'page' : undefined}
                                         onClick={() => { playHaptic(); setActiveTab(tab.id); }}
-                                        className={`
-                                            relative flex items-center gap-3.5 px-4 py-3 rounded-xl
-                                            text-xs font-bold tracking-wide uppercase transition-all duration-200
-                                            whitespace-nowrap lg:whitespace-normal w-auto lg:w-full text-left
-                                            ${activeTab === tab.id ? 'text-white bg-white/[0.04] border border-white/10' : 'text-white/40 hover:text-white/70'}
-                                        `}
+                                        className={`relative flex flex-none items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-[15px] font-semibold transition-colors duration-200 lg:w-full ${active ? 'text-white' : 'text-white/50 hover:text-white'}`}
                                     >
-                                        <span className={`transition-colors duration-200 ${activeTab === tab.id ? 'text-[#E50914]' : 'text-white/30'}`}>
-                                            {tab.icon}
-                                        </span>
-                                        <span>{tab.label}</span>
-                                        {activeTab === tab.id && (
-                                            <motion.div
-                                                layoutId="active-nav-line"
-                                                className="absolute right-3 w-1.5 h-1.5 bg-[#E50914] rounded-full hidden lg:block"
+                                        {active && (
+                                            <motion.span
+                                                layoutId="settings-active-tab"
+                                                className="absolute inset-0 rounded-xl bg-white/[0.08]"
+                                                transition={{ type: 'spring', stiffness: 420, damping: 36 }}
                                             />
                                         )}
+                                        <Icon name={tab.icon} className={`relative h-[18px] w-[18px] ${active ? 'text-[#E50914]' : ''}`} />
+                                        <span className="relative">{tab.label}</span>
                                     </button>
-                                ))}
-                            </nav>
-                        </aside>
+                                );
+                            })}
+                            <button
+                                type="button"
+                                onClick={logout}
+                                className="flex flex-none items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-[15px] font-semibold text-white/50 transition-colors hover:text-[#ff5a63] lg:mt-3 lg:w-full lg:border-t lg:border-white/[0.07] lg:pt-5"
+                            >
+                                <Icon name="logout" className="h-[18px] w-[18px]" />
+                                {t('nav.logout')}
+                            </button>
+                        </nav>
+                    </aside>
 
-                        {/* ── Active Dashboard Panel ── */}
-                        <div className="flex-1 w-full min-w-0 space-y-6">
-                            <AnimatePresence mode="wait">
+                    {/* ── Panel ── */}
+                    <div className="w-full min-w-0 flex-1">
+                        <AnimatePresence mode="wait">
+                            {activeTab === 'profile' && (
+                                <ProfileTab
+                                    key="profile"
+                                    handleProfileSave={handleProfileSave}
+                                    selectedAvatar={selectedAvatar}
+                                    setShowAvatarSelector={setShowAvatarSelector}
+                                    profileName={profileName}
+                                    setProfileName={setProfileName}
+                                    pinCode={pinCode}
+                                    setPinCode={setPinCode}
+                                    isKid={isKid}
+                                    setIsKid={setIsKid}
+                                    selectedLanguage={selectedLanguage}
+                                    setSelectedLanguage={setSelectedLanguage}
+                                    loading={loading}
+                                    t={t}
+                                />
+                            )}
 
-                                {/* ════ Onglet 1 : Profil Actif ════ */}
-                                {activeTab === 'profile' && (
-                                    <ProfileTab
-                                        key="profile"
-                                        handleProfileSave={handleProfileSave}
-                                        selectedAvatar={selectedAvatar}
-                                        setShowAvatarSelector={setShowAvatarSelector}
-                                        profileName={profileName}
-                                        setProfileName={setProfileName}
-                                        pinCode={pinCode}
-                                        setPinCode={setPinCode}
-                                        isKid={isKid}
-                                        setIsKid={setIsKid}
-                                        selectedLanguage={selectedLanguage}
-                                        setSelectedLanguage={setSelectedLanguage}
-                                        isLangOpen={isLangOpen}
-                                        setIsLangOpen={setIsLangOpen}
-                                        currentLang={currentLang}
-                                        loading={loading}
-                                        t={t}
-                                    />
-                                )}
+                            {activeTab === 'preferences' && (
+                                <PreferencesTab
+                                    key="preferences"
+                                    handlePreferencesSave={handlePreferencesSave}
+                                    autoplayNext={autoplayNext}
+                                    setAutoplayNext={setAutoplayNext}
+                                    autoplayTrailers={autoplayTrailers}
+                                    setAutoplayTrailers={setAutoplayTrailers}
+                                    videoQuality={videoQuality}
+                                    setVideoQuality={setVideoQuality}
+                                    subtitlesSize={subtitlesSize}
+                                    setSubtitlesSize={setSubtitlesSize}
+                                    subtitlesColor={subtitlesColor}
+                                    setSubtitlesColor={setSubtitlesColor}
+                                    loading={loading}
+                                    t={t}
+                                />
+                            )}
 
-                                {/* ════ Onglet 2 : Préférences de lecture ════ */}
-                                {activeTab === 'preferences' && (
-                                    <PreferencesTab
-                                        key="preferences"
-                                        handlePreferencesSave={handlePreferencesSave}
-                                        autoplayNext={autoplayNext}
-                                        setAutoplayNext={setAutoplayNext}
-                                        autoplayTrailers={autoplayTrailers}
-                                        setAutoplayTrailers={setAutoplayTrailers}
-                                        preferredAudio={preferredAudio}
-                                        setPreferredAudio={setPreferredAudio}
-                                        videoQuality={videoQuality}
-                                        setVideoQuality={setVideoQuality}
-                                        subtitlesSize={subtitlesSize}
-                                        setSubtitlesSize={setSubtitlesSize}
-                                        subtitlesColor={subtitlesColor}
-                                        setSubtitlesColor={setSubtitlesColor}
-                                        loading={loading}
-                                        t={t}
-                                    />
-                                )}
+                            {activeTab === 'account' && (
+                                <AccountTab
+                                    key="account"
+                                    email={currentUser?.email}
+                                    handleEmailChange={handleEmailChange}
+                                    emailForm={emailForm}
+                                    setEmailForm={setEmailForm}
+                                    handlePasswordChange={handlePasswordChange}
+                                    passwordForm={passwordForm}
+                                    setPasswordForm={setPasswordForm}
+                                    handleDeleteAccount={() => setShowDeleteModal(true)}
+                                    loading={loading}
+                                    t={t}
+                                />
+                            )}
 
-                                {/* ════ Onglet 3 : Compte & Sécurité ════ */}
-                                {activeTab === 'account' && (
-                                    <AccountTab
-                                        key="account"
-                                        handleEmailChange={handleEmailChange}
-                                        emailForm={emailForm}
-                                        setEmailForm={setEmailForm}
-                                        handlePasswordChange={handlePasswordChange}
-                                        passwordForm={passwordForm}
-                                        setPasswordForm={setPasswordForm}
-                                        handleDeleteAccount={handleDeleteAccount}
-                                        loading={loading}
-                                        t={t}
-                                    />
-                                )}
+                            {activeTab === 'stats' && (
+                                <StatsTab
+                                    key="stats"
+                                    totalTitles={totalTitles}
+                                    estimatedHours={estimatedHours}
+                                    completionRate={completionRate}
+                                    watchHistory={watchHistory}
+                                    setShowClearHistoryModal={setShowClearHistoryModal}
+                                    removeFromHistory={removeFromHistory}
+                                    t={t}
+                                />
+                            )}
 
-                                {/* ════ Onglet 4 : Stats & Historique ════ */}
-                                {activeTab === 'stats' && (
-                                    <StatsTab
-                                        key="stats"
-                                        totalTitles={totalTitles}
-                                        estimatedHours={estimatedHours}
-                                        completionRate={completionRate}
-                                        watchHistory={watchHistory}
-                                        setShowClearHistoryModal={setShowClearHistoryModal}
-                                        removeFromHistory={removeFromHistory}
-                                        t={t}
-                                    />
-                                )}
-
-                                {/* ════ Onglet 5 : Diagnostics & Audit de Production ════ */}
-                                {activeTab === 'diagnostics' && (
-                                    <DiagnosticsTab
-                                        key="diagnostics"
-                                        loadTime={loadTime}
-                                        diagnosticsRunning={diagnosticsRunning}
-                                        runDiagnostics={runDiagnostics}
-                                        firestorePing={firestorePing}
-                                        tmdbPing={tmdbPing}
-                                        pwaStatus={pwaStatus}
-                                        httpsStatus={httpsStatus}
-                                        t={t}
-                                    />
-                                )}
-
-                            </AnimatePresence>
-                        </div>
-
+                            {activeTab === 'diagnostics' && (
+                                <DiagnosticsTab
+                                    key="diagnostics"
+                                    loadTime={loadTime}
+                                    diagnosticsRunning={diagnosticsRunning}
+                                    runDiagnostics={runDiagnostics}
+                                    firestorePing={firestorePing}
+                                    tmdbPing={tmdbPing}
+                                    pwaStatus={pwaStatus}
+                                    httpsStatus={httpsStatus}
+                                    t={t}
+                                />
+                            )}
+                        </AnimatePresence>
                     </div>
-                </motion.div>
-            </main>
+                </div>
+            </div>
 
-            {/* Avatar Selector Modal */}
+            <AnimatePresence>
+                {message.text && <Toast key={message.text} message={message} />}
+            </AnimatePresence>
+
             <AnimatePresence>
                 {showAvatarSelector && (
                     <AvatarSelector
@@ -515,14 +447,23 @@ const Settings = () => {
                 )}
             </AnimatePresence>
 
-            {/* Clear History Confirmation Modal */}
             <AnimatePresence>
                 {showClearHistoryModal && (
                     <ConfirmModal
+                        title="Effacer l’historique ?"
                         message={t('settings.clearHistoryConfirm')}
                         onConfirm={handleClearHistory}
                         onCancel={() => setShowClearHistoryModal(false)}
-                        confirmLabel={t('settings.clearAllHistoryBtn')}
+                        confirmLabel="Effacer"
+                    />
+                )}
+                {showDeleteModal && (
+                    <ConfirmModal
+                        title="Supprimer le compte ?"
+                        message={t('settings.deleteConfirmPrompt')}
+                        onConfirm={() => { setShowDeleteModal(false); handleDeleteAccount(); }}
+                        onCancel={() => setShowDeleteModal(false)}
+                        confirmLabel="Supprimer"
                     />
                 )}
             </AnimatePresence>

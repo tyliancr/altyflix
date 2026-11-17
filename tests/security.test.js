@@ -10,7 +10,6 @@ import { getContentType, sanitizeReturnUrl } from '../src/utils/helpers.js';
 const { tmdbUrl, validateStreams, arteLimit, BoundedCache, createRateLimiter, fetchJson } = security;
 const require = createRequire(import.meta.url);
 process.env.TMDB_API_KEY = 'test-key-not-a-real-credential';
-const { handler } = await import('../netlify/functions/api.js');
 
 test('return links cannot escape the site through backslash URLs', () => {
   for (const url of ['//evil.example', '/\\evil.example', '/\n/evil.example', 'https://evil.example']) assert.equal(sanitizeReturnUrl(url), '/');
@@ -63,30 +62,13 @@ test('cache eviction and request limits are enforced', () => {
   const allow = createRateLimiter(2);
   assert.equal(allow('a'), true); assert.equal(allow('a'), true); assert.equal(allow('a'), false); assert.equal(allow('b'), true);
 });
-test('Netlify rejects invalid requests and accepts rewritten paths', async () => {
-  const request = (path, query = {}, method = 'GET') => handler({ path, queryStringParameters: query, httpMethod: method, headers: {} });
-  assert.equal((await request('/api/streams', { id: '<script>' })).statusCode, 400);
-  assert.equal((await request('/api/tmdb/authentication/token/new')).statusCode, 400);
-  assert.equal((await request('/api/streams', { id: '1' }, 'POST')).statusCode, 405);
-  assert.equal((await request('/api/documentaries/arte', { limit: '1000' })).statusCode, 400);
-  const result = await request('/.netlify/functions/api/streams', { id: '96677', type: 'tv', season: '3', episode: '1' });
-  assert.equal(result.statusCode, 200);
-  assert.equal(JSON.parse(result.body).season, 3);
-  assert.equal(result.headers['X-Content-Type-Options'], 'nosniff');
-  assert.equal(result.headers['Access-Control-Allow-Origin'], undefined);
-});
-test('upstream failures hide internal details and successful seasons pass through', async () => {
+// The Netlify function these tests used to exercise was removed (the API now
+// runs on the Node server only), so only the shared fetch helper is covered here.
+test('upstream failures hide internal details', async () => {
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => { throw new Error('secret-key internal-host'); };
     await assert.rejects(fetchJson('https://example.com'), error => error.status === 502 && !error.message.includes('secret-key'));
-    const result = await handler({ path: '/api/tmdb/tv/12', httpMethod: 'GET', queryStringParameters: {}, headers: {} });
-    assert.equal(result.statusCode, 502);
-    assert.ok(!result.body.includes('secret-key'));
-    globalThis.fetch = async () => ({ ok: true, json: async () => ({ name: 'Partie 4', season_number: 3 }) });
-    const season = await handler({ path: '/api/tmdb/tv/96677/season/3', httpMethod: 'GET', queryStringParameters: {}, headers: {} });
-    assert.equal(season.statusCode, 200);
-    assert.equal(JSON.parse(season.body).name, 'Partie 4');
   } finally { globalThis.fetch = originalFetch; }
 });
 test('HTTP server rejects traversal, malformed URLs and unsafe methods', async () => {

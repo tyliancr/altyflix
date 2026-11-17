@@ -76,6 +76,9 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
         throw err;
     }
 
+    // Declared outside the try so the network-failure fallback below can cache too.
+    let cacheKey = null;
+
     try {
         const base = BASE_URL.startsWith('http://') || BASE_URL.startsWith('https://')
             ? BASE_URL
@@ -98,7 +101,7 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
             }
         });
 
-        const cacheKey = url.toString();
+        cacheKey = url.toString();
 
         if (options.signal?.aborted) {
             const abortErr = new Error('Aborted');
@@ -218,7 +221,7 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
                 const fbRes = await fetch(fallbackUrl);
                 if (fbRes.ok) {
                     const fbData = await fbRes.json();
-                    if (!options.skipCache) {
+                    if (!options.skipCache && cacheKey) {
                         requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
                         setSessionCache(cacheKey, fbData);
                         pruneCache();

@@ -1,9 +1,9 @@
 /* ─── Subtitle Maps & Languages Constants ────────────────────────────── */
 export const SUBTITLE_SIZE_MAP = {
-    small: { fontSize: '12px', label: 'Small / Petit' },
-    medium: { fontSize: '16px', label: 'Medium / Moyen' },
-    large: { fontSize: '22px', label: 'Large / Grand' },
-    xlarge: { fontSize: '30px', label: 'XL / Très grand' },
+    small: { fontSize: '12px', label: 'Petit' },
+    medium: { fontSize: '16px', label: 'Moyen' },
+    large: { fontSize: '22px', label: 'Grand' },
+    xlarge: { fontSize: '30px', label: 'Très grand' },
 };
 
 export const SUBTITLE_COLOR_MAP = {

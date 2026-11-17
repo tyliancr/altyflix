@@ -1,7 +1,8 @@
-import { motion, AnimatePresence } from 'framer-motion';
-import { Card, SectionHeader, Field, SubmitBtn } from './SettingsUI';
+import { motion } from 'framer-motion';
+import { Card, SectionHeader, Field, SubmitBtn, Row, Toggle } from './SettingsUI';
 import { LANGUAGES } from './SettingsConstants';
 import { playHaptic } from '../../utils/interactions';
+import Icon from '../ui/Icons';
 
 export default function ProfileTab({
     handleProfileSave,
@@ -15,131 +16,81 @@ export default function ProfileTab({
     setIsKid,
     selectedLanguage,
     setSelectedLanguage,
-    isLangOpen,
-    setIsLangOpen,
-    currentLang,
     loading,
     t
 }) {
     return (
-        <motion.div
-            key="profile"
+        <motion.form
+            onSubmit={handleProfileSave}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.22 }}
             className="space-y-6"
         >
             <Card>
                 <SectionHeader
-                    icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>}
+                    icon={<Icon name="user" />}
                     title={t('settings.platformSettings')}
                     subtitle={t('settings.platformSettingsDesc')}
                 />
-                <form onSubmit={handleProfileSave} className="p-6 space-y-6">
-                    <div className="flex flex-col sm:flex-row gap-6 items-center sm:items-start">
-                        {/* Avatar block with interactive selector */}
-                        <div 
-                            className="group relative shrink-0 w-24 h-24 rounded-2xl overflow-hidden cursor-pointer ring-2 ring-white/10 hover:ring-[#E50914]/50 transition-all shadow-[0_12px_24px_rgba(0,0,0,0.5)]"
-                            onClick={() => { playHaptic(); setShowAvatarSelector(true); }}
-                        >
-                            <img src={selectedAvatar} alt="Profile Icon" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
-                                </svg>
-                            </div>
-                        </div>
-
-                        <div className="flex-1 w-full space-y-4">
-                            <Field
-                                label={t('settings.profileNameLabel')}
-                                value={profileName}
-                                onChange={e => setProfileName(e.target.value)}
-                                required
-                                maxLength={15}
-                            />
-                            <Field
-                                label={t('settings.pinCodeLabel')}
-                                type="password"
-                                value={pinCode}
-                                onChange={e => setPinCode(e.target.value.replace(/\D/g, '').substring(0, 4))}
-                                maxLength={4}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Kids toggle */}
-                    <button
+                <div className="flex flex-col items-center gap-7 p-6 sm:flex-row sm:items-start">
+                    <motion.button
                         type="button"
-                        onClick={() => setIsKid(!isKid)}
-                        className="flex items-center justify-between w-full p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] transition-all"
+                        aria-label="Changer d’avatar"
+                        whileHover={{ scale: 1.04, rotate: -2 }}
+                        whileTap={{ scale: 0.96 }}
+                        transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+                        className="group relative flex-none rounded-[26%]"
+                        onClick={() => { playHaptic(); setShowAvatarSelector(true); }}
                     >
-                        <div className="flex items-center gap-3">
-                            <span className="text-xl text-white/60">
-                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                            </span>
-                            <div className="text-left">
-                                <p className="text-sm font-semibold text-white">{t('settings.kidProfile')}</p>
-                                <p className="text-[11px] text-white/40">{t('settings.kidProfileDesc')}</p>
-                            </div>
-                        </div>
-                        <div className={`relative w-11 h-6 rounded-full border transition-all duration-300 ${isKid ? 'bg-[#E50914] border-[#E50914]/50' : 'bg-white/10 border-white/10'}`}>
-                            <motion.div
-                                animate={{ x: isKid ? 20 : 2 }}
-                                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                                className="absolute top-1 w-4 h-4 bg-white rounded-full shadow"
-                            />
-                        </div>
-                    </button>
+                        <span className="block h-28 w-28 overflow-hidden rounded-[26%] bg-[#101016] ring-1 ring-white/10 transition-shadow group-hover:ring-2 group-hover:ring-white">
+                            <img src={selectedAvatar} alt="" className="h-full w-full object-cover" />
+                        </span>
+                        <span className="absolute -bottom-1.5 -right-1.5 grid h-9 w-9 place-items-center rounded-full bg-white text-black shadow-lg">
+                            <Icon name="edit" className="h-4 w-4" strokeWidth={2.2} />
+                        </span>
+                    </motion.button>
 
-                    {/* Lang picker */}
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-white/40">{t('settings.contentLanguage')}</label>
-                        <div className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setIsLangOpen(!isLangOpen)}
-                                className="w-full flex items-center justify-between px-4 py-3.5 bg-white/[0.04] border border-white/10 rounded-2xl hover:bg-white/[0.07] transition-all text-sm font-medium"
-                            >
-                                <span className="flex items-center gap-3">
-                                    <span className="text-[10px] font-extrabold bg-white/10 px-1.5 py-0.5 rounded tracking-wide border border-white/5 text-white/60">{currentLang.flag}</span>
-                                    {currentLang.name}
-                                </span>
-                                <svg className={`w-4 h-4 text-white/40 transition-transform duration-200 ${isLangOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7"/>
-                                </svg>
-                            </button>
-
-                            <AnimatePresence>
-                                {isLangOpen && (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: -8 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: -8 }}
-                                        className="absolute top-[calc(100%+6px)] left-0 w-full bg-[#111116] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-[9999] py-1"
-                                    >
-                                        {LANGUAGES.map(lang => (
-                                            <button
-                                                key={lang.code}
-                                                type="button"
-                                                onClick={() => { playHaptic(); setSelectedLanguage(lang.code); setIsLangOpen(false); }}
-                                                className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors ${selectedLanguage === lang.code ? 'bg-[#E50914]/15 text-white font-semibold' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
-                                            >
-                                                <span className="text-[10px] font-extrabold bg-white/10 px-1.5 py-0.5 rounded tracking-wide border border-white/5 text-white/60">{lang.flag}</span>
-                                                <span>{lang.name}</span>
-                                            </button>
-                                        ))}
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
+                    <div className="w-full flex-1 space-y-4">
+                        <Field
+                            label={t('settings.profileNameLabel')}
+                            value={profileName}
+                            onChange={e => setProfileName(e.target.value)}
+                            required
+                            maxLength={15}
+                        />
+                        <Field
+                            label={t('settings.pinCodeLabel')}
+                            type="password"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={pinCode}
+                            onChange={e => setPinCode(e.target.value.replace(/\D/g, '').substring(0, 4))}
+                            maxLength={4}
+                            hint="Laissez vide pour ne pas verrouiller ce profil."
+                        />
                     </div>
-                    <SubmitBtn loading={loading} label={t('settings.save')} />
-                </form>
+                </div>
             </Card>
-        </motion.div>
+
+            <Card className="divide-y divide-white/[0.07]">
+                <Row icon={<Icon name="kid" />} title={t('settings.kidProfile')} description={t('settings.kidProfileDesc')}>
+                    <Toggle checked={isKid} onChange={setIsKid} label={t('settings.kidProfile')} />
+                </Row>
+                <Row icon={<Icon name="globe" />} title={t('settings.contentLanguage')} description="Langue de l’interface et des fiches.">
+                    <select
+                        aria-label={t('settings.contentLanguage')}
+                        value={selectedLanguage}
+                        onChange={e => { playHaptic(); setSelectedLanguage(e.target.value); }}
+                        className="field-select h-10"
+                    >
+                        {LANGUAGES.map(lang => <option key={lang.code} value={lang.code}>{lang.name}</option>)}
+                    </select>
+                </Row>
+            </Card>
+
+            <SubmitBtn loading={loading} label={t('settings.save')} />
+        </motion.form>
     );
 }

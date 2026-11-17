@@ -1,4 +1,4 @@
-﻿import { seasonLabel } from '../utils/seasons';
+import { seasonLabel } from '../utils/seasons';
 // Title page: cinematic header (artwork, facts, actions), then tabbed content
 // — episodes first for a series, details first for a film.
 import { useState, useEffect } from 'react';
@@ -339,7 +339,7 @@ const DetailPage = () => {
                                     src={logo}
                                     alt=""
                                     className="max-h-[15vh] w-auto max-w-[78%] object-contain object-left-bottom sm:max-h-[22vh] sm:max-w-[min(520px,42vw)]"
-                                    style={{ filter: 'drop-shadow(0 6px 24px rgba(0,0,0,0.65))' }}
+                                    style={{ filter: 'drop-shadow(0 0 1px rgba(255,255,255,0.55)) drop-shadow(0 6px 24px rgba(0,0,0,0.65))' }}
                                     onError={() => setLogo(null)}
                                 />
                             </>

@@ -70,11 +70,20 @@ const Navbar = () => {
 
     return (
         <nav
-            className={`hidden md:block fixed top-0 left-0 right-0 z-[200] transition-[padding,background-color,backdrop-filter] duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] select-none pointer-events-none
-            ${isScrolled
-                    ? 'pt-1.5 pb-1.5 bg-[#060608]/80 backdrop-blur-2xl'
-                    : 'pt-4 pb-4 bg-gradient-to-b from-[#060608]/85 to-transparent'}`}
+            className={`hidden md:block fixed top-0 left-0 right-0 z-[200] transition-[padding] duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] select-none pointer-events-none
+            ${isScrolled ? 'pt-1.5 pb-1.5' : 'pt-4 pb-4'}`}
         >
+            {/* Background layer. Its bottom edge is masked to transparent: a hard
+                edge on a backdrop blur renders as a dark seam over the hero. */}
+            <div
+                aria-hidden="true"
+                className={`absolute inset-x-0 top-0 -bottom-6 transition-opacity duration-700 [mask-image:linear-gradient(to_bottom,black_60%,transparent)] ${isScrolled ? 'opacity-100' : 'opacity-0'}`}
+                style={{ background: 'rgba(6,6,8,0.82)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)' }}
+            />
+            <div
+                aria-hidden="true"
+                className={`absolute inset-x-0 top-0 -bottom-10 bg-gradient-to-b from-[#060608]/85 to-transparent transition-opacity duration-700 ${isScrolled ? 'opacity-0' : 'opacity-100'}`}
+            />
             <div className="flex items-center justify-between w-full px-[4%] md:px-[5%] h-16 relative max-w-[2000px] mx-auto pointer-events-auto">
 
                 {/* Left: Logo — hidden on mobile */}

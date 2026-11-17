@@ -2,9 +2,16 @@
  * ALTYFLIX Direct Stream Extractor
  * Extrait les flux vidéo haute vitesse (MP4/HLS) directement depuis les nœuds de streaming
  * pour une lecture 100% native dans le lecteur Netflix d'Altyflix (sans iframe).
+ *
+ * Utilise playwright-extra + stealth plugin pour contourner Cloudflare Anti-Bot.
+ * Supporte optionnellement un proxy résidentiel via PROXY_URL env var.
  */
 
-const pw = require('playwright-core');
+const { chromium } = require('playwright-extra');
+const stealth = require('puppeteer-extra-plugin-stealth');
+
+// Active le plugin stealth (anti-détection Cloudflare)
+chromium.use(stealth());
 
 process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || '0';
 
@@ -13,6 +20,10 @@ let browserBusy = false;
 
 async function getBrowser() {
   if (browser && browser.isConnected()) return browser;
+
+  // Options proxy résidentiel (optionnel, via env var)
+  const proxyUrl = process.env.PROXY_URL; // ex: http://user:pass@proxy.brightdata.com:22225
+
   const launchOptions = {
     headless: true,
     args: [
@@ -20,12 +31,25 @@ async function getBrowser() {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--mute-audio'
+      '--mute-audio',
+      '--disable-blink-features=AutomationControlled',
+      '--window-size=1920,1080'
     ]
   };
 
+  // Si un proxy résidentiel est configuré, l'utiliser
+  if (proxyUrl) {
+    const url = new URL(proxyUrl);
+    launchOptions.proxy = {
+      server: `${url.protocol}//${url.hostname}:${url.port || 80}`
+    };
+    // Les credentials seront passés dans le context
+    console.log(`[Extractor] Using proxy: ${url.hostname}:${url.port || 80}`);
+  }
+
   try {
-    browser = await pw.chromium.launch(launchOptions);
+    browser = await chromium.launch(launchOptions);
+    console.log('[Extractor] Browser launched successfully (stealth mode)');
     return browser;
   } catch (e) {
     console.error('[Extractor] Browser launch failed:', e.message);
@@ -34,7 +58,7 @@ async function getBrowser() {
         console.log('[Extractor] Auto-installing Playwright Chromium binary...');
         const { execSync } = require('child_process');
         execSync('npx playwright install chromium', { stdio: 'inherit', env: process.env });
-        browser = await pw.chromium.launch(launchOptions);
+        browser = await chromium.launch(launchOptions);
         return browser;
       } catch (installErr) {
         console.error('[Extractor] Auto-install failed:', installErr.message);
@@ -65,7 +89,7 @@ async function extractDirectStream({ id, type = 'movie', season = 1, episode = 1
 
   // File d'attente légère si un onglet est déjà actif
   if (browserBusy) {
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 12000;
     while (browserBusy && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 200));
     }
@@ -79,13 +103,36 @@ async function extractDirectStream({ id, type = 'movie', season = 1, episode = 1
   let resolved = null;
 
   try {
-    ctx = await b.newContext({
+    // Proxy auth credentials si configuré
+    const proxyUrl = process.env.PROXY_URL;
+    const contextOptions = {
       ignoreHTTPSErrors: true,
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    });
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      viewport: { width: 1920, height: 1080 },
+      locale: 'fr-FR',
+      timezoneId: 'Europe/Paris',
+      // Désactive les flags WebDriver pour tromper Cloudflare
+      javaScriptEnabled: true
+    };
+
+    // Ajoute les credentials proxy au contexte si configuré
+    if (proxyUrl) {
+      try {
+        const url = new URL(proxyUrl);
+        if (url.username) {
+          contextOptions.httpCredentials = {
+            username: decodeURIComponent(url.username),
+            password: decodeURIComponent(url.password || '')
+          };
+        }
+      } catch {}
+    }
+
+    ctx = await b.newContext(contextOptions);
 
     const page = await ctx.newPage();
 
+    // Écoute les réponses réseau pour capturer le flux vidéo
     page.on('response', async res => {
       const u = res.url();
       if (u.includes('/api/b/')) {
@@ -113,12 +160,19 @@ async function extractDirectStream({ id, type = 'movie', season = 1, episode = 1
       ? `https://vidlink.pro/tv/${id}/${season}/${episode}`
       : `https://vidlink.pro/movie/${id}`;
 
-    await page.goto(targetUrl, { timeout: 12000, waitUntil: 'domcontentloaded' }).catch(() => {});
+    console.log(`[Extractor] Navigating to ${targetUrl} (stealth mode)`);
+    await page.goto(targetUrl, { timeout: 20000, waitUntil: 'domcontentloaded' }).catch(() => {});
 
-    // Attend la réponse API jusqu'à 8.5s
+    // Attend la réponse API jusqu'à 15s (plus de marge pour Cloudflare challenge)
     const start = Date.now();
-    while (!resolved && Date.now() - start < 8500) {
-      await new Promise(r => setTimeout(r, 150));
+    while (!resolved && Date.now() - start < 15000) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    if (resolved) {
+      console.log(`[Extractor] ✅ Stream found for ${cacheKey}`);
+    } else {
+      console.log(`[Extractor] ❌ No stream found for ${cacheKey} after ${Date.now() - start}ms`);
     }
   } catch (err) {
     console.error('[Extractor] Error:', err.message);

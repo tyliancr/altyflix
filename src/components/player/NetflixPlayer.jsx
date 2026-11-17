@@ -998,7 +998,7 @@ export default function NetflixPlayer({
                 </div>
             )}
 
-            {/* Top Bar - Exact Netflix Desktop: Back Arrow on Top-Left + Server Switcher */}
+            {/* Top Bar - Exact Netflix Desktop: Only Back Arrow on Top-Left */}
             <div
                 className={`absolute top-0 inset-x-0 pt-6 pb-12 px-8 z-40 flex items-center justify-between transition-opacity duration-300 bg-gradient-to-b from-black/80 via-black/25 to-transparent pointer-events-none ${
                     controlsVisible ? 'opacity-100' : 'opacity-0'
@@ -1012,38 +1012,6 @@ export default function NetflixPlayer({
                 >
                     <NetflixBackIcon className="w-8 h-8 md:w-9 md:h-9 drop-shadow" />
                 </button>
-
-                {streamState === 'fallback' && (
-                    <div className="pointer-events-auto flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs">
-                        <span className="text-white/50 text-[11px] font-semibold">Serveur:</span>
-                        <button
-                            type="button"
-                            onClick={() => setFallbackEmbedUrl(
-                                isTv
-                                    ? `https://vidlink.pro/tv/${id}/${season}/${episode}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`
-                                    : `https://vidlink.pro/movie/${id}?primaryColor=e50914&secondaryColor=141414&iconColor=ffffff&title=true&poster=true&autoplay=true`
-                            )}
-                            className={`px-2.5 py-1 rounded-full font-bold transition-colors ${
-                                fallbackEmbedUrl.includes('vidlink') ? 'bg-[#E50914] text-white' : 'text-white/70 hover:text-white'
-                            }`}
-                        >
-                            Serveur 1
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setFallbackEmbedUrl(
-                                isTv
-                                    ? `https://vidsrc.me/embed/tv?tmdb=${id}&season=${season}&episode=${episode}`
-                                    : `https://vidsrc.me/embed/movie?tmdb=${id}`
-                            )}
-                            className={`px-2.5 py-1 rounded-full font-bold transition-colors ${
-                                fallbackEmbedUrl.includes('vidsrc') ? 'bg-[#E50914] text-white' : 'text-white/70 hover:text-white'
-                            }`}
-                        >
-                            Serveur 2
-                        </button>
-                    </div>
-                )}
             </div>
 
             {/* Bottom Bar - Official Netflix PC Desktop 2-Row Layout (hidden in fallback iframe mode) */}

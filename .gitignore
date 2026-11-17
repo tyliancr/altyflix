@@ -43,3 +43,7 @@ scripts/posted-cache.json
 media
 .data
 api/worker/wrangler.toml
+
+# Android TV app build output and signing key
+tv-app/build/
+tv-app/keystore/

@@ -119,8 +119,13 @@ const useTVNavigation = () => {
 
             const direction = DIRECTIONS[e.key];
             if (!direction) return;
-            // Text fields and sliders keep their own arrow keys
-            if (typing || active?.getAttribute('role') === 'slider' || active?.type === 'range') return;
+            // Single-line text fields keep left/right for the cursor, but up/down leave the
+            // field (e.g. from the search box down to the results). Lists, textareas and
+            // sliders keep all their arrow keys.
+            const singleLine = active?.tagName === 'INPUT';
+            const vertical = direction === 'up' || direction === 'down';
+            if (typing && !(singleLine && vertical)) return;
+            if (active?.getAttribute('role') === 'slider' || active?.type === 'range') return;
 
             root.classList.add('tv-nav');
             const from = active && active !== document.body && isVisible(active) ? active : null;

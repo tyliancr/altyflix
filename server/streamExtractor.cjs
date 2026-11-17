@@ -144,4 +144,4 @@ async function extractDirectStream({ id, type = 'movie', season = 1, episode = 1
   return null;
 }
 
-module.exports = { extractDirectStream };
+module.exports = { extractDirectStream, getBrowser };

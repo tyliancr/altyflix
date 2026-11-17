@@ -564,8 +564,24 @@ const server = http.createServer(async (req, res) => {
   // Debug Extractor
   if (pathname === '/api/debug-extractor') {
     try {
-      const resStream = await extractDirectStream({ id: 1288069, type: 'movie' });
-      return sendJSON(res, 200, { ok: true, result: resStream ? 'stream_found' : 'not_found', format: resStream?.format, url: resStream?.streamUrl?.slice(0, 80) });
+      const b = await require('./streamExtractor.cjs').getBrowser();
+      if (!b) return sendJSON(res, 200, { ok: false, error: 'No browser' });
+      const ctx = await b.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      });
+      const page = await ctx.newPage();
+      const urls = [];
+      page.on('response', r => {
+        const u = r.url();
+        if (!u.includes('.woff') && !u.includes('.css')) {
+          urls.push({ status: r.status(), url: u.slice(0, 100) });
+        }
+      });
+      await page.goto('https://vidlink.pro/movie/1248832', { timeout: 12000, waitUntil: 'domcontentloaded' }).catch(e => urls.push({ error: e.message }));
+      await new Promise(r => setTimeout(r, 4000));
+      const title = await page.title().catch(() => 'no title');
+      await ctx.close().catch(() => {});
+      return sendJSON(res, 200, { ok: true, title, urlsCount: urls.length, urls: urls.slice(0, 25) });
     } catch (err) {
       return sendJSON(res, 200, { ok: false, error: err.message, stack: err.stack });
     }

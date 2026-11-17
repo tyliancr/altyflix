@@ -16,5 +16,5 @@ for (const avatar of ALL_AVATARS) await exactPath(`public${avatar}`);
 const html = await readFile(path.join(root, 'index.html'), 'utf8');
 assert.ok(!html.includes('rel="manifest"'), 'The PWA plugin owns the manifest link.');
 assert.ok(!(await readdir(path.join(root, 'public'))).includes('manifest.webmanifest'), 'Keep a single manifest source in vite.config.js.');
-for (const file of ['README.md', 'docs/AUDIT-ALTYFLIX.md', 'docs/LIRE-AVANT-DEPLOIEMENT.md', 'firestore.rules', 'netlify/functions/api.js']) await exactPath(file);
+for (const file of ['README.md', 'docs/AUDIT-ALTYFLIX.md', 'docs/LIRE-AVANT-DEPLOIEMENT.md', 'firestore.rules', 'netlify.toml']) await exactPath(file);
 console.log(`Structure validée : ${ALL_AVATARS.length} avatars, casse exacte, manifeste unique et documentation présente.`);

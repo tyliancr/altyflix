@@ -1,4 +1,4 @@
-﻿// Utility helper functions
+// Utility helper functions
 import { TMDB_CONFIG } from '../config/constants.js';
 
 /**
@@ -99,54 +99,6 @@ export const truncate = (text, maxLength = 150) => {
 };
 
 /**
- * Get random items from array (using unbiased Fisher-Yates shuffle)
- * @param {Array} array - Source array
- * @param {number} count - Number of items to get
- * @returns {Array} Random items
- */
-export const getRandomItems = (array, count) => {
-    if (!array || array.length === 0) return [];
-    const copy = [...array];
-    for (let i = copy.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy.slice(0, Math.min(count, copy.length));
-};
-
-/**
- * Calculate progress percentage
- * @param {number} current - Current time in seconds
- * @param {number} total - Total duration in seconds
- * @returns {number} Progress percentage (0-100)
- */
-export const calculateProgress = (current, total) => {
-    if (!total || total === 0) return 0;
-    return Math.min(100, Math.max(0, (current / total) * 100));
-};
-
-/**
- * Check if content is recently added (within last 30 days)
- * @param {string} dateString - Release date string
- * @returns {boolean} True if recent
- */
-export const isRecentlyAdded = (dateString) => {
-    if (!dateString) return false;
-    const releaseDate = new Date(dateString);
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    return releaseDate >= thirtyDaysAgo;
-};
-
-/**
- * Generate unique ID
- * @returns {string} Unique ID
- */
-export const generateId = () => {
-    return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-};
-
-/**
  * Sanitize return URL to prevent open redirect vulnerabilities.
  * Only allows relative paths starting with a single '/' and rejects protocols / schemes.
  * @param {string} url - Return URL candidate
@@ -228,49 +180,6 @@ export const storage = {
     },
 };
 
-/**
- * Intersection Observer helper for lazy loading
- * @param {Function} callback - Callback when element is visible
- * @param {Object} options - Intersection Observer options
- * @returns {IntersectionObserver} Observer instance
- */
-/**
- * Calculate personalized match score
- * @param {Object} content - Movie/Series content
- * @param {Array} userTopGenres - Array of user's top genre IDs
- * @returns {number} Match score percentage (0-100)
- */
-export const calculateMatchScore = (content, userTopGenres = []) => {
-    if (!content) return 0;
-
-    // Base score from TMDB rating (0-10 -> 0-100)
-    // If no vote, assume 70 as a neutral baseline
-    let score = content.vote_average ? Math.round(content.vote_average * 10) : 70;
-
-    // If no user preferences, return the raw quality score
-    if (!userTopGenres || userTopGenres.length === 0 || !content.genre_ids) {
-        return score;
-    }
-
-    // Affinity Bonuses
-    const contentGenres = content.genre_ids;
-
-    // Top 1 Genre Match: +15
-    if (contentGenres.includes(userTopGenres[0])) {
-        score += 15;
-    }
-    // Top 2 Genre Match: +10
-    else if (userTopGenres[1] && contentGenres.includes(userTopGenres[1])) {
-        score += 10;
-    }
-    // Top 3 Genre Match: +5
-    else if (userTopGenres[2] && contentGenres.includes(userTopGenres[2])) {
-        score += 5;
-    }
-
-    // Cap at 98% (99 or 100 feels fake)
-    return Math.min(98, Math.max(score, 0));
-};
 /**
  * Determine content type (movie or tv) from TMDB data
  * @param {Object} item - TMDB item data

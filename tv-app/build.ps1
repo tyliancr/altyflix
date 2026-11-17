@@ -20,6 +20,10 @@ $androidJar = Join-Path $Sdk "platforms\$Platform\android.jar"
 $env:JAVA_HOME = $Jdk
 $javac = Join-Path $Jdk 'bin\javac.exe'
 $keytool = Join-Path $Jdk 'bin\keytool.exe'
+# A missing tool would otherwise go unnoticed (the exit code of the previous step is kept)
+foreach ($tool in $javac, $androidJar, "$bt\aapt2.exe", "$bt\d8.bat") {
+    if (-not (Test-Path $tool)) { throw "Not found: $tool (check -Sdk / -Jdk: -Jdk is the folder that contains bin\javac.exe)" }
+}
 
 function Step($name, [scriptblock]$cmd) {
     Write-Host "== $name"

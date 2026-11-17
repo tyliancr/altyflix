@@ -76,14 +76,14 @@ export default function WatchPage() {
     }
 
     return (
-        <div className="fixed inset-0 z-50 bg-black">
+        <div className="fixed inset-0 z-[99999] bg-black">
             <NetflixPlayer
                 key={`${tmdbId}-${initialSeason}-${initialEpisode}`}
                 content={content}
                 type={isTv ? 'tv' : 'movie'}
                 initialSeason={initialSeason}
                 initialEpisode={initialEpisode}
-                preferredLang="VOSTFR"
+                preferredLang="VF"
                 onClose={goBack}
                 watchHistory={watchHistory}
                 remember={addToHistory}

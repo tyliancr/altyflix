@@ -31,14 +31,31 @@ class ErrorBoundary extends Component {
           <div className="text-5xl">⚠️</div>
           <h2 className="text-2xl font-bold">Une erreur est survenue</h2>
           <p className="text-white/50 text-sm text-center max-w-sm">
-            Cette page a rencontré un problème. Cliquez sur recharger pour réessayer.
+            Cette page a rencontré un problème. Vous pouvez recharger ou revenir à l&apos;accueil.
           </p>
-          <button
-            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
-            className="px-6 py-3 bg-[#E50914] text-white font-bold rounded-xl hover:bg-red-700 transition-colors"
-          >
-            Recharger
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              className="px-6 py-3 bg-[#E50914] text-white font-bold rounded-xl hover:bg-red-700 transition-colors"
+            >
+              Recharger
+            </button>
+            <button
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.href = '/'; }}
+              className="px-6 py-3 bg-white/10 text-white font-bold rounded-xl hover:bg-white/20 transition-colors"
+            >
+              Retour à l&apos;accueil
+            </button>
+          </div>
+          {this.state.error && (
+            <details className="mt-4 text-xs text-white/50 max-w-lg w-full bg-black/60 p-4 rounded-xl border border-white/10 text-left font-mono break-all cursor-pointer">
+              <summary className="font-semibold text-white/70 mb-2 select-none">Détails de l&apos;erreur</summary>
+              <p className="text-red-400 font-bold mb-1">{String(this.state.error?.message || this.state.error)}</p>
+              {this.state.error?.stack && (
+                <pre className="text-[11px] whitespace-pre-wrap text-white/40 mt-1 max-h-40 overflow-y-auto">{String(this.state.error.stack)}</pre>
+              )}
+            </details>
+          )}
         </div>
       );
     }

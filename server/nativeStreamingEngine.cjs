@@ -17,6 +17,7 @@ const AUTHORIZED_STREAMS = {
     year: 2012,
     hlsUrl: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
     dashUrl: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.mpd',
+    mp4Url: 'https://archive.org/download/Tears-of-Steel/tears_of_steel_720p.mp4',
     duration: 734,
     qualities: [
       { id: -1, label: 'Auto (Adaptatif)' },
@@ -47,6 +48,7 @@ const AUTHORIZED_STREAMS = {
     year: 2008,
     hlsUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
     dashUrl: 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd',
+    mp4Url: 'https://archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_720p_surround.mp4',
     duration: 596,
     qualities: [
       { id: -1, label: 'Auto (Adaptatif)' },
@@ -77,6 +79,7 @@ const AUTHORIZED_STREAMS = {
     year: 2024,
     hlsUrl: 'https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8',
     dashUrl: 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd',
+    mp4Url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
     duration: 900,
     qualities: [
       { id: -1, label: 'Auto (Adaptatif)' },
@@ -114,9 +117,16 @@ function resolveNativeStream({ id, type = 'movie', season = 1, episode = 1, form
     }
   }
 
-  const primaryUrl = (format === 'dash' && selectedStream.dashUrl)
-    ? selectedStream.dashUrl
-    : selectedStream.hlsUrl;
+  let primaryUrl = selectedStream.hlsUrl;
+  let resolvedFormat = 'hls';
+
+  if (format === 'dash' && selectedStream.dashUrl) {
+    primaryUrl = selectedStream.dashUrl;
+    resolvedFormat = 'dash';
+  } else if ((format === 'range' || format === 'mp4') && selectedStream.mp4Url) {
+    primaryUrl = selectedStream.mp4Url;
+    resolvedFormat = 'range';
+  }
 
   return {
     success: true,
@@ -129,7 +139,8 @@ function resolveNativeStream({ id, type = 'movie', season = 1, episode = 1, form
     streamUrl: primaryUrl,
     hlsUrl: selectedStream.hlsUrl,
     dashUrl: selectedStream.dashUrl,
-    format: format === 'dash' ? 'dash' : 'hls',
+    mp4Url: selectedStream.mp4Url,
+    format: resolvedFormat,
     duration: selectedStream.duration,
     qualities: selectedStream.qualities,
     audioTracks: selectedStream.audioTracks,

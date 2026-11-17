@@ -83,11 +83,7 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
         const base = BASE_URL.startsWith('http://') || BASE_URL.startsWith('https://')
             ? BASE_URL
             : (typeof window !== 'undefined' ? `${window.location.origin}${BASE_URL}` : `http://localhost:3000${BASE_URL}`);
-        const url = new URL(base+endpoint);
-        const aliases = {'/search/multi':'/api/search','/trending/movie/week':'/api/movies/trending'};
-        const detail = endpoint.match(/^\/(movie|tv)\/(\d+)(\/season\/\d+)?$/);
-        if (aliases[endpoint]) url.pathname = aliases[endpoint];
-        if (detail) url.pathname = '/api/'+(detail[1]==='movie'?'movies':'series')+'/'+detail[2]+(detail[3]||'');
+        const url = new URL(base.replace(/\/$/, '') + (endpoint.startsWith('/') ? endpoint : '/' + endpoint));
         if (API_KEY) {
             url.searchParams.append('api_key', API_KEY);
         }
@@ -145,30 +141,28 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
         cleanup();
 
         if (!response.ok) {
-            // If proxy returned 500+ or 503 (e.g. Render asleep / cold starting), fallback directly to TMDB
-            if (response.status >= 500) {
-                try {
-                    const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint}`);
-                    fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
-                    fallbackUrl.searchParams.append('language', userLanguage);
-                    Object.entries(params).forEach(([key, value]) => {
-                        if (value !== undefined && value !== null) {
-                            fallbackUrl.searchParams.append(key, value);
-                        }
-                    });
-                    const fbRes = await fetch(fallbackUrl);
-                    if (fbRes.ok) {
-                        const fbData = await fbRes.json();
-                        if (!options.skipCache && !options.signal?.aborted) {
-                            requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
-                            setSessionCache(cacheKey, fbData);
-                            pruneCache();
-                        }
-                        return fbData;
+            // Toujours tenter le fallback direct TMDB si le proxy échoue (404, 500+, 429, etc.)
+            try {
+                const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`);
+                fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
+                fallbackUrl.searchParams.append('language', userLanguage);
+                Object.entries(params).forEach(([key, value]) => {
+                    if (value !== undefined && value !== null) {
+                        fallbackUrl.searchParams.append(key, value);
                     }
-                } catch {
-                    // Fall through to error throw
+                });
+                const fbRes = await fetch(fallbackUrl);
+                if (fbRes.ok) {
+                    const fbData = await fbRes.json();
+                    if (!options.skipCache && !options.signal?.aborted) {
+                        requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
+                        setSessionCache(cacheKey, fbData);
+                        pruneCache();
+                    }
+                    return fbData;
                 }
+            } catch {
+                // Fall through to error throw
             }
 
             const status = response.status;
@@ -207,9 +201,9 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
 
         return data;
     } catch (error) {
-        if (error.code === 'TIMEOUT' || error.name === 'TypeError') {
+        if (error.name !== 'AbortError') {
             try {
-                const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint}`);
+                const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`);
                 fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
                 const userLanguage = storage.get('language', 'fr-FR');
                 fallbackUrl.searchParams.append('language', userLanguage);
@@ -813,7 +807,28 @@ export const getValentineMovies = async (page = 1) => {
     });
 };
 
+/**
+ * Retrouve un film ou une série à partir d'un identifiant IMDb (tt...)
+ */
+export const findByImdbId = async (imdbId) => {
+    if (!imdbId) return null;
+    const clean = String(imdbId).trim();
+    if (!clean.startsWith('tt')) return null;
+
+    try {
+        const url = `https://api.themoviedb.org/3/find/${clean}?api_key=a0819950449844817a0942ca79a4ccb0&external_source=imdb_id`;
+        const res = await fetch(url);
+        if (res.ok) {
+            const data = await res.json();
+            if (data?.tv_results?.length > 0) return { ...data.tv_results[0], media_type: 'tv' };
+            if (data?.movie_results?.length > 0) return { ...data.movie_results[0], media_type: 'movie' };
+        }
+    } catch { /* ignore */ }
+    return null;
+};
+
 export default {
+    findByImdbId,
     getTrending,
     getPopularMovies,
     getPopularSeries,

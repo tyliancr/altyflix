@@ -7,7 +7,7 @@ import { useProfile } from '../contexts/ProfileContext';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlayer } from '../contexts/PlayerContext';
 import { addOrUpdateReview, getReviewsByContent, deleteReview } from '../services/reviewService';
-import { getMovieDetails, getSeriesDetails, getSeasonDetails, getTitleLogo } from '../services/tmdb';
+import { getMovieDetails, getSeriesDetails, getSeasonDetails, getTitleLogo, findByImdbId } from '../services/tmdb';
 import { getBackdropUrl, formatRuntime, getYear, getContentType } from '../utils/helpers';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Helmet } from 'react-helmet-async';
@@ -72,13 +72,32 @@ const DetailPage = () => {
                 setLogo(undefined);
                 window.scrollTo(0, 0);
 
-                let details;
-                const initialType = Number(id) === 220102 ? 'tv' : type;
-                try {
-                    details = await (initialType === 'movie' ? getMovieDetails : getSeriesDetails)(id);
-                } catch {
-                    // The route type can be wrong (shared links): try the other one.
-                    details = await (initialType === 'movie' ? getSeriesDetails : getMovieDetails)(id);
+                const cleanId = String(id || '').replace(/^(movie|tv)-/, '').trim();
+                let details = null;
+                let resolvedTargetId = cleanId;
+
+                // Support des identifiants IMDb directs (tt...)
+                if (/^tt\d+/i.test(cleanId)) {
+                    const found = await findByImdbId(cleanId);
+                    if (found?.id) {
+                        resolvedTargetId = found.id;
+                        const targetType = found.media_type === 'tv' ? 'tv' : 'movie';
+                        try {
+                            details = await (targetType === 'movie' ? getMovieDetails : getSeriesDetails)(found.id);
+                        } catch {
+                            details = await (targetType === 'movie' ? getSeriesDetails : getMovieDetails)(found.id);
+                        }
+                    }
+                }
+
+                if (!details) {
+                    const initialType = Number(resolvedTargetId) === 220102 ? 'tv' : type;
+                    try {
+                        details = await (initialType === 'movie' ? getMovieDetails : getSeriesDetails)(resolvedTargetId);
+                    } catch {
+                        // The route type can be wrong (shared links): try the other one.
+                        details = await (initialType === 'movie' ? getSeriesDetails : getMovieDetails)(resolvedTargetId);
+                    }
                 }
 
                 if (controller.signal.aborted) return;
@@ -86,10 +105,10 @@ const DetailPage = () => {
                 setContent(details);
                 setActiveTab(isSeries ? 'episodes' : 'details');
                 if (details?.number_of_seasons) {
-                    const saved = watchHistory.find(h => String(h.contentId) === String(id));
+                    const saved = watchHistory.find(h => String(h.contentId) === String(id) || String(h.contentId) === String(resolvedTargetId));
                     setSelectedSeason(saved?.season || details.seasons?.find(s => s.season_number > 0)?.season_number || 1);
                 }
-                getTitleLogo(isSeries ? 'tv' : 'movie', id).then(url => {
+                getTitleLogo(isSeries ? 'tv' : 'movie', resolvedTargetId).then(url => {
                     if (!controller.signal.aborted) setLogo(url);
                 });
             } catch (e) {
@@ -206,8 +225,16 @@ const DetailPage = () => {
     if (!content) {
         return (
             <div className="grid min-h-screen place-items-center bg-[#060608] px-6">
-                <EmptyState title="Contenu introuvable" action={<Button onClick={() => navigate(-1)}>Retour</Button>}>
-                    Ce titre n’existe pas ou n’est plus disponible.
+                <EmptyState
+                    title="Contenu introuvable"
+                    action={
+                        <div className="flex gap-3 justify-center">
+                            <Button onClick={() => window.location.reload()}>Réessayer</Button>
+                            <Button variant="secondary" onClick={() => navigate('/')}>Catalogue</Button>
+                        </div>
+                    }
+                >
+                    Ce titre n’a pas pu être chargé ou n’est plus disponible.
                 </EmptyState>
             </div>
         );

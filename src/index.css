@@ -558,14 +558,31 @@ body.avatar-selector-open .mobile-bottom-bar {
   pointer-events: none !important;
 }
 
-/* Keyboard navigation and reduced motion retain the existing dark/red palette. */
-:where(button, a, select, [tabindex]):focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 4px;
+/* Auto-hide mouse cursor in video player when controls are hidden */
+.player-idle,
+.player-idle * {
+  cursor: none !important;
 }
+
+/* Mobile PWA & Focus Handling: Suppress ugly white rings and tap rectangles */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(button, a, select, [tabindex]):focus {
+  outline: none !important;
+}
+
+:where(button, a, select, [tabindex]):focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.7) !important;
+}
+input:focus,
 input:focus-visible,
+textarea:focus,
 textarea:focus-visible {
   outline: none !important;
+  box-shadow: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -576,14 +593,21 @@ textarea:focus-visible {
   }
 }
 
-/* ── Authentic Netflix HTML5 Subtitles Styling ── */
+/* ── Suppression du rendu natif navigateur pour éviter les doublons ou conflits sous la barre de progression ── */
 video::cue {
-  background-color: transparent !important;
-  color: #ffffff !important;
-  font-family: Netflix Sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-  font-weight: 700 !important;
-  font-size: 1.55rem !important;
-  line-height: 1.4 !important;
-  text-shadow: 0 0 4px #000, 0 0 4px #000, 1px 1px 3px #000, -1px -1px 3px #000, 1px -1px 3px #000, -1px 1px 3px #000 !important;
-  white-space: pre-line !important;
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+video::-webkit-media-text-track-display {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+video::-webkit-media-text-track-container {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
 }

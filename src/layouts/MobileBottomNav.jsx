@@ -204,8 +204,8 @@ const MobileBottomNav = () => {
 
             {/* Bottom Bar */}
             <div className="md:hidden fixed bottom-0 left-0 right-0 z-50">
-                <div className="absolute inset-0 bg-[#060608]/90 backdrop-blur-3xl border-t border-white/[0.08] shadow-[0_-10px_30px_rgba(0,0,0,0.8)]" />
-                <nav className="relative flex items-center justify-around h-16 w-full px-2 pb-safe">
+                <div className="absolute inset-0 bg-[#060608]/92 backdrop-blur-3xl border-t border-white/[0.08] shadow-[0_-10px_30px_rgba(0,0,0,0.8)]" />
+                <nav className="relative flex items-center justify-around w-full px-2 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
                     {navItems.map((item) => {
                         if (item.isProfileMenu) {
                             return (

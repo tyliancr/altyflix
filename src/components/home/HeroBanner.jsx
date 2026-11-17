@@ -4,6 +4,7 @@ import { usePlayer } from '../../contexts/PlayerContext';
 import { getContentType, formatRuntime } from '../../utils/helpers';
 import tmdb from '../../services/tmdb';
 import { motion, AnimatePresence } from 'framer-motion';
+import AltyflixLogo from '../common/AltyflixLogo';
 
 const GENRE_NAMES = {
     28: 'Action', 12: 'Aventure', 16: 'Animation', 35: 'Comédie', 80: 'Crime',
@@ -217,22 +218,26 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                     variants={{ hidden: {}, show: { transition: { staggerChildren: 0.07, delayChildren: 0.15 } } }}
                     className="max-w-2xl lg:max-w-3xl"
                 >
-                    {/* Eyebrow */}
+                    {/* Eyebrow - Style Officiel Netflix */}
                     <motion.div
                         variants={{ hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: EASE } } }}
-                        className="flex items-center gap-3 mb-4 sm:mb-5 flex-wrap"
+                        className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-5 flex-wrap"
                     >
-                        <span className="flex items-center gap-2 text-[10px] sm:text-xs font-bold uppercase tracking-[0.28em] text-white/70">
-                            <span className="text-[#E50914] font-black text-base sm:text-lg leading-none tracking-normal">A</span>
-                            {isTv ? 'Série' : 'Film'}
-                        </span>
-                        {rankLabel && movies.length > 1 && (
-                            <span className="inline-flex items-center gap-2 text-[11px] sm:text-xs font-semibold text-white/90">
-                                <span className="grid place-items-center min-w-[26px] h-[26px] px-1 rounded-md bg-[#E50914] text-white font-black text-[11px] leading-none">
-                                    {activeIndex + 1}
-                                </span>
-                                N° {activeIndex + 1} {rankLabel}
+                        <div className="inline-flex items-center gap-2">
+                            <AltyflixLogo size={18} />
+                            <span className="text-[11px] sm:text-xs font-black uppercase tracking-[0.26em] text-white/95">
+                                {isTv ? 'SÉRIE' : 'FILM'}
                             </span>
+                        </div>
+                        {rankLabel && movies.length > 1 && (
+                            <div className="inline-flex items-center gap-2 text-[11px] sm:text-xs font-bold text-white">
+                                <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-[3px] bg-[#E50914] text-white font-black text-[10px] tracking-wider uppercase leading-none shadow-sm">
+                                    TOP 10
+                                </span>
+                                <span className="font-extrabold tracking-tight">
+                                    N° {activeIndex + 1} du Top 10 aujourd&apos;hui
+                                </span>
+                            </div>
                         )}
                     </motion.div>
 

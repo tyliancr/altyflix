@@ -11,6 +11,7 @@
   VITE_FIREBASE_MESSAGING_SENDER_ID = "492409810550"
   VITE_FIREBASE_APP_ID = "1:492409810550:web:2c177061482acb1b38f957"
   VITE_FIREBASE_MEASUREMENT_ID = "G-FEPTB7QJRK"
+  VITE_DEBRID_PROVIDER = "torbox"
 
 # Proxy transparent vers le backend Node.js hébergé sur Render
 [[redirects]]
@@ -34,7 +35,7 @@
   [headers.values]
     Permissions-Policy = "fullscreen=*, picture-in-picture=*, autoplay=*, camera=(), microphone=(self), geolocation=(), payment=()"
     X-Frame-Options = "DENY"
-    Content-Security-Policy = "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'"
+    Content-Security-Policy = "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; frame-src 'self' https:;"
     X-Content-Type-Options = "nosniff"
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"

@@ -69,10 +69,12 @@ const Navbar = () => {
     };
 
     return (
-        <nav
-            className={`hidden md:block fixed top-0 left-0 right-0 z-[200] transition-[padding] duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] select-none pointer-events-none
-            ${isScrolled ? 'pt-1.5 pb-1.5' : 'pt-4 pb-4'}`}
-        >
+        <>
+            {/* Desktop Navbar */}
+            <nav
+                className={`hidden md:block fixed top-0 left-0 right-0 z-[200] transition-[padding] duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] select-none pointer-events-none
+                ${isScrolled ? 'pt-1.5 pb-1.5' : 'pt-4 pb-4'}`}
+            >
             {/* Background layer. Its bottom edge is masked to transparent: a hard
                 edge on a backdrop blur renders as a dark seam over the hero. */}
             <div
@@ -309,6 +311,74 @@ const Navbar = () => {
                 )}
             </AnimatePresence>
         </nav>
+
+        {/* Mobile Top Header (Authentic Netflix App Experience) */}
+        <header
+            className={`md:hidden fixed top-0 inset-x-0 z-[150] transition-colors duration-300 pointer-events-auto select-none pt-[max(0.75rem,env(safe-area-inset-top))] px-4 pb-2.5 ${
+                isScrolled
+                    ? 'bg-[#060608]/95 backdrop-blur-2xl border-b border-white/[0.08] shadow-lg'
+                    : 'bg-gradient-to-b from-black/85 via-black/40 to-transparent'
+            }`}
+        >
+            <div className="flex items-center justify-between h-10">
+                <Link to="/" onClick={playClickSound} className="flex items-center gap-2 active:scale-95 transition-transform">
+                    <AltyflixLogo size={28} />
+                </Link>
+
+                <div className="flex items-center gap-2.5">
+                    <Link
+                        to="/search"
+                        className="w-9 h-9 rounded-full bg-white/[0.07] flex items-center justify-center text-white/80 hover:text-white active:scale-90 transition-transform"
+                        aria-label="Rechercher"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </Link>
+                    <Link
+                        to="/settings"
+                        className="w-8 h-8 rounded-lg overflow-hidden border border-white/20 active:scale-90 transition-transform flex-shrink-0"
+                        aria-label="Mon compte"
+                    >
+                        <img
+                            src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
+                            alt="Avatar"
+                            className="w-full h-full object-cover"
+                            onError={(e) => { e.currentTarget.src = DEFAULT_AVATARS[0]; }}
+                        />
+                    </Link>
+                </div>
+            </div>
+
+            {/* Quick navigation pills on mobile: Séries, Films, Nouveautés, Ma liste */}
+            <div className="flex items-center gap-4 pt-1.5 pb-0.5 overflow-x-auto no-scrollbar text-xs font-bold text-white/80">
+                <Link
+                    to="/series"
+                    className={`transition-colors whitespace-nowrap ${location.pathname === '/series' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                >
+                    Séries
+                </Link>
+                <Link
+                    to="/films"
+                    className={`transition-colors whitespace-nowrap ${location.pathname === '/films' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                >
+                    Films
+                </Link>
+                <Link
+                    to="/upcoming"
+                    className={`transition-colors whitespace-nowrap ${location.pathname === '/upcoming' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                >
+                    Nouveautés
+                </Link>
+                <Link
+                    to="/my-list"
+                    className={`transition-colors whitespace-nowrap ${location.pathname === '/my-list' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                >
+                    Ma liste
+                </Link>
+            </div>
+        </header>
+        </>
     );
 };
 

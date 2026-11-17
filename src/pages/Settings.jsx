@@ -285,13 +285,24 @@ const Settings = () => {
     ];
 
     return (
-        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-10 text-white md:px-[5%] md:pt-32">
+        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-16 text-white md:px-[5%] md:pt-28">
             <Helmet>
                 <title>{t('settings.title')} - ALTYFLIX</title>
                 <meta name="robots" content="noindex" />
             </Helmet>
 
             <div className="mx-auto max-w-6xl">
+                <Link
+                    to="/"
+                    onClick={() => playHaptic()}
+                    className="inline-flex items-center gap-2 mb-6 text-sm font-semibold text-white/50 hover:text-white transition-colors group"
+                >
+                    <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    <span>Retour à l&apos;accueil</span>
+                </Link>
+
                 <motion.header
                     initial={{ opacity: 0, y: 14 }}
                     animate={{ opacity: 1, y: 0 }}

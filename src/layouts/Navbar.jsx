@@ -22,6 +22,7 @@ const Navbar = () => {
     const { logout } = useAuth();
     const { currentProfile } = useProfile();
     const { t } = useTranslation();
+    const isSettings = location.pathname === '/settings';
 
     useEffect(() => {
         const handleScroll = () => {
@@ -99,83 +100,87 @@ const Navbar = () => {
                     </Link>
                 </div>
 
-                {/* Center: Pill Navigation */}
-                <div className="flex items-center gap-2 md:gap-4 transition-all duration-500">
-                    <div className="hidden lg:flex items-center bg-white/[0.05] backdrop-blur-2xl border border-white/10 rounded-full p-1">
-                        {navLinks.map((link) => {
-                            const isActive = location.pathname === link.path;
-                            return (
-                                <Link
-                                    key={link.path}
-                                    to={link.path}
-                                    aria-current={isActive ? 'page' : undefined}
-                                    onMouseEnter={!isActive ? playHoverSound : undefined}
-                                    className={`relative px-4 xl:px-5 py-2 rounded-full text-[13.5px] font-semibold whitespace-nowrap transition-colors duration-300
-                                        ${isActive ? 'text-black' : 'text-white/65 hover:text-white'}`}
-                                >
-                                    {isActive && (
-                                        <motion.span
-                                            layoutId="nav-active-pill"
-                                            className="absolute inset-0 rounded-full bg-white"
-                                            transition={{ type: 'spring', stiffness: 420, damping: 36 }}
-                                        />
-                                    )}
-                                    <span className="relative">{link.name}</span>
-                                </Link>
-                            );
-                        })}
+                {/* Center: Pill Navigation — masqué sur la page Paramètres (style Netflix) */}
+                {!isSettings && (
+                    <div className="flex items-center gap-2 md:gap-4 transition-all duration-500">
+                        <div className="hidden lg:flex items-center bg-white/[0.05] backdrop-blur-2xl border border-white/10 rounded-full p-1">
+                            {navLinks.map((link) => {
+                                const isActive = location.pathname === link.path;
+                                return (
+                                    <Link
+                                        key={link.path}
+                                        to={link.path}
+                                        aria-current={isActive ? 'page' : undefined}
+                                        onMouseEnter={!isActive ? playHoverSound : undefined}
+                                        className={`relative px-4 xl:px-5 py-2 rounded-full text-[13.5px] font-semibold whitespace-nowrap transition-colors duration-300
+                                            ${isActive ? 'text-black' : 'text-white/65 hover:text-white'}`}
+                                    >
+                                        {isActive && (
+                                            <motion.span
+                                                layoutId="nav-active-pill"
+                                                className="absolute inset-0 rounded-full bg-white"
+                                                transition={{ type: 'spring', stiffness: 420, damping: 36 }}
+                                            />
+                                        )}
+                                        <span className="relative">{link.name}</span>
+                                    </Link>
+                                );
+                            })}
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {/* Right: Search + Profile Shortcut & Mobile Menu */}
                 <div className="flex items-center justify-end gap-3 md:gap-6 grow shrink-0 min-w-[60px] md:min-w-[120px]">
 
-                    {/* Search Field — hidden on mobile (searchable via bottom nav) */}
-                    <div className="relative hidden md:flex items-center">
-                        <AnimatePresence>
-                            {isSearchOpen && (
-                                <motion.form
-                                    initial={{ width: 0, opacity: 0 }}
-                                    animate={{ width: 260, opacity: 1 }}
-                                    exit={{ width: 0, opacity: 0 }}
-                                    className="absolute right-0 flex items-center bg-black/75 backdrop-blur-3xl border border-white/20 focus-within:border-white/40 rounded-full px-4 py-2 z-20 shadow-2xl"
-                                    onSubmit={handleSearchSubmit}
-                                >
-                                    <input
-                                        ref={searchInputRef}
-                                        type="text"
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder="Titres, acteurs, genres..."
-                                        className="bg-transparent text-white text-sm w-full outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 border-none placeholder-white/35 pr-6"
-                                        style={{ outline: 'none', border: 'none', boxShadow: 'none' }}
-                                        autoFocus
-                                        onKeyDown={(e) => { if (e.key === 'Escape') { setSearchQuery(''); setIsSearchOpen(false); } }}
-                                        onBlur={() => { if (!searchQuery) setIsSearchOpen(false); }}
-                                    />
-                                    <kbd className="hidden sm:inline-block text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/50 border border-white/10 pointer-events-none">
-                                        Esc
-                                    </kbd>
-                                </motion.form>
-                            )}
-                        </AnimatePresence>
-                        <button
-                            onClick={() => setIsSearchOpen(!isSearchOpen)}
-                            title="Rechercher (Ctrl + K)"
-                            aria-label="Recherche"
-                            className={`flex items-center gap-2 px-3 py-2 rounded-full transition-all duration-300 z-30 ${isSearchOpen ? 'text-white/40' : 'text-white/80 hover:text-white bg-white/[0.04] hover:bg-white/10 border border-white/10 hover:border-white/20 shadow-sm'}`}
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
-                            {!isSearchOpen && (
-                                <span className="hidden xl:inline-flex items-center gap-1 text-[11px] font-mono text-white/40 uppercase">
-                                    <span>Ctrl</span>
-                                    <span>K</span>
-                                </span>
-                            )}
-                        </button>
-                    </div>
+                    {/* Search Field — hidden on mobile and on settings page */}
+                    {!isSettings && (
+                        <div className="relative hidden md:flex items-center">
+                            <AnimatePresence>
+                                {isSearchOpen && (
+                                    <motion.form
+                                        initial={{ width: 0, opacity: 0 }}
+                                        animate={{ width: 260, opacity: 1 }}
+                                        exit={{ width: 0, opacity: 0 }}
+                                        className="absolute right-0 flex items-center bg-black/75 backdrop-blur-3xl border border-white/20 focus-within:border-white/40 rounded-full px-4 py-2 z-20 shadow-2xl"
+                                        onSubmit={handleSearchSubmit}
+                                    >
+                                        <input
+                                            ref={searchInputRef}
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            placeholder="Titres, acteurs, genres..."
+                                            className="bg-transparent text-white text-sm w-full outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 border-none placeholder-white/35 pr-6"
+                                            style={{ outline: 'none', border: 'none', boxShadow: 'none' }}
+                                            autoFocus
+                                            onKeyDown={(e) => { if (e.key === 'Escape') { setSearchQuery(''); setIsSearchOpen(false); } }}
+                                            onBlur={() => { if (!searchQuery) setIsSearchOpen(false); }}
+                                        />
+                                        <kbd className="hidden sm:inline-block text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/50 border border-white/10 pointer-events-none">
+                                            Esc
+                                        </kbd>
+                                    </motion.form>
+                                )}
+                            </AnimatePresence>
+                            <button
+                                onClick={() => setIsSearchOpen(!isSearchOpen)}
+                                title="Rechercher (Ctrl + K)"
+                                aria-label="Recherche"
+                                className={`flex items-center gap-2 px-3 py-2 rounded-full transition-all duration-300 z-30 ${isSearchOpen ? 'text-white/40' : 'text-white/80 hover:text-white bg-white/[0.04] hover:bg-white/10 border border-white/10 hover:border-white/20 shadow-sm'}`}
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                                {!isSearchOpen && (
+                                    <span className="hidden xl:inline-flex items-center gap-1 text-[11px] font-mono text-white/40 uppercase">
+                                        <span>Ctrl</span>
+                                        <span>K</span>
+                                    </span>
+                                )}
+                            </button>
+                        </div>
+                    )}
 
                     {/* Profile — hidden on mobile (managed in MobileBottomNav profile sheet) */}
                     <div
@@ -250,17 +255,19 @@ const Navbar = () => {
                         </AnimatePresence>
                     </div>
 
-                    {/* Menu button for tablet widths, where the link pill is hidden (phones use the bottom bar) */}
-                    <button
-                        type="button"
-                        aria-label="Ouvrir le menu"
-                        className="hidden md:block lg:hidden text-white/80 hover:text-white p-2.5 rounded-full hover:bg-white/10 transition-all"
-                        onClick={() => setIsMobileMenuOpen(true)}
-                    >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 6h16M4 12h16M4 18h16" />
-                        </svg>
-                    </button>
+                    {/* Menu button for tablet widths, where the link pill is hidden (phones use the bottom bar) — hidden on settings */}
+                    {!isSettings && (
+                        <button
+                            type="button"
+                            aria-label="Ouvrir le menu"
+                            className="hidden md:block lg:hidden text-white/80 hover:text-white p-2.5 rounded-full hover:bg-white/10 transition-all"
+                            onClick={() => setIsMobileMenuOpen(true)}
+                        >
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 6h16M4 12h16M4 18h16" />
+                            </svg>
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -326,15 +333,17 @@ const Navbar = () => {
                 </Link>
 
                 <div className="flex items-center gap-2.5">
-                    <Link
-                        to="/search"
-                        className="w-9 h-9 rounded-full bg-white/[0.07] flex items-center justify-center text-white/80 hover:text-white active:scale-90 transition-transform"
-                        aria-label="Rechercher"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                    </Link>
+                    {!isSettings && (
+                        <Link
+                            to="/search"
+                            className="w-9 h-9 rounded-full bg-white/[0.07] flex items-center justify-center text-white/80 hover:text-white active:scale-90 transition-transform"
+                            aria-label="Rechercher"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </Link>
+                    )}
                     <Link
                         to="/settings"
                         className="w-8 h-8 rounded-lg overflow-hidden border border-white/20 active:scale-90 transition-transform flex-shrink-0"
@@ -350,33 +359,35 @@ const Navbar = () => {
                 </div>
             </div>
 
-            {/* Quick navigation pills on mobile: Séries, Films, Nouveautés, Ma liste */}
-            <div className="flex items-center gap-4 pt-1.5 pb-0.5 overflow-x-auto no-scrollbar text-xs font-bold text-white/80">
-                <Link
-                    to="/series"
-                    className={`transition-colors whitespace-nowrap ${location.pathname === '/series' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
-                >
-                    Séries
-                </Link>
-                <Link
-                    to="/films"
-                    className={`transition-colors whitespace-nowrap ${location.pathname === '/films' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
-                >
-                    Films
-                </Link>
-                <Link
-                    to="/upcoming"
-                    className={`transition-colors whitespace-nowrap ${location.pathname === '/upcoming' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
-                >
-                    Nouveautés
-                </Link>
-                <Link
-                    to="/my-list"
-                    className={`transition-colors whitespace-nowrap ${location.pathname === '/my-list' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
-                >
-                    Ma liste
-                </Link>
-            </div>
+            {/* Quick navigation pills on mobile: Séries, Films, Nouveautés, Ma liste — masqués sur les paramètres */}
+            {!isSettings && (
+                <div className="flex items-center gap-4 pt-1.5 pb-0.5 overflow-x-auto no-scrollbar text-xs font-bold text-white/80">
+                    <Link
+                        to="/series"
+                        className={`transition-colors whitespace-nowrap ${location.pathname === '/series' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                    >
+                        Séries
+                    </Link>
+                    <Link
+                        to="/films"
+                        className={`transition-colors whitespace-nowrap ${location.pathname === '/films' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                    >
+                        Films
+                    </Link>
+                    <Link
+                        to="/upcoming"
+                        className={`transition-colors whitespace-nowrap ${location.pathname === '/upcoming' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                    >
+                        Nouveautés
+                    </Link>
+                    <Link
+                        to="/my-list"
+                        className={`transition-colors whitespace-nowrap ${location.pathname === '/my-list' ? 'text-white border-b-2 border-[#e50914] pb-0.5' : 'hover:text-white'}`}
+                    >
+                        Ma liste
+                    </Link>
+                </div>
+            )}
         </header>
         </>
     );

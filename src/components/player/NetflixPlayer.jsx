@@ -472,6 +472,24 @@ export default function NetflixPlayer({
         }, 2500);
     }, []);
 
+    // Son coupé par le navigateur au démarrage : le premier geste (clic, touche, toucher)
+    // le réactive, sans afficher de bandeau.
+    useEffect(() => {
+        if (!isAutoplayMuted) return undefined;
+        const unmute = () => {
+            const video = videoRef.current;
+            if (video) {
+                video.muted = false;
+                video.volume = volume || 1;
+            }
+            setIsAutoplayMuted(false);
+            setIsMuted(false);
+        };
+        const events = ['pointerdown', 'keydown', 'touchstart'];
+        events.forEach(type => window.addEventListener(type, unmute, { once: true, capture: true }));
+        return () => events.forEach(type => window.removeEventListener(type, unmute, { capture: true }));
+    }, [isAutoplayMuted, volume]);
+
     // Bascule Lecture / Pause
     const togglePlay = useCallback(() => {
         const video = videoRef.current;
@@ -1046,28 +1064,6 @@ export default function NetflixPlayer({
                         <span className="text-xs sm:text-sm text-white font-medium">
                             {subToast}
                         </span>
-                    </div>
-                )}
-
-                {/* Alerte Son coupé par autoplay du navigateur */}
-                {isAutoplayMuted && (
-                    <div className="absolute top-20 right-6 sm:right-10 z-50 flex items-center gap-2.5 bg-[#e50914] text-white px-4 py-2 rounded-2xl shadow-2xl border border-white/20 animate-bounce pointer-events-auto">
-                        <NetflixVolumeMuteIcon className="w-5 h-5 text-white" />
-                        <span className="text-xs font-bold">Son coupé par le navigateur</span>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (videoRef.current) {
-                                    videoRef.current.muted = false;
-                                    videoRef.current.volume = volume || 1;
-                                }
-                                setIsAutoplayMuted(false);
-                                setIsMuted(false);
-                            }}
-                            className="ml-2 text-xs font-bold px-3 py-1 rounded-lg bg-white text-black hover:bg-gray-100 transition-colors cursor-pointer"
-                        >
-                            Activer le son
-                        </button>
                     </div>
                 )}
 

@@ -1,4 +1,3 @@
-/api/*  https://altyflix-backend.onrender.com/api/:splat  200!
 /avatars/Netflix/* /avatars/netflix/:splat 301
 # Old lowercase avatar folders (removed duplicates) keep working for existing profiles
 /avatars/baby-boss/avatar_2duas2d.png /avatars/Baby%20Boss/avatar_2DuaS2D.png 301

@@ -687,11 +687,11 @@ const server = http.createServer(async (req, res) => {
       const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
       const contentDisp = (upstreamRes.headers.get('content-disposition') || '').toLowerCase();
       const finalUrl = currentUrl;
-      const isAvi = targetUrl.toLowerCase().includes('.avi') ||
-                    finalUrl.toLowerCase().includes('.avi') ||
-                    contentType.includes('msvideo') ||
-                    contentType.includes('avi') ||
-                    contentDisp.includes('.avi');
+      const legacyExtRe = /\.(?:avi|wmv|flv|vob|mpe?g|divx)(?:["';?\s]|$)/i;
+      const isAvi = legacyExtRe.test(targetUrl) ||
+                    legacyExtRe.test(finalUrl) ||
+                    legacyExtRe.test(contentDisp) ||
+                    /msvideo|avi|x-ms-wmv|video\/mpeg|x-flv/i.test(contentType);
 
       // Si le format est un AVI ancien non décodé par HTML5, conversion dynamique à la volée vers fMP4
       if (isAvi && req.method !== 'HEAD') {

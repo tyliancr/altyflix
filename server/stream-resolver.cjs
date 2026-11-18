@@ -505,17 +505,35 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
         };
       }
 
-      // Inspection de la cible finale pour détection AVI / Transcodage
-      // Uniquement si le nom du fichier n'est pas déjà un conteneur moderne (.mp4/.mkv/.webm/.m4v)
-      let isAvi = /\.avi(\?|$)/i.test(resolvedLocation) || /\.avi$/i.test(knownFilename);
+      // Inspection multi-sauts (Torrentio -> api.torbox.app 307 -> CDN) pour détecter les conteneurs non HTML5 (.avi/.wmv/.mpg/.flv)
+      const isLegacyContainerExt = (str) => /\.(?:avi|wmv|flv|vob|mpe?g|divx)(\?|$)/i.test(String(str || ''));
+      const isLegacyContainerMime = (ct) => /msvideo|avi|x-ms-wmv|video\/mpeg|x-flv/i.test(String(ct || ''));
+      let isAvi = isLegacyContainerExt(resolvedLocation) || isLegacyContainerExt(knownFilename);
       const isModernKnownContainer = /\.(mp4|mkv|webm|m4v|mov)(\?|$)/i.test(knownFilename || resolvedLocation);
       if (!isAvi && !isModernKnownContainer) {
         try {
-          const headTarget = await fetch(resolvedLocation, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(1500) });
-          const cType = (headTarget.headers.get('content-type') || '').toLowerCase();
-          const cDisp = (headTarget.headers.get('content-disposition') || '').toLowerCase();
-          if (cType.includes('msvideo') || cType.includes('avi') || cDisp.includes('.avi')) {
-            isAvi = true;
+          let probeUrl = resolvedLocation;
+          for (let hop = 0; hop < 3; hop++) {
+            const safeProbe = normalizeAllowedUrl(probeUrl);
+            if (!safeProbe) break;
+            const headTarget = await fetch(safeProbe, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(1800) });
+            const nextLoc = headTarget.headers.get('location') || '';
+            if (headTarget.status >= 300 && headTarget.status < 400 && nextLoc) {
+              try { await headTarget.body?.cancel(); } catch {}
+              const resolvedNext = normalizeAllowedUrl(new URL(nextLoc, safeProbe).toString());
+              if (!resolvedNext) break;
+              probeUrl = resolvedNext;
+              resolvedLocation = resolvedNext;
+              if (isLegacyContainerExt(resolvedNext)) { isAvi = true; break; }
+              continue;
+            }
+            const cType = (headTarget.headers.get('content-type') || '').toLowerCase();
+            const cDisp = (headTarget.headers.get('content-disposition') || '').toLowerCase();
+            try { await headTarget.body?.cancel(); } catch {}
+            if (isLegacyContainerMime(cType) || isLegacyContainerExt(cDisp)) {
+              isAvi = true;
+            }
+            break;
           }
         } catch {}
       }

@@ -439,8 +439,7 @@ export default function NetflixPlayer({
         transcodeOffsetRef.current = 0;
         setActiveStream(nextStream);
         setCurrentAudioLang(nextStream.isFrench ? 'vf' : 'vo');
-        const isUnverifiedTorrentio = typeof nextStream.url === 'string' && nextStream.url.includes('torrentio.strem.fun/resolve/');
-        if (nextStream.isDownloading || isUnverifiedTorrentio) {
+        if (nextStream.isDownloading && !nextStream.isCached) {
             setStreamState('downloading');
             startStreamPolling(nextStream.originalUrl || nextStream.url);
         } else {
@@ -1038,6 +1037,11 @@ export default function NetflixPlayer({
         if (!st) return;
         setPanel(null);
         if (st.id === activeStream?.id && st.url === activeStream?.url) {
+            if (streamState === 'error' || streamState === 'resolving') {
+                setStreamState('playing');
+                loadedUrlRef.current = null;
+                setIsBuffering(true);
+            }
             return;
         }
         if (pollingAbortControllerRef.current) {
@@ -1059,8 +1063,7 @@ export default function NetflixPlayer({
         setActiveStream(st);
         setCurrentAudioLang(st.isFrench ? 'vf' : 'vo');
 
-        const isUnverifiedTorrentio = typeof st.url === 'string' && st.url.includes('torrentio.strem.fun/resolve/');
-        if (st.isDownloading || isUnverifiedTorrentio) {
+        if (st.isDownloading && !st.isCached) {
             setStreamState('downloading');
             startStreamPolling(st.originalUrl || st.url);
         } else {
@@ -1907,22 +1910,29 @@ export default function NetflixPlayer({
                     {streamState === 'downloading' && downloadProgress.elapsedSec >= 12 && (
                         <p className="mt-3 text-sm text-white/50">Préparation de la vidéo, encore quelques instants…</p>
                     )}
-                    {streamState === 'downloading' && downloadProgress.elapsedSec >= 8 && availableStreams.length > 1 && (
+                    {availableStreams.length > 1 && (
                         <div className="mt-6 flex max-w-md flex-wrap items-center justify-center gap-2">
-                            <span className="w-full text-xs text-white/40">Ou choisissez une autre source :</span>
+                            <span className="w-full text-xs text-white/40">Sources disponibles :</span>
                             {availableStreams
-                                .filter(st => st.id !== activeStream?.id)
-                                .slice(0, 4)
-                                .map(st => (
+                                .slice(0, 5)
+                                .map(st => {
+                                    const isCurrent = (st.id && st.id === activeStream?.id) || (st.url && st.url === activeStream?.url);
+                                    return (
                                         <button
                                             key={st.id || st.url}
                                             type="button"
                                             onClick={() => handleSelectStream(st)}
-                                            className="liquid-glass-pill rounded-full px-4 py-1.5 text-xs font-semibold text-white/85 hover:text-white cursor-pointer"
+                                            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer ${
+                                                isCurrent
+                                                    ? 'bg-white text-black shadow-sm'
+                                                    : 'bg-white/15 text-white/85 hover:bg-white/25 hover:text-white'
+                                            }`}
                                         >
                                             {getShortQualityBadge(st)}
+                                            {st.isCached ? ' · Prêt' : ''}
                                         </button>
-                                ))}
+                                    );
+                                })}
                         </div>
                     )}
                 </div>
@@ -1941,6 +1951,24 @@ export default function NetflixPlayer({
                     </button>
                     <h2 className="text-xl font-bold md:text-2xl">Lecture impossible</h2>
                     <p className="mt-2 max-w-md text-sm text-white/60">{errorMessage || 'Ce titre ne peut pas être lu pour le moment.'}</p>
+                    {availableStreams.length > 1 && (
+                        <div className="mt-4 flex max-w-md flex-wrap items-center justify-center gap-2">
+                            <span className="w-full text-xs text-white/50">Essayer une autre source :</span>
+                            {availableStreams
+                                .slice(0, 5)
+                                .map(st => (
+                                    <button
+                                        key={st.id || st.url}
+                                        type="button"
+                                        onClick={() => handleSelectStream(st)}
+                                        className="liquid-glass-pill rounded-full px-4 py-1.5 text-xs font-semibold text-white/85 hover:text-white cursor-pointer"
+                                    >
+                                        {getShortQualityBadge(st)}
+                                        {st.isCached ? ' · Prêt' : ''}
+                                    </button>
+                                ))}
+                        </div>
+                    )}
                     <div className="mt-6 flex flex-wrap justify-center gap-3">
                         <button
                             type="button"

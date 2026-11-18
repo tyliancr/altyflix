@@ -205,11 +205,12 @@ function parseStreamDetails(stream) {
   const hasFlac = /\bflac\b/i.test(fullText);
   const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st)\b/i.test(fullText);
   const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
+  const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus || hasFlac);
 
-  // Son garanti dans le navigateur : AAC / MP3 / Opus / FLAC ou conteneur MP4 web sans codec Dolby exclusif
-  const isWebAudioSafe = Boolean(hasAac || hasMp3 || hasOpus || hasFlac || isWebAudioGroup || (isMp4 && !hasUnsupportedAudioCodec));
-  // Un flux a un son non supporté SEULEMENT s'il a un codec propriétaire (AC3/DTS) ET aucun codec compatible web
-  const hasUnsupportedAudio = Boolean(hasUnsupportedAudioCodec && !isWebAudioSafe);
+  // Son garanti dans le navigateur : codec web explicite (AAC/MP3/Opus/FLAC) ou conteneur MP4/groupe web sans codec Dolby/DTS exclusif
+  const isWebAudioSafe = Boolean(hasExplicitWebAudio || ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec));
+  // Un flux a un son non supporté si un codec propriétaire est présent sans codec web compatible
+  const hasUnsupportedAudio = Boolean(hasUnsupportedAudioCodec && !hasExplicitWebAudio);
 
   const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
   const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
@@ -298,10 +299,10 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   const scoreStream = (st) => {
     let score = 0;
 
-    // 1. PRIORITÉ ABSOLUE : Flux déjà en cache (+100 000) vs Téléchargement (-50 000)
+    // 1. PRIORITÉ ABSOLUE : Flux déjà en cache (+100 000) vs Téléchargement (-500 000)
     // Garantit qu'un flux immédiatement lisible est TOUJOURS choisi avant un flux en attente
     if (st.isCached) score += 100000;
-    if (st.isDownloading) score -= 50000;
+    if (st.isDownloading) score -= 500000;
 
     // 2. Qualité vidéo : 1080p / 4K fortement privilégiés (1080p minimum sur les films)
     if (st.tierKey === '1080p') score += 45000;

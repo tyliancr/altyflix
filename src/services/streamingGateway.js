@@ -228,27 +228,30 @@ function parseStreamDetails(stream) {
     );
 
     // Détection compatibilité audio navigateur (AAC, MP3, Opus, FLAC...)
-    // Évite le silence provoqué par les codecs propriétaires Dolby AC3 / E-AC3 / DTS non décodés par Chrome/Edge
+    // Évite le silence provoqué par les codecs propriétaires Dolby AC3 / E-AC3 / DTS non décodés par Chrome
     const hasAac = /aac/i.test(fullText);
     const hasMp3 = /mp3/i.test(fullText);
     const hasOpus = /opus/i.test(fullText);
     const hasFlac = /flac/i.test(fullText);
-    const isWebAudioGroup = /yts|yify|rapta|pir8|joy/i.test(fullText);
+    const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|joy|ozlem|galaxytv|tgx|qman|lordvako|psa|f4st)\b/i.test(fullText);
     const hasDdp = /ddp|eac3|atmos/i.test(fullText);
     const hasDts = /dts/i.test(fullText);
     const hasAc3 = /\bac3\b/i.test(fullText);
+    const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
+    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus || hasFlac);
 
     // Détection codec vidéo H.264 (universel) vs H.265/HEVC (incompatible sur certains navigateurs sans extension)
     const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
     const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
 
-    // Audio garanti sans coupure sonore dans le navigateur
-    const isWebAudioSafe = hasAac || hasMp3 || hasOpus || hasFlac || isWebAudioGroup;
-    // Codecs propriétaires incompatibles Chrome (audio 100% muet en HTML5)
-    const hasBadAudio = (hasDts || hasAc3 || hasDdp) && !hasAac && !hasMp3;
-    const isPureFrench = /\b(truefrench|vff)\b/i.test(fullText);
     const isMp4 = /\.mp4(\?|$)/i.test(stream?.url || '') || /\.mp4/i.test(filename);
     const isAvi = /\.avi(\?|$)/i.test(stream?.url || '') || /\.avi/i.test(filename) || /xvid|divx/i.test(fullText);
+
+    // Audio garanti sans coupure sonore dans le navigateur
+    const isWebAudioSafe = Boolean(hasExplicitWebAudio || ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec));
+    // Codecs propriétaires incompatibles Chrome (audio 100% muet en HTML5)
+    const hasBadAudio = Boolean(hasUnsupportedAudioCodec && !hasExplicitWebAudio);
+    const isPureFrench = /\b(truefrench|vff)\b/i.test(fullText);
 
     // Extraction de la taille du fichier (ex: 2.1 GB)
     const sizeMatch = titleText.match(/💾\s*([\d.]+\s*[KMGT]B)/i);
@@ -349,7 +352,7 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
             score += 100000;
         }
         if (st.isDownloading) {
-            score -= 50000;
+            score -= 500000;
         }
 
         // 1. Son 100% garanti dans le navigateur (AAC / MP3 / Opus) : CRITIQUE pour ne jamais avoir de vidéo muette

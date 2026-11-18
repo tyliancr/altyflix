@@ -258,8 +258,6 @@ export function AudioSubsPanel({
     subtitles,
     selectedSubtitleId,
     onSelectSubtitle,
-    subtitleOffset = 0,
-    onAdjustSubtitleOffset,
     streams,
     activeStream,
     onSelectStream,
@@ -267,9 +265,6 @@ export function AudioSubsPanel({
     onToggleAlwaysOn
 }) {
     const showSources = Array.isArray(streams) && streams.length > 1;
-    const formattedOffset = subtitleOffset === 0
-        ? '0,0 s'
-        : `${subtitleOffset > 0 ? '+' : ''}${subtitleOffset.toFixed(1).replace('.', ',')} s`;
     return (
         <Panel compact={compact} title="Audio et sous-titres" onClose={onClose} wide>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
@@ -293,39 +288,6 @@ export function AudioSubsPanel({
                             </OptionRow>
                         );
                     })}
-                    {selectedSubtitleId !== 'off' && onAdjustSubtitleOffset && (
-                        <div className="mt-2 rounded-lg bg-white/[0.05] px-2.5 py-2">
-                            <div className="mb-1.5 flex items-center justify-between text-[11px] text-white/55">
-                                <span>Synchronisation (G / H)</span>
-                                <span className="font-mono font-semibold text-white/85">{formattedOffset}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                                <button
-                                    type="button"
-                                    onClick={() => onAdjustSubtitleOffset(-0.5)}
-                                    className="flex-1 rounded-md bg-white/[0.10] py-1 text-xs font-semibold text-white/85 transition-colors hover:bg-white/[0.18] hover:text-white cursor-pointer"
-                                >
-                                    −0,5 s
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => onAdjustSubtitleOffset(0.5)}
-                                    className="flex-1 rounded-md bg-white/[0.10] py-1 text-xs font-semibold text-white/85 transition-colors hover:bg-white/[0.18] hover:text-white cursor-pointer"
-                                >
-                                    +0,5 s
-                                </button>
-                                {subtitleOffset !== 0 && (
-                                    <button
-                                        type="button"
-                                        onClick={() => onAdjustSubtitleOffset(0)}
-                                        className="rounded-md bg-white/[0.10] px-2 py-1 text-[11px] font-semibold text-white/70 transition-colors hover:bg-white/[0.18] hover:text-white cursor-pointer"
-                                    >
-                                        0
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    )}
                     <Switch checked={subtitlesAlwaysOn} onToggle={onToggleAlwaysOn}>Toujours activer</Switch>
                 </section>
             </div>

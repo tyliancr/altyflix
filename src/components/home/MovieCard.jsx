@@ -5,6 +5,7 @@ import { getMovieDetails, getSeriesDetails } from '../../services/tmdb';
 import { useProfile } from '../../contexts/ProfileContext';
 import { usePlayer } from '../../contexts/PlayerContext';
 import { motion, AnimatePresence } from 'framer-motion';
+import SmartImage from '../common/SmartImage';
 
 const GENRE_NAMES = {
     28: 'Action', 12: 'Aventure', 16: 'Animation', 35: 'Comédie', 80: 'Crime',
@@ -49,6 +50,7 @@ const MovieCard = memo(({
     const [trailerKey, setTrailerKey] = useState(null);
     const [trailerLoaded, setTrailerLoaded] = useState(false);
     const [fullDetails, setFullDetails] = useState(null);
+    const [warmBackdrop, setWarmBackdrop] = useState(false);
 
     const expandTimeout = useRef(null);
     const collapseTimeout = useRef(null);
@@ -87,6 +89,8 @@ const MovieCard = memo(({
     // ── Hover debounce: expand after 380ms, collapse after 120ms grace period ─
     const handleMouseEnter = useCallback(() => {
         if (isUpcoming) return;
+        // Start loading the expanded backdrop only on hover (saves ~200 wasted eager downloads on Home)
+        setWarmBackdrop(true);
         clearTimeout(collapseTimeout.current);
         clearTimeout(expandTimeout.current);
         expandTimeout.current = setTimeout(() => {
@@ -264,10 +268,11 @@ const MovieCard = memo(({
                 )}
 
                 {/* ── Poster (portrait) — crossfades to backdrop ────────────── */}
-                <img
+                <SmartImage
                     src={portrait ? posterSrc : backdropSrc}
                     srcSet={portrait ? posterSrcSet : backdropSrcSet}
-                    sizes="(max-width: 640px) 140px, (max-width: 1024px) 200px, 300px"
+                    sizes="(max-width: 640px) 130px, (max-width: 1024px) 180px, 210px"
+                    fallbackSrc={portrait ? backdropSrc : posterSrc}
                     alt={title}
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{
@@ -278,9 +283,16 @@ const MovieCard = memo(({
                     }}
                     loading="lazy"
                     decoding="async"
+                    fallback={
+                        <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-[#181822] to-[#0c0c12] p-3 text-center">
+                            <span className="font-display text-xs sm:text-sm font-semibold text-white/60 line-clamp-3">
+                                {title}
+                            </span>
+                        </div>
+                    }
                 />
 
-                {/* ── Expanded Backdrop + Trailer ───────────────────────────── */}
+                {/* ── Expanded Backdrop + Trailer (mounted on hover/expand only) ── */}
                 <div
                     className="absolute inset-0 w-full h-full bg-[#141414]"
                     style={{
@@ -289,17 +301,21 @@ const MovieCard = memo(({
                         pointerEvents: isExpanded ? 'auto' : 'none',
                     }}
                 >
-                    {/* Backdrop fallback */}
-                    <img
-                        src={backdropSrc}
-                        alt={title}
-                        className="absolute inset-0 w-full h-full object-cover"
-                        style={{
-                            opacity: trailerLoaded ? 0 : 1,
-                            transition: 'opacity 800ms ease',
-                        }}
-                        decoding="async"
-                    />
+                    {/* Backdrop fallback — fetched on demand instead of eagerly for 200 hidden cards */}
+                    {(warmBackdrop || isExpanded) && (
+                        <SmartImage
+                            src={backdropSrc}
+                            fallbackSrc={posterSrc}
+                            alt={title}
+                            className="absolute inset-0 w-full h-full object-cover"
+                            style={{
+                                opacity: trailerLoaded ? 0 : 1,
+                                transition: 'opacity 800ms ease',
+                            }}
+                            loading="eager"
+                            decoding="async"
+                        />
+                    )}
 
                     {/* YouTube trailer — loaded only when expanded */}
                     {trailerKey && isExpanded && (

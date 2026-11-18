@@ -94,12 +94,17 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,svg}'],
         runtimeCaching: [
           {
-            // Cache TMDB images for 30 days
+            // Cache TMDB images for 30 days (including opaque no-cors img responses)
             urlPattern: /^https:\/\/image\.tmdb\.org\/.*/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'tmdb-images',
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 }
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+                purgeOnQuotaError: true
+              }
             }
           },
           {

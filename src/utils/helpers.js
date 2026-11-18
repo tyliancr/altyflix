@@ -8,7 +8,7 @@ import { TMDB_CONFIG } from '../config/constants.js';
  * @returns {string} Full image URL
  */
 export const getTMDBImageUrl = (path, size = 'original') => {
-    if (!path) return '/placeholder-poster.jpg';
+    if (!path) return '';
     if (path.startsWith('http://') || path.startsWith('https://')) return path;
     return `${TMDB_CONFIG.IMAGE_BASE_URL}/${size}${path}`;
 };

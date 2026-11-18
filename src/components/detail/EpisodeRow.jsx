@@ -1,3 +1,5 @@
+import SmartImage from '../common/SmartImage';
+
 const EpisodeRow = ({ episode, number, onPlay, onPersonClick, isWatched, progress, t }) => {
     const director = episode.crew?.find(c => c.job === 'Director')?.name;
     const guestStars = episode.guest_stars?.slice(0, 5) || [];
@@ -16,12 +18,17 @@ const EpisodeRow = ({ episode, number, onPlay, onPersonClick, isWatched, progres
                 <div className="w-7 text-center font-display text-xl font-bold text-white/35 group-hover:text-white transition-colors">{number}</div>
                 <div className="w-44 aspect-video rounded-xl overflow-hidden bg-[#101016] relative ring-1 ring-inset ring-white/[0.07]">
                     {episode.still_path ? (
-                        <img
+                        <SmartImage
                             src={`https://image.tmdb.org/t/p/w300${episode.still_path}`}
                             alt={episode.name}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             loading="lazy"
                             decoding="async"
+                            fallback={
+                                <div className="w-full h-full grid place-items-center text-xs font-semibold text-white/25">
+                                    Épisode {number}
+                                </div>
+                            }
                         />
                     ) : (
                         <div className="w-full h-full grid place-items-center text-xs font-semibold text-white/25">

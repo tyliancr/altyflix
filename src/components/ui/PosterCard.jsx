@@ -1,8 +1,9 @@
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useProfile } from '../../contexts/ProfileContext';
 import { usePlayer } from '../../contexts/PlayerContext';
 import { getContentType, getPosterUrl } from '../../utils/helpers';
+import SmartImage from '../common/SmartImage';
 
 const resolveType = (item, hint) => {
     if (hint === 'movie' || hint === 'tv') return hint;
@@ -18,7 +19,6 @@ const resolveType = (item, hint) => {
 const PosterCard = memo(({ item, type: typeHint, badge, caption, onRemove, showType = false }) => {
     const { isInMyList, addToMyList, removeFromMyList } = useProfile();
     const { play } = usePlayer();
-    const [broken, setBroken] = useState(false);
 
     const type = resolveType(item, typeHint);
     const id = item.id || item.contentId;
@@ -39,22 +39,21 @@ const PosterCard = memo(({ item, type: typeHint, badge, caption, onRemove, showT
         <article className="group relative min-w-0">
             <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-[#101016] ring-1 ring-inset ring-white/[0.07] shadow-[0_6px_20px_rgba(0,0,0,0.45)] transition-[box-shadow,transform] duration-300 group-hover:-translate-y-1 group-hover:shadow-[0_18px_40px_rgba(0,0,0,0.7)] group-focus-within:-translate-y-1">
                 <Link to={`/${type}/${id}`} aria-label={title} className="absolute inset-0 block">
-                    {item.poster_path && !broken ? (
-                        <img
-                            src={getPosterUrl(item.poster_path, 'w342')}
-                            srcSet={`${getPosterUrl(item.poster_path, 'w185')} 185w, ${getPosterUrl(item.poster_path, 'w342')} 342w, ${getPosterUrl(item.poster_path, 'w500')} 500w`}
-                            sizes="(max-width: 640px) 45vw, (max-width: 1280px) 22vw, 240px"
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            onError={() => setBroken(true)}
-                            className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.06]"
-                        />
-                    ) : (
-                        <span className="grid h-full w-full place-items-center p-4 text-center font-display text-sm font-semibold text-white/50">
-                            {title}
-                        </span>
-                    )}
+                    <SmartImage
+                        src={item.poster_path ? getPosterUrl(item.poster_path, 'w342') : ''}
+                        srcSet={item.poster_path ? `${getPosterUrl(item.poster_path, 'w185')} 185w, ${getPosterUrl(item.poster_path, 'w342')} 342w` : undefined}
+                        sizes="(max-width: 640px) 45vw, (max-width: 1280px) 22vw, 220px"
+                        fallbackSrc={item.backdrop_path ? getPosterUrl(item.backdrop_path, 'w300') : undefined}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.06]"
+                        fallback={
+                            <span className="grid h-full w-full place-items-center p-4 text-center font-display text-sm font-semibold text-white/50">
+                                {title}
+                            </span>
+                        }
+                    />
                     <span className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100" />
                 </Link>
 

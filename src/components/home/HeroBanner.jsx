@@ -5,6 +5,7 @@ import { getContentType, formatRuntime } from '../../utils/helpers';
 import tmdb from '../../services/tmdb';
 import { motion, AnimatePresence } from 'framer-motion';
 import AltyflixLogo from '../common/AltyflixLogo';
+import SmartImage from '../common/SmartImage';
 
 const GENRE_NAMES = {
     28: 'Action', 12: 'Aventure', 16: 'Animation', 35: 'Comédie', 80: 'Crime',
@@ -189,15 +190,17 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                     transition={{ duration: 1.1, ease: 'easeInOut' }}
                 >
                     {movie.backdrop_path && (
-                        <img
+                        <SmartImage
                             src={backdrop(movie.backdrop_path, 'w1280')}
-                            srcSet={`${backdrop(movie.backdrop_path, 'w780')} 780w, ${backdrop(movie.backdrop_path, 'w1280')} 1280w, ${backdrop(movie.backdrop_path, 'original')} 2560w`}
+                            srcSet={`${backdrop(movie.backdrop_path, 'w780')} 780w, ${backdrop(movie.backdrop_path, 'w1280')} 1280w`}
                             sizes="100vw"
+                            fallbackSrc={backdrop(movie.backdrop_path, 'w780')}
                             alt=""
                             className="w-full h-full object-cover object-[center_20%]"
-                            // eslint-disable-next-line react/no-unknown-property -- React 18 only forwards the lowercase attribute
-                            fetchpriority="high"
+                            loading="eager"
+                            fetchPriority="high"
                             decoding="async"
+                            fade={false}
                         />
                     )}
                 </motion.div>

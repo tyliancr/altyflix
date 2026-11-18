@@ -329,11 +329,18 @@ const DetailPage = () => {
                             animate={{ opacity: 1, scale: 1 }}
                             transition={{ duration: 1.2, ease: 'easeOut' }}
                             src={getBackdropUrl(backdropPath, 'w1280')}
-                            srcSet={content.backdrop_path ? `${getBackdropUrl(backdropPath, 'w780')} 780w, ${getBackdropUrl(backdropPath, 'w1280')} 1280w, ${getBackdropUrl(backdropPath, 'original')} 2560w` : undefined}
+                            srcSet={content.backdrop_path ? `${getBackdropUrl(backdropPath, 'w780')} 780w, ${getBackdropUrl(backdropPath, 'w1280')} 1280w` : undefined}
                             sizes="100vw"
                             alt=""
                             className="h-full w-full object-cover object-[center_20%]"
                             decoding="async"
+                            onError={(e) => {
+                                if (!e.currentTarget.dataset.retried) {
+                                    e.currentTarget.dataset.retried = '1';
+                                    e.currentTarget.removeAttribute('srcset');
+                                    e.currentTarget.src = getBackdropUrl(backdropPath, 'w780');
+                                }
+                            }}
                         />
                     )}
                     <div className="absolute inset-y-0 left-0 w-full bg-gradient-to-r from-[#060608]/95 via-[#060608]/60 to-transparent sm:w-[72%]" />

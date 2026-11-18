@@ -2,6 +2,7 @@
 import { useProfile } from '../../contexts/ProfileContext';
 import { getBackdropUrl, getContentType, getPosterUrl } from '../../utils/helpers';
 import { playHaptic } from '../../utils/interactions';
+import SmartImage from '../common/SmartImage';
 
 export default function ResumeRow({ history, title }) {
     const { play } = usePlayer();
@@ -22,7 +23,8 @@ export default function ResumeRow({ history, title }) {
                     const name = item.title || item.name;
                     const percent = Math.floor(Number(item.progress));
                     const episode = type === 'tv' ? 'S' + (item.season || 1) + ' · E' + (item.episode || 1) : '';
-                    const art = item.backdrop_path ? getBackdropUrl(item.backdrop_path, 'w780') : item.poster_path && getPosterUrl(item.poster_path, 'w342');
+                    const art = item.backdrop_path ? getBackdropUrl(item.backdrop_path, 'w500') : item.poster_path && getPosterUrl(item.poster_path, 'w342');
+                    const fallbackArt = item.backdrop_path && item.poster_path ? getPosterUrl(item.poster_path, 'w342') : undefined;
                     return (
                         <div
                             key={type + ':' + id}
@@ -33,7 +35,16 @@ export default function ResumeRow({ history, title }) {
                             aria-label={['Reprendre ' + name, episode, percent + ' %'].filter(Boolean).join(', ')}
                             className="group relative aspect-video w-64 shrink-0 snap-start overflow-hidden rounded-xl bg-[#101016] text-left sm:w-80 shadow-[0_6px_20px_rgba(0,0,0,0.45)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.8)] transition-all duration-300 ring-1 ring-inset ring-white/[0.07] hover:ring-white/25 cursor-pointer select-none"
                         >
-                            {art && <img src={art} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" />}
+                            {art && (
+                                <SmartImage
+                                    src={art}
+                                    fallbackSrc={fallbackArt}
+                                    alt=""
+                                    loading="lazy"
+                                    decoding="async"
+                                    className="absolute inset-0 h-full w-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
+                                />
+                            )}
                             <span className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-transparent" />
                             
                             {/* Remove from continue watching button */}

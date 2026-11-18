@@ -324,3 +324,37 @@ test('Debrid Stream Resolver: regressions The.Aviator, VOSTFR avec drapeau FR, u
   assert.equal(cached720VsUncached1080.activeStream.isCached, true, 'Le 720p en cache ne doit pas etre elimine par un 1080p non cache');
   assert.equal(cached720VsUncached1080.activeStream.tierKey, '720p');
 });
+
+test('Debrid Stream Resolver: Détection H.264/H.265 et priorisation H.264 pour compatibilité navigateur 100%', () => {
+  const h264Stream = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Gladiator.2000.FRENCH.1080p.BluRay.x264.AAC.mp4\n👤 25 💾 2.5 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/h264/gladiator.mp4'
+  });
+  assert.equal(h264Stream.isH264, true);
+  assert.equal(h264Stream.isH265, false);
+
+  const h265Stream = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Gladiator.2000.FRENCH.1080p.BluRay.x265.10bit.AAC.mp4\n👤 30 💾 1.8 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/h265/gladiator.mp4'
+  });
+  assert.equal(h265Stream.isH264, false);
+  assert.equal(h265Stream.isH265, true);
+
+  // À résolution et langue égales, H.264 doit être prioritaire sur H.265 pour éviter les erreurs de décodage Chrome
+  const curated = curateStreams([
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Gladiator.2000.FRENCH.1080p.BluRay.x265.10bit.AAC.mp4\n👤 30 💾 1.8 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/h265/gladiator.mp4'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Gladiator.2000.FRENCH.1080p.BluRay.x264.AAC.mp4\n👤 25 💾 2.5 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/h264/gladiator.mp4'
+    }
+  ], 'torbox');
+  assert.equal(curated.activeStream.isH264, true);
+  assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/h264/gladiator.mp4');
+});

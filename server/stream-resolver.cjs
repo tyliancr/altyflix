@@ -203,6 +203,9 @@ function parseStreamDetails(stream) {
   const hasUnsupportedAudio = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
   const isWebAudioSafe = (hasAac || hasMp3 || hasOpus || hasFlac || /yts|yify|rapta|pir8/i.test(fullText)) && !hasUnsupportedAudio;
 
+  const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
+  const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
+
   const isMp4 = /\.mp4(?:\?|$)/i.test(stream?.url || '') || /\.mp4(?:$|\?|\s|["')\]])/i.test(filename);
   const isAvi = /\.avi(?:\?|$)/i.test(stream?.url || '') || /\.avi(?:$|\?|\s|["')\]])/i.test(filename) || /\b(?:xvid|divx)\b/i.test(fullText);
 
@@ -227,6 +230,8 @@ function parseStreamDetails(stream) {
     isVostfr,
     isWebAudioSafe,
     hasUnsupportedAudio,
+    isH264,
+    isH265,
     isMp4,
     isAvi,
     size,
@@ -261,6 +266,8 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
         isVostfr: details.isVostfr,
         isWebAudioSafe: details.isWebAudioSafe,
         hasUnsupportedAudio: details.hasUnsupportedAudio,
+        isH264: details.isH264,
+        isH265: details.isH265,
         isMp4: details.isMp4,
         isAvi: details.isAvi,
         isTorboxLibrary: Boolean(s.isTorboxLibrary),
@@ -299,8 +306,8 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
 
     // 3. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
     // Sans remux FFmpeg (ex: Netlify serverless), un flux AC3/DTS est muet -> pénalité massive pour privilégier AAC/Opus
-    if (st.isWebAudioSafe) score += enableAudioRemux ? 25000 : 35000;
-    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 35000 : 75000;
+    if (st.isWebAudioSafe) score += enableAudioRemux ? 25000 : 45000;
+    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 35000 : 85000;
 
     // 4. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
     if (preferVo) {
@@ -311,9 +318,11 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
       else if (st.isVostfr) score += 500;
     }
 
-    // 5. Format MP4 universel (et forte pénalité AVI si le serveur ne peut pas transcoder, ex. Netlify)
+    // 5. Codec et format vidéo : H.264 universellement compatible web vs H.265/HEVC (peut échouer sans extension)
+    if (st.isH264) score += 12000;
+    if (st.isH265) score -= 15000;
     if (st.isMp4) score += 3000;
-    if (st.isAvi && !enableAviTranscode) score -= 45000;
+    if (st.isAvi && !enableAviTranscode) score -= 250000;
 
     // 6. Poids adapté à la bande passante
     const gb = st.sizeBytes / (1024 * 1024 * 1024);
@@ -1147,15 +1156,19 @@ async function resolveStreamsServer({
       const eligibleReady = (type !== 'tv' && movieHdReady.length > 0) ? movieHdReady : readyStreams;
 
       const pickBestReady = (list) =>
-        // 1. Langue demandée (VF par défaut) avec audio natif navigateur (1080p -> 4K -> autre)
+        // 1. Langue demandée (VF par défaut) avec audio natif navigateur (1080p -> 4K -> autre) et H.264
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
-        // 2. Priorité stricte à la langue demandée (VF d'abord même si AC3/EAC3/DTS)
+        // 2. Format H.264 compatible même si audio AC3/EAC3/DTS
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '4k') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
-        // 3. Fallback VO uniquement si aucune VF prête n'existe
+        // 3. Fallback VO uniquement si aucune VF prête n'existe (avec audio natif d'abord)
+        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
         list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
         list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
         list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
@@ -1163,8 +1176,9 @@ async function resolveStreamsServer({
         list[0];
 
       active = pickBestReady(eligibleReady);
-      // Ne montrer que les qualités réellement prêtes dans le menu : zéro écran vert au changement de qualité !
-      finalStreams = eligibleReady;
+      // Préserver les flux prêts en tête, complétés par les alternatives vérifiées pour le fallback automatique
+      const remainingFallbacks = verifiedList.filter(s => !eligibleReady.some(r => (r.id && r.id === s.id) || (r.url && r.url === s.url)));
+      finalStreams = [...eligibleReady, ...remainingFallbacks];
       initialStatus = 'ready';
     } else {
       // Aucune source en cache : on lance le débridage proprement avec l'écran de chargement

@@ -9,4 +9,16 @@ export function formatClock(seconds) {
         : `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+export function canBrowserDecodeAc3() {
+    if (typeof document === 'undefined') return false;
+    try {
+        const v = document.createElement('video');
+        const canAc3 = v.canPlayType('audio/mp4; codecs="ac-3"');
+        const canEc3 = v.canPlayType('audio/mp4; codecs="ec-3"');
+        return Boolean((canAc3 && canAc3 !== 'no') || (canEc3 && canEc3 !== 'no'));
+    } catch {
+        return false;
+    }
+}
+
 export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];

@@ -239,7 +239,8 @@ function splitSubtitleLabel(label = '') {
 function streamLabel(st) {
     const tier = st.tierKey === '4k' ? '4K' : (st.tierKey === '1080p' ? '1080p' : (st.tierKey === '720p' ? '720p' : (st.quality || 'HD')));
     const lang = st.isFrench ? 'VF' : (st.isVostfr ? 'VOSTFR' : 'VO');
-    return `${tier} · ${lang}`;
+    const audioTag = st.isWebAudioSafe ? 'AAC' : (st.hasUnsupportedAudio ? 'AC3' : '');
+    return audioTag ? `${tier} · ${lang} (${audioTag})` : `${tier} · ${lang}`;
 }
 
 function formatSize(size) {

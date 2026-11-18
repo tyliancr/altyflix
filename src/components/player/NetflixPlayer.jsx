@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getMovieDetails, getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
 import { resolvePlaybackStreams, pollStreamStatus, fetchSubtitlesForContent, fetchSubtitleCues } from '../../services/streamingGateway';
 import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon } from './PlayerPanels';
-import { formatClock } from './playerUtils';
+import { formatClock, canBrowserDecodeAc3 } from './playerUtils';
 import { IN_TV_APP, moveFocusWithin } from '../../hooks/useTVNavigation';
 import { UnifiedStreamingEngine } from './engine/UnifiedStreamingEngine';
 import { useProfile } from '../../contexts/ProfileContext';
@@ -123,6 +123,9 @@ export default function NetflixPlayer({
     const [currentAudioLang, setCurrentAudioLang] = useState('vf');
     const [centerAction, setCenterAction] = useState(null); // 'play' | 'pause' | null
     const [isAutoplayMuted, setIsAutoplayMuted] = useState(false);
+    const [dismissAudioWarning, setDismissAudioWarning] = useState(false);
+    const isAc3Supported = useMemo(() => canBrowserDecodeAc3(), []);
+    const isSilentAudioRisk = Boolean(activeStream?.hasUnsupportedAudio && !isAc3Supported && !dismissAudioWarning && streamState === 'playing');
     const [hasTrueVf, setHasTrueVf] = useState(false);
     const [rippleEffect, setRippleEffect] = useState(null); // { side: 'left' | 'right', delta: -10 | 10 }
     const lastTapRef = useRef({ time: 0, x: 0 });
@@ -301,19 +304,36 @@ export default function NetflixPlayer({
                     isCached: true
                 }));
                 setStreamState('playing');
-            } else if (result.error) {
-                setErrorMessage(result.error);
-                setStreamState('error');
-            } else if (result.timeout) {
-                console.warn('[Altyflix Player] Timeout de débridage atteint.');
-                setErrorMessage('Le téléchargement vers le cloud haute vitesse prend plus de temps que prévu. Essayez une autre source ou réessayez.');
-                setStreamState('error');
+            } else if (result.error || result.timeout) {
+                console.warn('[Altyflix Player] Source indisponible ou timeout atteint, tentative automatique de la source suivante...');
+                const list = availableStreamsRef.current || [];
+                const current = activeStreamRef.current;
+                if (current) {
+                    failedStreamIdsRef.current.add(current.id || current.url);
+                }
+                const hasNext = list.some(s => !failedStreamIdsRef.current.has(s.id || s.url));
+                if (hasNext) {
+                    handleStreamErrorRef.current?.();
+                } else {
+                    setErrorMessage(result.error || 'Le téléchargement vers le cloud haute vitesse prend plus de temps que prévu. Essayez une autre source.');
+                    setStreamState('error');
+                }
             }
         }).catch(err => {
             if (!mountedRef.current || controller.signal.aborted) return;
             console.error('[Altyflix Player] Erreur de polling :', err);
-            setErrorMessage('Erreur lors de la vérification de la source : ' + err.message);
-            setStreamState('error');
+            const list = availableStreamsRef.current || [];
+            const current = activeStreamRef.current;
+            if (current) {
+                failedStreamIdsRef.current.add(current.id || current.url);
+            }
+            const hasNext = list.some(s => !failedStreamIdsRef.current.has(s.id || s.url));
+            if (hasNext) {
+                handleStreamErrorRef.current?.();
+            } else {
+                setErrorMessage('Erreur lors de la vérification de la source : ' + err.message);
+                setStreamState('error');
+            }
         });
     }, []);
 
@@ -1012,6 +1032,7 @@ export default function NetflixPlayer({
         if (Boolean(st.isFrench) !== Boolean(activeStream?.isFrench)) {
             userPickedSubRef.current = false;
         }
+        setDismissAudioWarning(false);
         setActiveStream(st);
         setCurrentAudioLang(st.isFrench ? 'vf' : 'vo');
 
@@ -1764,6 +1785,55 @@ export default function NetflixPlayer({
                         >
                             <NetflixPlayIcon className="h-4 w-4" />
                             Épisode suivant
+                        </button>
+                    )}
+
+                    {/* Alerte audio Dolby AC3 silencieux dans le navigateur */}
+                    {isSilentAudioRisk && (
+                        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 flex max-w-[92vw] items-center gap-3 rounded-full bg-black/90 backdrop-blur-md px-4 py-2 border border-amber-500/50 text-xs shadow-2xl text-white">
+                            <span className="text-amber-400 font-bold whitespace-nowrap">🔊 Audio Dolby AC3</span>
+                            <span className="text-white/80 hidden sm:inline">Cette piste peut être muette sur ce navigateur.</span>
+                            {availableStreams.some(s => !s.hasUnsupportedAudio) && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const safeStream = availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
+                                                           availableStreams.find(s => !s.hasUnsupportedAudio);
+                                        if (safeStream) handleSelectStream(safeStream);
+                                    }}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1 rounded-full transition-all cursor-pointer whitespace-nowrap shadow"
+                                >
+                                    Passer en Son Garanti (AAC)
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setDismissAudioWarning(true)}
+                                className="text-white/60 hover:text-white px-1.5 py-0.5 cursor-pointer text-sm"
+                                aria-label="Fermer l'avertissement"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Bouton d'activation du son si autoplay bloqué par le navigateur */}
+                    {isAutoplayMuted && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const video = videoRef.current;
+                                if (video) {
+                                    video.muted = false;
+                                    video.volume = volume || 1;
+                                }
+                                setIsAutoplayMuted(false);
+                                setIsMuted(false);
+                            }}
+                            className="absolute bottom-28 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2.5 rounded-full bg-[#e50914] px-5 py-2.5 text-sm font-bold text-white shadow-2xl hover:bg-[#b80710] transition-all cursor-pointer animate-pulse"
+                        >
+                            <NetflixVolumeHighIcon className="h-5 w-5" />
+                            Activer le son (son coupé au lancement)
                         </button>
                     )}
 

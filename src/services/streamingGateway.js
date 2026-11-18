@@ -226,6 +226,10 @@ function parseStreamDetails(stream) {
     const hasDts = /dts/i.test(fullText);
     const hasAc3 = /\bac3\b/i.test(fullText);
 
+    // Détection codec vidéo H.264 (universel) vs H.265/HEVC (incompatible sur certains navigateurs sans extension)
+    const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
+    const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
+
     // Audio garanti sans coupure sonore dans le navigateur
     const isWebAudioSafe = hasAac || hasMp3 || hasOpus || hasFlac || isWebAudioGroup;
     // Codecs propriétaires incompatibles Chrome (audio 100% muet en HTML5)
@@ -259,6 +263,8 @@ function parseStreamDetails(stream) {
         isVostfr,
         isWebAudioSafe,
         hasBadAudio,
+        isH264,
+        isH265,
         isPureFrench,
         isMp4,
         isAvi,
@@ -299,6 +305,8 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
                 isWebAudioSafe: details.isWebAudioSafe,
                 hasBadAudio: details.hasBadAudio,
                 hasUnsupportedAudio: details.hasBadAudio,
+                isH264: details.isH264,
+                isH265: details.isH265,
                 isPureFrench: details.isPureFrench,
                 isMp4: details.isMp4,
                 isAvi: details.isAvi,
@@ -334,22 +342,27 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
 
         // 1. Son 100% garanti dans le navigateur (AAC / MP3 / Opus) : CRITIQUE pour ne jamais avoir de vidéo muette
         if (st.isWebAudioSafe) {
-            score += 25000;
+            score += 45000;
         }
         if (st.hasBadAudio) {
             // Codecs propriétaires Dolby/DTS (AC3/DTS/E-AC3) rejetés car non décodés par Chrome/Edge
-            score -= 20000;
+            score -= 85000;
         }
 
-        // 2. VF prioritaire au lancement (+15000) sinon VOSTFR (+500)
+        // 2. Codec vidéo : H.264 ultra compatible web (+12000) vs H.265/HEVC (-15000)
+        if (st.isH264) score += 12000;
+        if (st.isH265) score -= 15000;
+
+        // 3. VF prioritaire au lancement (+15000) sinon VOSTFR (+500)
         if (st.isFrench) score += 15000;
         else if (st.isVostfr) score += 500;
 
-        // 3. Vraie VF pure (TRUEFRENCH / VFF) plutôt que MULTI (où la piste 1 est souvent l'anglais)
+        // 4. Vraie VF pure (TRUEFRENCH / VFF) plutôt que MULTI (où la piste 1 est souvent l'anglais)
         if (st.isPureFrench) score += 5000;
 
-        // 4. Format MP4 universel (audio AAC garanti et seek instantané)
+        // 5. Format MP4 universel vs AVI éliminé
         if (st.isMp4) score += 3000;
+        if (st.isAvi) score -= 250000;
 
         // 5. Taille optimale pour la fluidité (évite les lags)
         const gb = st.sizeBytes / (1024 * 1024 * 1024);

@@ -32,11 +32,17 @@ const memoryCache = new BoundedCache(200);
 function getEnv(name, fallback = '') {
   try {
     const netlifyVal = globalThis.Netlify?.env?.get?.(name);
-    if (netlifyVal !== undefined && netlifyVal !== '') return netlifyVal;
+    if (typeof netlifyVal === 'string' && netlifyVal.trim() !== '') {
+      return netlifyVal.trim();
+    }
   } catch {
     // Hors runtime Netlify
   }
-  return process.env[name] || fallback;
+  const procVal = process.env[name];
+  if (typeof procVal === 'string' && procVal.trim() !== '') {
+    return procVal.trim();
+  }
+  return fallback;
 }
 
 export function getStreamBackendUrl(rawInput = getEnv('STREAM_BACKEND_URL', '')) {
@@ -53,6 +59,7 @@ export function getStreamBackendUrl(rawInput = getEnv('STREAM_BACKEND_URL', ''))
     }
     const host = parsed.hostname.toLowerCase();
     if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return '';
+    if (host.endsWith('onrender.com') || host.endsWith('render.com')) return '';
     if (host.includes(':') || /^[\d.]+$/.test(host) || /^0x[\da-f]+$/i.test(host)) return '';
     if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(host)) return '';
     return parsed.origin;

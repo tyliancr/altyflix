@@ -380,6 +380,29 @@ export const scoreItem = (item, rawQuery) => {
         score += 900;
     }
 
+    // Typo-tolerant token overlap (e.g. "l agence tout" vs "l agence tous risques")
+    const qTokens = q.split(' ').filter(w => w.length >= 2);
+    if (qTokens.length >= 2) {
+        const titleTokens = title.split(' ').filter(Boolean);
+        const origTokens = orig.split(' ').filter(Boolean);
+        let matchedTokens = 0;
+        for (const qt of qTokens) {
+            const matchesAny = (tokens) => tokens.some(t =>
+                t === qt ||
+                t.startsWith(qt) ||
+                (qt.length >= 3 && t.length >= 3 && levenshtein(qt, t) <= 1)
+            );
+            if (matchesAny(titleTokens) || matchesAny(origTokens)) {
+                matchedTokens++;
+            }
+        }
+        if (matchedTokens === qTokens.length) {
+            score += 2600;
+        } else if (matchedTokens > 0) {
+            score += matchedTokens * 550;
+        }
+    }
+
     // French title match extra boost
     if (title === q) {
         score += 1500;
@@ -527,6 +550,58 @@ export const searchMedia = async ({
         }
     } else if (fuzzySuggestion && normalizeText(fuzzySuggestion) !== normalizeText(sanitized)) {
         didYouMean = fuzzySuggestion;
+    }
+
+    throwIfAborted(signal);
+
+    // Fallback 3: Typo-tolerant progressive fallback when TMDB returns 0 exact matches
+    // (e.g. "l'agence tout" -> "l'agence tou" / "l'agence" -> finds "L'Agence tous risques")
+    if (rawResults.length === 0 && page === 1 && sanitized.length >= 4) {
+        const STOPWORDS = new Set(['le', 'la', 'les', 'des', 'du', 'de', 'un', 'une', 'et', 'en', 'au', 'aux', 'the', 'and', 'of', 'in', 'to', 'a', 'an', 'for', 'tout', 'tous', 'toute', 'toutes']);
+        const words = sanitized.split(/\s+/).filter(Boolean);
+        const candidates = [];
+        const pushCandidate = (c) => {
+            const cleaned = (c || '').trim();
+            if (cleaned.length >= 3 && cleaned.toLowerCase() !== sanitized.toLowerCase() && !candidates.some(x => x.toLowerCase() === cleaned.toLowerCase())) {
+                candidates.push(cleaned);
+            }
+        };
+
+        // 1) Trim 1 character off the last word (catches single-letter typos/plurals like "tout" -> "tou")
+        if (words.length >= 1 && words[words.length - 1].length >= 4) {
+            const trimmedLast = [...words.slice(0, -1), words[words.length - 1].slice(0, -1)].join(' ');
+            pushCandidate(trimmedLast);
+        }
+        // 2) Drop the last word (catches wrong/partial trailing word)
+        if (words.length >= 2) {
+            pushCandidate(words.slice(0, -1).join(' '));
+        }
+        // 3) Trim 2 characters on single-word typos (e.g. "intouchabls" -> "intouchab")
+        if (words.length === 1 && words[0].length >= 5) {
+            pushCandidate(words[0].slice(0, -2));
+        }
+        // 4) Longest meaningful keyword (stripping French elisions like l'/d')
+        const meaningful = words
+            .map(w => w.replace(/^(?:l'|d'|j'|m'|t'|s'|n'|c'|qu')/i, ''))
+            .filter(w => w.length >= 4 && !STOPWORDS.has(w.toLowerCase()))
+            .sort((a, b) => b.length - a.length);
+        if (meaningful[0]) {
+            pushCandidate(meaningful[0]);
+        }
+
+        for (const candidate of candidates.slice(0, 3)) {
+            throwIfAborted(signal);
+            try {
+                const fbData = await fetchWithFilter(candidate);
+                if (fbData?.results && fbData.results.length > 0) {
+                    rawResults = fbData.results;
+                    data = fbData;
+                    break;
+                }
+            } catch (err) {
+                if (err.name === 'AbortError') throw err;
+            }
+        }
     }
 
     throwIfAborted(signal);

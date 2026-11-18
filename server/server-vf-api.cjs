@@ -21,20 +21,37 @@ const zlib = require('zlib');
 const { URL } = require('url');
 const { spawn, spawnSync } = require('child_process');
 
-const HAS_FFMPEG = (() => {
+let _hasFfmpeg = null;
+function hasFfmpeg() {
+  if (_hasFfmpeg === true) return true;
   try {
-    return spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 3000 }).status === 0;
+    if (process.platform !== 'win32' && (fs.existsSync('/usr/bin/ffmpeg') || fs.existsSync('/usr/local/bin/ffmpeg'))) {
+      _hasFfmpeg = true;
+      return true;
+    }
+    const ok = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 15000 }).status === 0;
+    if (ok) _hasFfmpeg = true;
+    return ok;
   } catch {
     return false;
   }
-})();
-const HAS_FFPROBE = (() => {
+}
+
+let _hasFfprobe = null;
+function hasFfprobe() {
+  if (_hasFfprobe === true) return true;
   try {
-    return spawnSync('ffprobe', ['-version'], { stdio: 'ignore', timeout: 3000 }).status === 0;
+    if (process.platform !== 'win32' && (fs.existsSync('/usr/bin/ffprobe') || fs.existsSync('/usr/local/bin/ffprobe'))) {
+      _hasFfprobe = true;
+      return true;
+    }
+    const ok = spawnSync('ffprobe', ['-version'], { stdio: 'ignore', timeout: 15000 }).status === 0;
+    if (ok) _hasFfprobe = true;
+    return ok;
   } catch {
     return false;
   }
-})();
+}
 const MAX_CONCURRENT_FFMPEG = 4;
 let activeFfmpegJobs = 0;
 const mediaProbeCache = new BoundedCache(200, 30 * 60 * 1000);
@@ -67,7 +84,7 @@ async function resolveSafeRedirects(startUrl) {
 }
 
 function probeMediaStreams(resolvedUrl) {
-  if (!HAS_FFPROBE) return Promise.resolve([]);
+  if (!hasFfprobe()) return Promise.resolve([]);
   const safeUrl = normalizeAllowedUrl(resolvedUrl);
   if (!safeUrl) return Promise.resolve([]);
   const cached = mediaProbeCache.get(safeUrl);
@@ -91,7 +108,7 @@ function probeMediaStreams(resolvedUrl) {
       proc = spawn('ffprobe', [
         '-v', 'error',
         '-protocol_whitelist', 'https,tls,tcp',
-        '-rw_timeout', '3000000',
+        '-rw_timeout', '8000000',
         '-probesize', '500000',
         '-analyzeduration', '500000',
         '-show_entries', 'stream=index,codec_type,codec_name:stream_tags=language,title:stream_disposition=forced,default',
@@ -105,7 +122,7 @@ function probeMediaStreams(resolvedUrl) {
     const timer = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch {}
       finish([]);
-    }, 3000);
+    }, 8000);
     timer.unref?.();
 
     proc.stdout.on('data', (chunk) => {
@@ -488,7 +505,7 @@ const server = http.createServer(async (req, res) => {
 
     const spawnFfmpegRemux = (rawInputUrl, { copyVideo, audioStreamIndex = null }) => {
       if (res.destroyed || res.writableEnded) return;
-      if (!HAS_FFMPEG) {
+      if (!hasFfmpeg()) {
         return sendJSON(res, 503, { error: 'Remux audio indisponible sur ce serveur.' });
       }
       if (!allowRemuxRequest(clientIp)) {
@@ -789,7 +806,7 @@ const server = http.createServer(async (req, res) => {
     if (!rawTarget) {
       return sendJSON(res, 400, { success: false, subtitles: [], error: 'URL média non autorisée.' });
     }
-    if (!HAS_FFPROBE || !HAS_FFMPEG) {
+    if (!hasFfprobe() || !hasFfmpeg()) {
       return sendJSON(res, 200, { success: true, subtitles: [] });
     }
     try {
@@ -810,7 +827,7 @@ const server = http.createServer(async (req, res) => {
     if (!rawTarget || streamIdx < 0 || streamIdx > 64) {
       return sendJSON(res, 400, { error: 'Paramètres de sous-titres intégrés invalides.' });
     }
-    if (!HAS_FFMPEG) {
+    if (!hasFfmpeg()) {
       return sendJSON(res, 503, { error: 'Extraction de sous-titres indisponible sur ce serveur.' });
     }
     if (req.method === 'HEAD') {
@@ -1139,8 +1156,8 @@ const server = http.createServer(async (req, res) => {
         userProvider,
         userToken,
         userFrenchioUrl,
-        enableAudioRemux: HAS_FFMPEG,
-        enableAviTranscode: HAS_FFMPEG,
+        enableAudioRemux: hasFfmpeg(),
+        enableAviTranscode: hasFfmpeg(),
         tmdbApiKey: TMDB_API_KEY
       });
       return sendJSON(res, 200, result);
@@ -1162,7 +1179,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: HAS_FFMPEG });
+      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: hasFfmpeg() });
       const rawStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
       const httpStatus = (rawStatus === 200 || (rawStatus >= 400 && rawStatus <= 599)) ? rawStatus : 502;
       return sendJSON(res, httpStatus, statusData);
@@ -1254,8 +1271,8 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, {
       status: 'ok',
       runtime: 'node',
-      ffmpeg: HAS_FFMPEG,
-      ffprobe: HAS_FFPROBE,
+      ffmpeg: hasFfmpeg(),
+      ffprobe: hasFfprobe(),
       timestamp: new Date().toISOString(),
       memoryUsage: process.memoryUsage().rss
     });

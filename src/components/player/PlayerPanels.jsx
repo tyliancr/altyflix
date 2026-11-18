@@ -265,7 +265,9 @@ export function AudioSubsPanel({
     onToggleAlwaysOn
 }) {
     const showSources = Array.isArray(streams) && streams.length > 1;
-    const hasVo = Array.isArray(streams) && streams.some(s => !s.isFrench);
+    const hasVo = Array.isArray(streams) && streams.some(s =>
+        !s.isFrench || /\bmulti\b|multi\s*audio/i.test(`${s.filename || ''} ${s.rawTitle || ''}`)
+    );
     return (
         <Panel compact={compact} title="Audio et sous-titres" onClose={onClose} wide>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">

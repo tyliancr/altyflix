@@ -1216,9 +1216,17 @@ export default function NetflixPlayer({
         return () => { active = false; };
     }, [id, isTv, season, episode, hasActiveStream, activeStreamFilename, activeStreamRawUrl, activeStreamIsVo, streamMode, handleSelectSubtitle]);
 
-    // Sélection de la langue audio (VF vs VO) avec bascule Auto-VOSTFR immédiate
+    // Sélection de la langue audio (VF vs VO) avec bascule Auto-VOSTFR immédiate (y compris piste audio MULTi via FFmpeg)
     const handleSelectAudioLang = (lang) => {
         const subs = availableSubtitlesRef.current || [];
+        const isMultiStream = (s) => Boolean(s && /\bmulti\b|multi\s*audio/i.test(`${s.filename || ''} ${s.rawTitle || ''}`));
+        const withRemuxLang = (s, targetLang) => {
+            if (!s?.url || !s.url.includes('/api/video-stream')) return null;
+            const nextUrl = /[?&]lang=(?:vf|vo)/i.test(s.url)
+                ? s.url.replace(/([?&])lang=(?:vf|vo)/i, `$1lang=${targetLang}`)
+                : `${s.url}&lang=${targetLang}`;
+            return { ...s, url: nextUrl, isFrench: targetLang === 'vf' };
+        };
 
         if (lang === 'vf') {
             setCurrentAudioLang('vf');
@@ -1227,12 +1235,12 @@ export default function NetflixPlayer({
                 const forcedFr = subs.find(s => s.lang === 'fr' && s.forced && s.embedded);
                 handleSelectSubtitle(forcedFr ? forcedFr.id : 'off', subs);
             }
-            if (!availableStreams || availableStreams.length <= 1) return;
             const vfStream =
-                availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-                availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
-                availableStreams.find(s => s.isFrench && s.tierKey === '1080p') ||
-                availableStreams.find(s => s.isFrench);
+                (availableStreams || []).find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => s.isFrench && !s.hasUnsupportedAudio) ||
+                (availableStreams || []).find(s => s.isFrench && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => s.isFrench) ||
+                (isMultiStream(activeStream) ? withRemuxLang(activeStream, 'vf') : null);
             if (vfStream && vfStream.url !== activeStream?.url) {
                 handleSelectStream(vfStream);
             }
@@ -1242,7 +1250,7 @@ export default function NetflixPlayer({
                 (availableStreams || []).find(s => !s.isFrench && !s.hasUnsupportedAudio) ||
                 (availableStreams || []).find(s => !s.isFrench && s.tierKey === '1080p') ||
                 (availableStreams || []).find(s => !s.isFrench) ||
-                null;
+                (isMultiStream(activeStream) ? withRemuxLang(activeStream, 'vo') : null);
             if (hasTrueVf && !voStream) return;
             setCurrentAudioLang('vo');
             userPickedSubRef.current = false;

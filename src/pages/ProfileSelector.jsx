@@ -328,6 +328,7 @@ const ProfileSelector = () => {
             setSelectedAvatar(editingProfile.avatar || DEFAULT_AVATARS[0]);
             setIsKid(editingProfile.isKid || false);
             setPinCode(editingProfile.pin || '');
+            setSaveError('');
         }
     }, [editingProfile]);
 
@@ -348,6 +349,7 @@ const ProfileSelector = () => {
         setSelectedAvatar(DEFAULT_AVATARS[0]);
         setIsKid(false);
         setPinCode('');
+        setSaveError('');
         setEditingProfile(null);
     };
 

@@ -265,6 +265,7 @@ export function AudioSubsPanel({
     onToggleAlwaysOn
 }) {
     const showSources = Array.isArray(streams) && streams.length > 1;
+    const hasVo = Array.isArray(streams) && streams.some(s => !s.isFrench);
     return (
         <Panel compact={compact} title="Audio et sous-titres" onClose={onClose} wide>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
@@ -273,7 +274,9 @@ export function AudioSubsPanel({
                     {hasTrueVf && (
                         <OptionRow selected={currentAudioLang === 'vf'} onClick={() => onSelectAudio('vf')}>Français</OptionRow>
                     )}
-                    <OptionRow selected={currentAudioLang === 'vo' || !hasTrueVf} onClick={() => onSelectAudio('vo')}>Version originale</OptionRow>
+                    {(hasVo || !hasTrueVf) && (
+                        <OptionRow selected={currentAudioLang === 'vo' || !hasTrueVf} onClick={() => onSelectAudio('vo')}>Version originale</OptionRow>
+                    )}
                 </section>
 
                 <section className="space-y-1">

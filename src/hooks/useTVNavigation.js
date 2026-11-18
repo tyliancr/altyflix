@@ -196,7 +196,7 @@ const focusPage = () => {
         const el = candidates().find(c => {
             const r = c.getBoundingClientRect();
             // Never a text field: focusing one opens the TV's on-screen keyboard
-            return r.top >= 0 && r.bottom <= window.innerHeight && !c.closest('nav, header') && !TYPING.has(c.tagName);
+            return r.top >= 0 && r.bottom <= window.innerHeight && !c.closest('nav, [data-site-nav]') && !TYPING.has(c.tagName);
         });
         if (el) el.focus({ preventScroll: true });
         else if (++tries < 20) timerId = setTimeout(attempt, 150);

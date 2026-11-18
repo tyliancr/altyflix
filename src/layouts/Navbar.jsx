@@ -342,6 +342,7 @@ const Navbar = () => {
 
         {/* Mobile Top Header (Authentic Netflix App Experience) */}
         <header
+            data-site-nav=""
             className={`md:hidden fixed top-0 inset-x-0 z-[150] transition-colors duration-300 pointer-events-auto select-none pt-[max(0.75rem,env(safe-area-inset-top))] px-4 pb-2.5 ${
                 isScrolled
                     ? 'bg-[#060608]/95 backdrop-blur-2xl border-b border-white/[0.08] shadow-lg'

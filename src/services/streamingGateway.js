@@ -755,6 +755,7 @@ export async function pollStreamStatus({
                     return {
                         ready: true,
                         playbackUrl: data.playbackUrl,
+                        directUrl: data.directUrl || '',
                         isAvi: Boolean(data.isAvi),
                         isTranscoded: Boolean(data.isTranscoded),
                         elapsedSec
@@ -1126,13 +1127,27 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
 
         const normalized = [];
         const seenUrls = new Set();
+        const canonicalSubUrl = (raw) => {
+            const s = String(raw || '').trim();
+            if (!s) return '';
+            try {
+                const u = new URL(s, typeof window !== 'undefined' ? window.location.origin : 'https://altyflix.local');
+                if (u.pathname === '/api/subtitles-vtt' && u.searchParams.get('url')) {
+                    return u.searchParams.get('url').trim();
+                }
+            } catch { /* ignore */ }
+            return s;
+        };
         let frCount = 0;
         let enCount = 0;
+        let externalFrCount = 0;
+        let externalEnCount = 0;
 
         // 0. Sous-titres texte intégrés MKV en tête (synchro parfaite avec la vidéo)
         for (const sub of embeddedSubs) {
-            if (!sub?.url || seenUrls.has(sub.url)) continue;
-            seenUrls.add(sub.url);
+            const canon = canonicalSubUrl(sub?.url);
+            if (!canon || seenUrls.has(canon)) continue;
+            seenUrls.add(canon);
             if (sub.lang === 'fr') {
                 if (!sub.forced) frCount++;
                 normalized.push({
@@ -1146,12 +1161,12 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
                     encoding: 'utf-8'
                 });
             } else if (sub.lang === 'en') {
-                enCount++;
+                if (!sub.forced) enCount++;
                 normalized.push({
                     id: sub.id || `mkv-en-${normalized.length}`,
                     lang: 'en',
-                    label: sub.label || 'Anglais',
-                    hint: sub.hint || 'Synchro MKV',
+                    label: sub.label || (sub.forced ? 'Anglais (forcés)' : 'Anglais'),
+                    hint: sub.hint || (sub.forced ? 'Forcés · MKV' : 'Synchro MKV'),
                     forced: Boolean(sub.forced),
                     embedded: true,
                     url: sub.url,
@@ -1162,11 +1177,13 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
 
         // A. OpenSubtitles direct (fonctionne sur Netlify ET en local avec classement par release/FPS)
         for (const { item: s, hint } of rankOpenSubtitlesClient(directFrRaw, { filename, limit: 4 })) {
-            if (frCount >= 4 || seenUrls.has(s.SubDownloadLink)) continue;
+            const canon = canonicalSubUrl(s.SubDownloadLink);
+            if (externalFrCount >= 4 || !canon || seenUrls.has(canon)) continue;
             frCount++;
-            seenUrls.add(s.SubDownloadLink);
+            externalFrCount++;
+            seenUrls.add(canon);
             normalized.push({
-                id: `os-fr-${frCount}`,
+                id: `os-fr-${externalFrCount}`,
                 lang: 'fr',
                 label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
                 hint,
@@ -1177,11 +1194,13 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             });
         }
         for (const { item: s, hint } of rankOpenSubtitlesClient(directEnRaw, { filename, limit: 3 })) {
-            if (enCount >= 3 || seenUrls.has(s.SubDownloadLink)) continue;
+            const canon = canonicalSubUrl(s.SubDownloadLink);
+            if (externalEnCount >= 3 || !canon || seenUrls.has(canon)) continue;
             enCount++;
-            seenUrls.add(s.SubDownloadLink);
+            externalEnCount++;
+            seenUrls.add(canon);
             normalized.push({
-                id: `os-en-${enCount}`,
+                id: `os-en-${externalEnCount}`,
                 lang: 'en',
                 label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
                 hint,
@@ -1192,17 +1211,19 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             });
         }
 
-        // B. Fallback backend /api/subtitles si une langue manque encore
-        const needBackendFr = frCount === 0;
-        const needBackendEn = enCount === 0;
+        // B. Fallback backend /api/subtitles si OpenSubtitles direct n'a rien renvoyé pour une langue
+        const needBackendFr = externalFrCount === 0;
+        const needBackendEn = externalEnCount === 0;
         for (const sub of backendSubs) {
-            if (!sub?.url || seenUrls.has(sub.url)) continue;
+            const canon = canonicalSubUrl(sub?.url);
+            if (!canon || seenUrls.has(canon)) continue;
             const rawLang = String(sub.lang || '').toLowerCase();
-            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && needBackendFr && frCount < 4) {
+            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && needBackendFr && externalFrCount < 4) {
                 frCount++;
-                seenUrls.add(sub.url);
+                externalFrCount++;
+                seenUrls.add(canon);
                 normalized.push({
-                    id: sub.id || `api-fr-${frCount}`,
+                    id: sub.id || `api-fr-${externalFrCount}`,
                     lang: 'fr',
                     label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
                     hint: sub.hint || '',
@@ -1210,11 +1231,12 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
                     url: sub.url,
                     encoding: 'utf-8'
                 });
-            } else if ((rawLang === 'en' || rawLang === 'eng') && needBackendEn && enCount < 3) {
+            } else if ((rawLang === 'en' || rawLang === 'eng') && needBackendEn && externalEnCount < 3) {
                 enCount++;
-                seenUrls.add(sub.url);
+                externalEnCount++;
+                seenUrls.add(canon);
                 normalized.push({
-                    id: sub.id || `api-en-${enCount}`,
+                    id: sub.id || `api-en-${externalEnCount}`,
                     lang: 'en',
                     label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
                     hint: sub.hint || '',
@@ -1225,8 +1247,8 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             }
         }
 
-        // C. Dernier recours Stremio OpenSubtitles v3 uniquement si FR ou EN manquent encore (filtré strictement FR/EN)
-        if ((frCount === 0 || enCount === 0) && stremKey) {
+        // C. Dernier recours Stremio OpenSubtitles v3 uniquement si FR ou EN externes manquent encore (filtré strictement FR/EN)
+        if ((externalFrCount === 0 || externalEnCount === 0) && stremKey) {
             const st = createTimeoutSignal(4500);
             try {
                 const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${stremKey}.json`;
@@ -1234,27 +1256,30 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
                 if (res.ok) {
                     const data = await res.json();
                     const stremSubs = Array.isArray(data?.subtitles) ? data.subtitles : [];
-                    const needStremFr = frCount === 0;
-                    const needStremEn = enCount === 0;
+                    const needStremFr = externalFrCount === 0;
+                    const needStremEn = externalEnCount === 0;
                     for (const sub of stremSubs) {
                         const rawLang = String(sub.lang || '').toLowerCase();
-                        if (!sub.url || seenUrls.has(sub.url)) continue;
-                        if ((rawLang === 'fre' || rawLang === 'fra' || rawLang === 'fr') && needStremFr && frCount < 3) {
+                        const canon = canonicalSubUrl(sub?.url);
+                        if (!canon || seenUrls.has(canon)) continue;
+                        if ((rawLang === 'fre' || rawLang === 'fra' || rawLang === 'fr') && needStremFr && externalFrCount < 3) {
                             frCount++;
-                            seenUrls.add(sub.url);
+                            externalFrCount++;
+                            seenUrls.add(canon);
                             normalized.push({
-                                id: sub.id || `strem-fr-${frCount}`,
+                                id: sub.id || `strem-fr-${externalFrCount}`,
                                 lang: 'fr',
                                 label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
                                 hint: '',
                                 url: sub.url,
                                 encoding: sub.SubEncoding || 'utf-8'
                             });
-                        } else if ((rawLang === 'eng' || rawLang === 'en') && needStremEn && enCount < 2) {
+                        } else if ((rawLang === 'eng' || rawLang === 'en') && needStremEn && externalEnCount < 2) {
                             enCount++;
-                            seenUrls.add(sub.url);
+                            externalEnCount++;
+                            seenUrls.add(canon);
                             normalized.push({
-                                id: sub.id || `strem-en-${enCount}`,
+                                id: sub.id || `strem-en-${externalEnCount}`,
                                 lang: 'en',
                                 label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
                                 hint: '',
@@ -1358,11 +1383,17 @@ export function parseVttCues(rawText) {
  */
 export async function fetchSubtitleCues(subUrl, subEncoding = null, fallbackUrl = null, { onPartialCues = null, signal = null } = {}) {
     if (!subUrl) return [];
-    const isProgressiveMkv = subUrl.includes('/api/embedded-subtitles-vtt');
 
     const loadFromUrl = async (targetUrl) => {
+        const isProgressiveMkv = targetUrl.includes('/api/embedded-subtitles-vtt');
         if (isProgressiveMkv && typeof onPartialCues === 'function') {
-            const res = await fetch(targetUrl, signal ? { signal } : undefined);
+            const firstByteSig = createTimeoutSignal(12000, signal);
+            let res;
+            try {
+                res = await fetch(targetUrl, { signal: firstByteSig.signal });
+            } finally {
+                firstByteSig.cleanup();
+            }
             if (!res.ok) return null;
             if (!res.body || typeof res.body.getReader !== 'function') {
                 return parseVttCues(await res.text());
@@ -1389,20 +1420,21 @@ export async function fetchSubtitleCues(subUrl, subEncoding = null, fallbackUrl 
                 return parseVttCues(acc);
             } catch {
                 try { await reader.cancel(); } catch { /* ignore */ }
+                if (signal?.aborted) return [];
                 return parseVttCues(acc);
             }
         }
 
         const st = createTimeoutSignal(8000, signal);
-        let res;
+        let buf;
         try {
-            res = await fetch(targetUrl, { signal: st.signal });
+            const res = await fetch(targetUrl, { signal: st.signal });
+            if (!res.ok) return null;
+            buf = await res.arrayBuffer();
         } finally {
             st.cleanup();
         }
-        if (!res.ok) return null;
 
-        let buf = await res.arrayBuffer();
         const bytes = new Uint8Array(buf);
         const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
         if (isGzip) {
@@ -1412,22 +1444,25 @@ export async function fetchSubtitleCues(subUrl, subEncoding = null, fallbackUrl 
             buf = await new Response(decompressedStream).arrayBuffer();
         }
 
+        const decodedBytes = new Uint8Array(buf);
         let rawText;
-        if (subEncoding && !/ascii|utf-?8/i.test(subEncoding)) {
-            try {
-                rawText = new TextDecoder('utf-8', { fatal: true }).decode(buf);
-            } catch {
-                try {
-                    rawText = new TextDecoder('windows-1252').decode(buf);
-                } catch {
-                    rawText = new TextDecoder('utf-8').decode(buf);
-                }
-            }
+        if (decodedBytes.length >= 2 && decodedBytes[0] === 0xff && decodedBytes[1] === 0xfe) {
+            rawText = new TextDecoder('utf-16le').decode(buf);
+        } else if (decodedBytes.length >= 2 && decodedBytes[0] === 0xfe && decodedBytes[1] === 0xff) {
+            rawText = new TextDecoder('utf-16be').decode(buf);
         } else {
             try {
                 rawText = new TextDecoder('utf-8', { fatal: true }).decode(buf);
             } catch {
-                rawText = new TextDecoder('windows-1252').decode(buf);
+                if (subEncoding && !/ascii|utf-?8/i.test(subEncoding)) {
+                    try {
+                        rawText = new TextDecoder(subEncoding).decode(buf);
+                    } catch {
+                        rawText = new TextDecoder('windows-1252').decode(buf);
+                    }
+                } else {
+                    rawText = new TextDecoder('windows-1252').decode(buf);
+                }
             }
         }
 

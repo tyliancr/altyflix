@@ -9,7 +9,7 @@ export default function VideoPlayer({ content = {}, onClose, initialSeason = 1, 
 
     return (
         <NetflixPlayer
-            key={`${id}-${initialSeason}-${initialEpisode}`}
+            key={`${type}-${id}-${initialSeason}-${initialEpisode}`}
             content={content}
             type={type}
             initialSeason={initialSeason}

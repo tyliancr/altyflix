@@ -131,6 +131,10 @@ export class UnifiedStreamingEngine {
         preferredAudioLang = 'VF',
         callbacks = {}
     }) {
+        // Nettoyage de l'instance précédente AVANT d'écraser videoElement (évite toute fuite de listeners)
+        this.detachVideoListeners();
+        this.cleanupAdapters();
+
         this.videoElement = videoElement;
         this.currentUrl = url;
         this.callbacks = { ...this.callbacks, ...callbacks };
@@ -142,10 +146,6 @@ export class UnifiedStreamingEngine {
         const engineType = detectEngineType(url, formatHint);
         this.currentEngineType = engineType;
         this.metrics.engine = engineType;
-
-        // Nettoyage de l'instance précédente (évite les fuites de listeners en cas de réutilisation)
-        this.detachVideoListeners();
-        this.cleanupAdapters();
         this.mediaErrorRecoveryCount = 0;
         this.pausedByOffline = false;
 
@@ -269,11 +269,13 @@ export class UnifiedStreamingEngine {
                 }
 
                 this.callbacks.onBufferingChange(false);
-                video.play().catch(() => {
-                    // Autoplay bloqué par le navigateur : muter et relancer
-                    video.muted = true;
-                    this.callbacks.onAutoplayMuted?.(true);
-                    video.play().catch(() => {});
+                video.play().catch((err) => {
+                    if (err?.name === 'NotAllowedError') {
+                        // Autoplay bloqué par le navigateur : muter et relancer
+                        video.muted = true;
+                        this.callbacks.onAutoplayMuted?.(true);
+                        video.play().catch(() => {});
+                    }
                 });
             });
 
@@ -565,6 +567,7 @@ export class UnifiedStreamingEngine {
                     autoplay: true,
                     maxBufferLength: 45
                 }, (err) => {
+                    if (this.isDestroyed) return;
                     if (err) {
                         this.callbacks.onError({
                             message: 'Erreur de rendu WebTorrent : ' + err.message,
@@ -574,7 +577,16 @@ export class UnifiedStreamingEngine {
                 });
 
                 if (startPosition > 0) {
-                    video.currentTime = startPosition;
+                    const seekOnMeta = () => {
+                        if (this.isDestroyed) return;
+                        try { video.currentTime = startPosition; } catch { /* ignore */ }
+                    };
+                    if (video.readyState >= 1) {
+                        seekOnMeta();
+                    } else {
+                        this._pendingMetaHandler = seekOnMeta;
+                        video.addEventListener('loadedmetadata', seekOnMeta, { once: true });
+                    }
                 }
 
                 this.callbacks.onQualitiesReady([

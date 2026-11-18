@@ -36,7 +36,7 @@ export default function SearchFilterChips({
                     label="Type de résultat"
                     value={filter}
                     onChange={setFilter}
-                    options={SEARCH_TYPES.map(type => ({ id: type.key, label: t(`search.filters.${type.labelKey}`) }))}
+                    options={SEARCH_TYPES.filter(type => !isKid || type.key !== 'person').map(type => ({ id: type.key, label: t(`search.filters.${type.labelKey}`) }))}
                 />
                 <label className="flex items-center gap-2.5 text-xs font-semibold text-white/45">
                     <span className="hidden sm:inline">Trier par</span>

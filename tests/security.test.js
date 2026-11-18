@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { once } from 'node:events';
 import security from '../server/security.cjs';
-import netlifyApiHandler from '../netlify/functions/api.mjs';
+import netlifyApiHandler, { getStreamBackendUrl } from '../netlify/functions/api.mjs';
 import { seasonLabel, getSeasons } from '../src/utils/seasons.js';
 import { getContentType, sanitizeReturnUrl } from '../src/utils/helpers.js';
 
@@ -79,6 +79,10 @@ test('HTTP server rejects traversal, malformed URLs and unsafe methods', async (
     assert.equal((await fetch(base + '/api/streams?id=1', { method: 'POST' })).status, 405);
     assert.equal((await fetch(base + '/api/streams?id=%22%3E%3Cscript%3E')).status, 400);
     assert.equal((await fetch(base + '/api/tmdb/authentication/token/new')).status, 400);
+    assert.equal((await fetch(base + '/api/embedded-subtitles-vtt?stream=&url=' + encodeURIComponent('https://api.torbox.app/test.mkv'))).status, 400);
+    assert.equal((await fetch(base + '/api/embedded-subtitles-vtt?stream=abc&url=' + encodeURIComponent('https://api.torbox.app/test.mkv'))).status, 400);
+    const headSub = await fetch(base + '/api/embedded-subtitles-vtt?stream=2&url=' + encodeURIComponent('https://api.torbox.app/test.mkv'), { method: 'HEAD' });
+    assert.ok([200, 503].includes(headSub.status), `HEAD embedded-subtitles-vtt expected 200 or 503, got ${headSub.status}`);
     const response = await fetch(base + '/api/streams?id=96677&type=tv&season=3&episode=1');
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('x-frame-options'), 'DENY');
@@ -136,4 +140,16 @@ test('Netlify API function enforces health, SSRF and CRLF protections', async ()
   const embeddedNetlify = await netlifyApiHandler(new Request('https://altyflix.netlify.app/api/embedded-subtitles?url=http://127.0.0.1/a.mkv'));
   assert.equal(embeddedNetlify.status, 200);
   assert.deepEqual((await embeddedNetlify.json()).subtitles, []);
+});
+
+test('STREAM_BACKEND_URL rejects SSRF, localhost, IP literals and invalid ports', () => {
+  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com'), 'https://altyflix-stream.onrender.com');
+  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com/'), 'https://altyflix-stream.onrender.com');
+  assert.equal(getStreamBackendUrl('http://altyflix-stream.onrender.com'), '');
+  assert.equal(getStreamBackendUrl('https://localhost:3000'), '');
+  assert.equal(getStreamBackendUrl('https://127.0.0.1'), '');
+  assert.equal(getStreamBackendUrl('https://169.254.169.254'), '');
+  assert.equal(getStreamBackendUrl('https://user:pass@altyflix-stream.onrender.com'), '');
+  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com:99999'), '');
+  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com/evil'), '');
 });

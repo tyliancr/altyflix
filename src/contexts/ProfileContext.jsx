@@ -447,6 +447,8 @@ export const ProfileProvider = ({ children }) => {
         const cached = currentProfile ? storage.get(`altyflix_history_${currentProfile.id}`) : null;
         return Array.isArray(cached) ? cached : [];
     });
+    const watchHistoryRef = useRef(watchHistory);
+    watchHistoryRef.current = watchHistory;
 
     const loadWatchHistory = useCallback(async () => {
         if (!currentProfile || !currentUser) return;
@@ -503,7 +505,9 @@ export const ProfileProvider = ({ children }) => {
         try {
             const historyRef = doc(db, 'users', currentUser.uid, 'profiles', currentProfile.id, 'history', 'main');
             const cachedHistory = storage.get(`altyflix_history_${currentProfile.id}`);
-            const currentHistory = Array.isArray(cachedHistory) ? cachedHistory : [];
+            const currentHistory = Array.isArray(cachedHistory)
+                ? cachedHistory
+                : (Array.isArray(watchHistoryRef.current) ? watchHistoryRef.current : []);
 
             // Remove existing entry for this content (keyed by type + id to avoid Movie/TV TMDB ID collisions)
             const targetId = content.id || content.contentId;

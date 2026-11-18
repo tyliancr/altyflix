@@ -180,7 +180,7 @@ const Settings = () => {
         }
         setLoading(true);
         try {
-            const langChanged = currentProfile.language !== selectedLanguage;
+            const langChanged = (currentProfile.language || 'fr') !== selectedLanguage;
             const result = await updateProfile(currentProfile.id, {
                 name: profileName.trim(),
                 avatar: selectedAvatar,
@@ -216,12 +216,12 @@ const Settings = () => {
                 videoQuality,
                 preferredAudio
             });
+            if (!result.success) throw new Error(result.error || 'Sauvegarde refusée.');
             try {
                 if (typeof localStorage !== 'undefined' && currentProfile?.id) {
                     localStorage.setItem(`altyflix_subtitles_default_on_${currentProfile.id}`, subtitlesAlwaysOn ? 'true' : 'false');
                 }
             } catch { /* ignore */ }
-            if (!result.success) throw new Error(result.error || 'Sauvegarde refusée.');
             triggerToast('success', t('settings.savePreferencesSuccess'));
         } catch {
             triggerToast('error', 'Erreur de sauvegarde des préférences.');
@@ -501,6 +501,7 @@ const Settings = () => {
             <AnimatePresence>
                 {showClearHistoryModal && (
                     <ConfirmModal
+                        key="clear-history"
                         title="Effacer l’historique ?"
                         message={t('settings.clearHistoryConfirm')}
                         onConfirm={handleClearHistory}
@@ -510,6 +511,7 @@ const Settings = () => {
                 )}
                 {showDeleteModal && (
                     <ConfirmModal
+                        key="delete-account"
                         title="Supprimer le compte ?"
                         message={t('settings.deleteConfirmPrompt')}
                         onConfirm={() => { setShowDeleteModal(false); handleDeleteAccount(); }}

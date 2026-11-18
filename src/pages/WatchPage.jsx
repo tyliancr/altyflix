@@ -33,9 +33,11 @@ export default function WatchPage() {
         });
         const hasExplicitS = urlSeasonParam !== null;
         const hasExplicitE = urlEpisodeParam !== null;
+        const resolvedSeason = Math.max(1, parseInt(urlSeasonParam, 10) || (!hasExplicitS && isTv && savedEntry?.season ? Number(savedEntry.season) : 1));
+        const canReuseSavedEpisode = !hasExplicitS || Number(savedEntry?.season || 1) === resolvedSeason;
         return {
-            initialSeason: Math.max(1, parseInt(urlSeasonParam, 10) || (!hasExplicitS && isTv && savedEntry?.season ? Number(savedEntry.season) : 1)),
-            initialEpisode: Math.max(1, parseInt(urlEpisodeParam, 10) || (!hasExplicitE && isTv && savedEntry?.episode ? Number(savedEntry.episode) : 1))
+            initialSeason: resolvedSeason,
+            initialEpisode: Math.max(1, parseInt(urlEpisodeParam, 10) || (!hasExplicitE && isTv && canReuseSavedEpisode && savedEntry?.episode ? Number(savedEntry.episode) : 1))
         };
     }, [tmdbId, isTv, urlSeasonParam, urlEpisodeParam]);
 
@@ -104,7 +106,7 @@ export default function WatchPage() {
     return (
         <div className="fixed inset-0 z-[99999] bg-black">
             <NetflixPlayer
-                key={`${tmdbId}-${initialSeason}-${initialEpisode}`}
+                key={`${isTv ? 'tv' : 'movie'}-${tmdbId}-${initialSeason}-${initialEpisode}`}
                 content={content}
                 type={isTv ? 'tv' : 'movie'}
                 initialSeason={initialSeason}

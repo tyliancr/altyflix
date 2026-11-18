@@ -279,3 +279,48 @@ test('Debrid Stream Resolver: VF prioritaire au lancement mais VO toujours conse
   assert.equal(curated.activeStream.isFrench, true, 'La VF doit etre active par defaut');
   assert.ok(curated.streams.some(s => !s.isFrench), 'Une source VO doit toujours etre disponible dans les options');
 });
+
+test('Debrid Stream Resolver: regressions The.Aviator, VOSTFR avec drapeau FR, underscores et 720p en cache vs 1080p non cache', () => {
+  // 1. "The.Aviator" ne doit JAMAIS etre classé isAvi=true
+  const aviator = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'The.Aviator.2004.1080p.BluRay.AAC.mp4\n👤 20 💾 2.5 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/h_av/The.Aviator.mp4'
+  });
+  assert.equal(aviator.isAvi, false, 'The.Aviator.mp4 ne doit pas declencher isAvi');
+
+  // 2. Une release VOSTFR portant un drapeau 🇫🇷 ne doit PAS etre classee VF
+  const vostfrFlag = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Anime.Movie.2024.1080p.WEB.VOSTFR.AAC.mkv\n👤 15 💾 2.1 GB\n🇫🇷',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/h_vo/movie.mkv'
+  });
+  assert.equal(vostfrFlag.isFrench, false, 'VOSTFR avec drapeau FR ne doit pas etre classe VF');
+  assert.equal(vostfrFlag.isVostfr, true, 'VOSTFR avec drapeau FR doit etre classe VOSTFR');
+
+  // 3. Les noms avec underscores doivent detecter correctement 480p / DVDRip / XviD / AVI
+  const underscoreAvi = parseStreamDetails({
+    name: '[TB+] Torrentio',
+    title: 'Chouchou_2003_FRENCH_DVDRip_XviD.avi\n👤 3 💾 700 MB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/h_us/Chouchou.avi'
+  });
+  assert.equal(underscoreAvi.isFrench, true);
+  assert.equal(underscoreAvi.tierKey, '480p');
+  assert.equal(underscoreAvi.isAvi, true);
+
+  // 4. Un film avec 720p EN CACHE et 1080p NON CACHE (download) doit garder le 720p en cache pour lecture instantanee
+  const cached720VsUncached1080 = curateStreams([
+    {
+      name: '[TB download] Torrentio\n1080p',
+      title: 'RareFilm.2005.FRENCH.1080p.WEB.AAC.mp4\n👤 10 💾 3.0 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/h1080/dl.mp4'
+    },
+    {
+      name: '[TB+] Torrentio\n720p',
+      title: 'RareFilm.2005.FRENCH.720p.WEB.AAC.mp4\n👤 5 💾 1.4 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/h720/cached.mp4'
+    }
+  ], 'torbox', { contentType: 'movie' });
+  assert.equal(cached720VsUncached1080.activeStream.isCached, true, 'Le 720p en cache ne doit pas etre elimine par un 1080p non cache');
+  assert.equal(cached720VsUncached1080.activeStream.tierKey, '720p');
+});

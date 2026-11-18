@@ -124,6 +124,13 @@ function probeMediaStreams(resolvedUrl) {
   });
 }
 
+function getClientIp(req) {
+  if (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for']) {
+    return String(req.headers['x-forwarded-for']).split(',')[0].trim() || (req.socket.remoteAddress || 'local');
+  }
+  return req.socket.remoteAddress || 'local';
+}
+
 function pickAudioStreamIndex(streams, desiredLang = 'vf') {
   const audios = (streams || []).filter(s => s && s.codec_type === 'audio' && Number.isInteger(s.index));
   if (audios.length <= 1) return null;
@@ -133,12 +140,25 @@ function pickAudioStreamIndex(streams, desiredLang = 'vf') {
     const title = String(s.tags?.title || '').toLowerCase();
     return ['fre', 'fra', 'fr'].includes(lang) || /\b(?:french|fran[cç]ais|vff|vfq|vf2|vfi|truefrench|vf|fr)\b/i.test(title);
   };
+  const isEnglishTrack = (s) => {
+    const lang = String(s.tags?.language || '').toLowerCase();
+    const title = String(s.tags?.title || '').toLowerCase();
+    return ['eng', 'en'].includes(lang) || /\b(?:english|anglais|vo)\b/i.test(title);
+  };
+  const hasExplicitNonUndLang = (s) => {
+    const lang = String(s.tags?.language || '').trim().toLowerCase();
+    return Boolean(lang && lang !== 'und' && lang !== 'unknown');
+  };
   const wantVo = String(desiredLang || 'vf').toLowerCase() === 'vo';
   if (!wantVo) {
     const fr = audios.find(s => isFrenchTrack(s) && !isCommentary(s)) || audios.find(isFrenchTrack);
     return fr ? fr.index : null;
   }
-  const vo = audios.find(s => !isFrenchTrack(s) && !isCommentary(s)) || audios.find(s => !isFrenchTrack(s));
+  const vo =
+    audios.find(s => !isFrenchTrack(s) && !isCommentary(s) && isEnglishTrack(s)) ||
+    audios.find(s => !isFrenchTrack(s) && !isCommentary(s) && hasExplicitNonUndLang(s)) ||
+    audios.find(s => !isFrenchTrack(s) && !isCommentary(s)) ||
+    audios.find(s => !isFrenchTrack(s));
   return vo ? vo.index : null;
 }
 
@@ -440,7 +460,7 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 405, { error: 'Méthode non autorisée.' });
   }
 
-  if (pathname.startsWith('/api/') && pathname !== '/api/video-stream' && !allowRequest(req.socket.remoteAddress || 'local')) {
+  if (pathname.startsWith('/api/') && pathname !== '/api/video-stream' && !allowRequest(getClientIp(req))) {
     res.setHeader('Retry-After', '60');
     return sendJSON(res, 429, { error: 'Trop de requêtes. Réessayez dans une minute.' });
   }
@@ -453,12 +473,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     const wantsAudioRemux = query.audio === 'aac';
-    const clientIp = (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'])
-      ? String(req.headers['x-forwarded-for']).split(',')[0].trim()
-      : (req.socket.remoteAddress || 'local');
+    const wantsForceTranscode = query.transcode === '1';
+    const clientIp = getClientIp(req);
 
     // Répondre immédiatement aux requêtes HEAD sans lancer un processus FFmpeg inutile
-    if (req.method === 'HEAD' && wantsAudioRemux) {
+    if (req.method === 'HEAD' && (wantsAudioRemux || wantsForceTranscode)) {
       res.writeHead(200, {
         'Content-Type': 'video/mp4',
         'Access-Control-Allow-Origin': '*',
@@ -577,7 +596,7 @@ const server = http.createServer(async (req, res) => {
       }, 4 * 60 * 60 * 1000);
       maxLifeTimer.unref?.();
 
-      ffmpegProc.on('exit', () => {
+      ffmpegProc.on('close', () => {
         if (killTimer) clearTimeout(killTimer);
         if (maxLifeTimer) clearTimeout(maxLifeTimer);
         if (!cleaned) {
@@ -688,18 +707,33 @@ const server = http.createServer(async (req, res) => {
       const contentDisp = (upstreamRes.headers.get('content-disposition') || '').toLowerCase();
       const finalUrl = currentUrl;
       const legacyExtRe = /\.(?:avi|wmv|flv|vob|mpe?g|divx)(?:["';?\s]|$)/i;
-      const isAvi = legacyExtRe.test(targetUrl) ||
+      const isAvi = wantsForceTranscode ||
+                    legacyExtRe.test(targetUrl) ||
                     legacyExtRe.test(finalUrl) ||
                     legacyExtRe.test(contentDisp) ||
                     /msvideo|avi|x-ms-wmv|video\/mpeg|x-flv/i.test(contentType);
 
+      if (isAvi && req.method === 'HEAD') {
+        try { await upstreamRes.body?.cancel(); } catch {}
+        res.writeHead(200, {
+          'Content-Type': 'video/mp4',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'private, no-store'
+        });
+        return res.end();
+      }
+
       // Si le format est un AVI ancien non décodé par HTML5, conversion dynamique à la volée vers fMP4
-      if (isAvi && req.method !== 'HEAD') {
+      if (isAvi) {
         console.log(`[Video Stream Proxy] Transcodage dynamique à la volée du flux AVI vers MP4 HTML5...`);
         try { await upstreamRes.body?.cancel(); } catch {}
         if (abortCtrl.signal.aborted || res.destroyed || res.writableEnded) return;
         abortUpstream();
-        spawnFfmpegRemux(finalUrl, { copyVideo: false });
+        const desiredAudioLang = String(query.lang || 'vf').toLowerCase() === 'vo' ? 'vo' : 'vf';
+        const probedStreams = await probeMediaStreams(finalUrl);
+        if (res.destroyed || res.writableEnded) return;
+        const audioStreamIndex = pickAudioStreamIndex(probedStreams, desiredAudioLang);
+        spawnFfmpegRemux(finalUrl, { copyVideo: false, audioStreamIndex });
         return;
       }
 
@@ -771,16 +805,24 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/embedded-subtitles-vtt') {
     const rawTarget = normalizeAllowedUrl(query.url);
-    const streamIdx = Number(query.stream);
-    if (!rawTarget || !Number.isInteger(streamIdx) || streamIdx < 0 || streamIdx > 64) {
+    const rawStream = typeof query.stream === 'string' ? query.stream.trim() : '';
+    const streamIdx = /^\d{1,2}$/.test(rawStream) ? Number(rawStream) : -1;
+    if (!rawTarget || streamIdx < 0 || streamIdx > 64) {
       return sendJSON(res, 400, { error: 'Paramètres de sous-titres intégrés invalides.' });
     }
     if (!HAS_FFMPEG) {
       return sendJSON(res, 503, { error: 'Extraction de sous-titres indisponible sur ce serveur.' });
     }
-    const clientIp = req.headers['x-forwarded-for']
-      ? String(req.headers['x-forwarded-for']).split(',')[0].trim()
-      : (req.socket.remoteAddress || 'local');
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Type': 'text/vtt; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Cache-Control': 'private, no-store'
+      });
+      return res.end();
+    }
+    const clientIp = getClientIp(req);
     if (!allowRemuxRequest(clientIp)) {
       res.setHeader('Retry-After', '60');
       return sendJSON(res, 429, { error: 'Trop de requêtes.' });
@@ -790,8 +832,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     const resolvedUrl = await resolveSafeRedirects(rawTarget);
+    if (res.destroyed || res.writableEnded) return;
     if (!resolvedUrl) {
       return sendJSON(res, 403, { error: 'Hôte média non autorisé.' });
+    }
+    if (activeFfmpegJobs >= MAX_CONCURRENT_FFMPEG) {
+      return sendJSON(res, 503, { error: 'Serveur occupé.' });
     }
 
     let proc;
@@ -811,13 +857,24 @@ const server = http.createServer(async (req, res) => {
 
     activeFfmpegJobs++;
     let cleaned = false;
+    let killTimer = null;
     let maxTimer = null;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
       if (maxTimer) clearTimeout(maxTimer);
       activeFfmpegJobs = Math.max(0, activeFfmpegJobs - 1);
-      try { if (proc.exitCode === null && !proc.killed) proc.kill('SIGTERM'); } catch {}
+      try {
+        if (proc.exitCode === null && !proc.killed) {
+          proc.kill('SIGTERM');
+          killTimer = setTimeout(() => {
+            try {
+              if (proc.exitCode === null) proc.kill('SIGKILL');
+            } catch {}
+          }, 3000);
+          killTimer.unref?.();
+        }
+      } catch {}
     };
     maxTimer = setTimeout(() => { cleanup(); try { res.destroy(); } catch {} }, 5 * 60 * 1000);
     maxTimer.unref?.();
@@ -830,7 +887,12 @@ const server = http.createServer(async (req, res) => {
       if (!res.headersSent) sendJSON(res, 502, { error: 'Extraction sous-titres indisponible.' });
       else try { res.destroy(); } catch {}
     });
-    proc.on('exit', () => {
+    proc.stdout.on('error', () => {
+      cleanup();
+      try { res.destroy(); } catch {}
+    });
+    proc.on('close', () => {
+      if (killTimer) clearTimeout(killTimer);
       cleanup();
       if (!res.headersSent) sendJSON(res, 502, { error: 'Piste de sous-titres illisible.' });
     });
@@ -839,7 +901,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, {
         'Content-Type': 'text/vtt; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
         'Cache-Control': 'private, no-store'
       });
       res.write(firstChunk);

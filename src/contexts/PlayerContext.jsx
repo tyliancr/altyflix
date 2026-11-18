@@ -67,7 +67,7 @@ export const PlayerProvider = ({ children }) => {
             {playerState.isOpen && playerState.content && (
                 <Suspense fallback={<div role="status" className="fixed inset-0 z-[99999] grid place-items-center bg-black"><span className="h-14 w-14 animate-spin rounded-full border-4 border-[#e50914] border-t-transparent" aria-label="Chargement du lecteur" /></div>}>
                 <VideoPlayer
-                    key={`${playerState.content?.id || playerState.content?.contentId || 'player'}-${playerState.initialSeason}-${playerState.initialEpisode}`}
+                    key={`${playerState.content?.media_type || playerState.content?.type || (playerState.content?.first_air_date || playerState.content?.number_of_seasons ? 'tv' : 'movie')}-${playerState.content?.id || playerState.content?.contentId || 'player'}-${playerState.initialSeason}-${playerState.initialEpisode}`}
                     content={playerState.content}
                     initialSeason={playerState.initialSeason}
                     initialEpisode={playerState.initialEpisode}

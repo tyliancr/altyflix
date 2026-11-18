@@ -9,6 +9,7 @@ import { usePlayer } from '../contexts/PlayerContext';
 import { addOrUpdateReview, getReviewsByContent, deleteReview } from '../services/reviewService';
 import { getMovieDetails, getSeriesDetails, getSeasonDetails, getTitleLogo, findByImdbId } from '../services/tmdb';
 import { getBackdropUrl, formatRuntime, getYear, getContentType } from '../utils/helpers';
+import { isKidSafe } from '../utils/kidsFilter';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Helmet } from 'react-helmet-async';
 import { useTranslation } from '../hooks/useTranslation';
@@ -105,7 +106,13 @@ const DetailPage = () => {
                 setContent(details);
                 setActiveTab(isSeries ? 'episodes' : 'details');
                 if (details?.number_of_seasons) {
-                    const saved = watchHistory.find(h => String(h.contentId) === String(id) || String(h.contentId) === String(resolvedTargetId));
+                    const expectedType = isSeries ? 'tv' : 'movie';
+                    const saved = watchHistory.find(h => {
+                        const matchId = String(h.contentId || h.id) === String(id) || String(h.contentId || h.id) === String(resolvedTargetId);
+                        if (!matchId) return false;
+                        const hType = h.media_type || h.type;
+                        return !hType || hType === expectedType;
+                    });
                     setSelectedSeason(saved?.season || details.seasons?.find(s => s.season_number > 0)?.season_number || 1);
                 }
                 getTitleLogo(isSeries ? 'tv' : 'movie', resolvedTargetId).then(url => {
@@ -124,25 +131,34 @@ const DetailPage = () => {
     }, [type, id]);
 
     const resolvedContentId = content?.id ? String(content.id) : String(id).replace(/^(movie|tv)-/, '');
+    const resolvedMediaType = content ? getContentType(content) : type;
 
     // Resume watch history (réinitialise resumeInfo lors d'un changement de titre sans écraser l'onglet saison choisi)
     useEffect(() => {
-        const item = watchHistory.find(h => String(h.contentId || h.id) === resolvedContentId);
+        const item = watchHistory.find(h => {
+            if (String(h.contentId || h.id) !== resolvedContentId) return false;
+            const hType = h.media_type || h.type;
+            return !hType || hType === resolvedMediaType;
+        });
         if (item?.season && item?.episode) {
             setResumeInfo({ season: item.season, episode: item.episode });
         } else {
             setResumeInfo({ season: 1, episode: 1 });
         }
-    }, [watchHistory, resolvedContentId]);
+    }, [watchHistory, resolvedContentId, resolvedMediaType]);
 
     // Synchroniser la saison initiale uniquement lors du changement de titre
     useEffect(() => {
-        const item = watchHistory.find(h => String(h.contentId || h.id) === resolvedContentId);
+        const item = watchHistory.find(h => {
+            if (String(h.contentId || h.id) !== resolvedContentId) return false;
+            const hType = h.media_type || h.type;
+            return !hType || hType === resolvedMediaType;
+        });
         if (item?.season) {
             setSelectedSeason(item.season);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [resolvedContentId]);
+    }, [resolvedContentId, resolvedMediaType]);
 
     // Load season episodes (utilise content.id numérique même si l'URL contient un IMDb ID tt...)
     useEffect(() => {
@@ -271,6 +287,21 @@ const DetailPage = () => {
     }
 
     const isTV = getContentType(content) === 'tv';
+    const isKid = Boolean(currentProfile?.isKid);
+
+    if (isKid && !isKidSafe(content)) {
+        return (
+            <div className="grid min-h-screen place-items-center bg-[#060608] px-6">
+                <EmptyState
+                    title="Contenu réservé aux profils adultes"
+                    action={<Button onClick={() => navigate('/')}>Retour au catalogue Jeunesse</Button>}
+                >
+                    Ce titre n’est pas accessible avec un profil Enfant.
+                </EmptyState>
+            </div>
+        );
+    }
+
     const title = content.title || content.name;
     const releaseDate = content.release_date || content.first_air_date;
     const cast = content.credits?.cast?.slice(0, 14) || [];
@@ -282,7 +313,7 @@ const DetailPage = () => {
         || content.videos?.results?.find(v => v.site === 'YouTube');
     const similar = (content.recommendations?.results?.length > 0
         ? content.recommendations.results
-        : content.similar?.results || []).filter(i => i.poster_path).slice(0, 14);
+        : content.similar?.results || []).filter(i => i.poster_path && (!isKid || isKidSafe(i))).slice(0, 14);
 
     const historyItem = watchHistory.find(h => {
         if (String(h.contentId || h.id) !== resolvedContentId) return false;
@@ -293,7 +324,8 @@ const DetailPage = () => {
     const isWatched = watchProgress >= 90;
     const hasProgress = watchProgress > 0 && watchProgress < 88;
     const resumesHere = hasProgress && (!isTV || selectedSeason === resumeInfo.season);
-    const inList = isInMyList(content);
+    const typedContent = { ...content, media_type: isTV ? 'tv' : 'movie' };
+    const inList = isInMyList(typedContent);
     const backdropPath = content.backdrop_path || content.poster_path;
 
     const playLabel = resumesHere
@@ -480,7 +512,7 @@ const DetailPage = () => {
                             label={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}
                             active={inList}
                             aria-pressed={inList}
-                            onClick={() => (inList ? removeFromMyList(content.id) : addToMyList(content))}
+                            onClick={() => (inList ? removeFromMyList(content.id, isTV ? 'tv' : 'movie') : addToMyList(typedContent))}
                         >
                             {inList ? (
                                 <svg className="h-5 w-5 text-[#46d369]" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>

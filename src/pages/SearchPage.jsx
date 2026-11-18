@@ -59,6 +59,22 @@ const SearchPage = () => {
 
     const userClearedRef = useRef(false);
 
+    // En mode Enfant, ne jamais laisser le filtre « Personnes » actif
+    useEffect(() => {
+        if (currentProfile?.isKid && filter === 'person') {
+            setFilter('all');
+        }
+    }, [currentProfile?.isKid, filter]);
+
+    const handleQueryInputChange = useCallback((nextValue) => {
+        setQuery(prev => {
+            if (prev.trim() && !String(nextValue || '').trim()) {
+                userClearedRef.current = true;
+            }
+            return nextValue;
+        });
+    }, []);
+
     // Sync URL search parameters without wiping an incoming navbar / history query
     useEffect(() => {
         const currentQ = searchParams.get('q') || '';
@@ -212,6 +228,19 @@ const SearchPage = () => {
             }
         }
     };
+
+    // Fermer la recherche vocale avec la touche Échap
+    useEffect(() => {
+        if (!isListening) return undefined;
+        const onKey = (e) => {
+            if (e.key === 'Escape') {
+                try { recognitionRef.current?.stop(); } catch { /* noop */ }
+                setIsListening(false);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [isListening]);
 
     // Cycle through placeholder texts
     useEffect(() => {
@@ -525,7 +554,7 @@ const SearchPage = () => {
                     </h1>
                     <SearchInputBar
                         query={query}
-                        setQuery={setQuery}
+                        setQuery={handleQueryInputChange}
                         inputRef={inputRef}
                         debounceRef={debounceRef}
                         setDebouncedQuery={setDebouncedQuery}
@@ -661,7 +690,14 @@ const SearchPage = () => {
 
                         {!loading && showGenreSection && (
                             <motion.section key="genre" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                                <SectionTitle>{GENRE_CHIPS.find(g => g.id === selectedGenre)?.label}</SectionTitle>
+                                <SectionTitle>
+                                    {(() => {
+                                        const chip = GENRE_CHIPS.find(g => g.id === selectedGenre);
+                                        if (!chip) return null;
+                                        const translated = t(`search.genres.${chip.labelKey}`);
+                                        return translated && !translated.startsWith('search.genres.') ? translated : chip.fallback;
+                                    })()}
+                                </SectionTitle>
                                 <PosterGrid>
                                     {genreResults.map(item => (
                                         <PosterCard key={`${getContentType(item)}_${item.id}`} item={item} type={getContentType(item)} />

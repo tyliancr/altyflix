@@ -39,6 +39,28 @@ function getEnv(name, fallback = '') {
   return process.env[name] || fallback;
 }
 
+export function getStreamBackendUrl(rawInput = getEnv('STREAM_BACKEND_URL', '')) {
+  const raw = String(rawInput || '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:') return '';
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) return '';
+    if (parsed.pathname && parsed.pathname !== '/') return '';
+    if (parsed.port) {
+      const portNum = Number(parsed.port);
+      if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) return '';
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return '';
+    if (host.includes(':') || /^[\d.]+$/.test(host) || /^0x[\da-f]+$/i.test(host)) return '';
+    if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(host)) return '';
+    return parsed.origin;
+  } catch {
+    return '';
+  }
+}
+
 function getCorsOrigin(req) {
   const origin = req?.headers?.get?.('origin') || '';
   if (!origin) return '*';
@@ -143,8 +165,7 @@ export default async function handler(req) {
     const userProvider = req.headers.get('x-debrid-provider') || SERVER_DEBRID_PROVIDER;
     const userToken = req.headers.get('x-debrid-token') || SERVER_DEBRID_TOKEN;
     const userFrenchioUrl = req.headers.get('x-frenchio-url') || query.frenchioUrl || getEnv('FRENCHIO_URL');
-    const rawStreamBackend = getEnv('STREAM_BACKEND_URL').trim().replace(/\/+$/, '');
-    const streamBackendUrl = /^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(rawStreamBackend) ? rawStreamBackend : '';
+    const streamBackendUrl = getStreamBackendUrl();
     const hasRemoteFfmpeg = Boolean(streamBackendUrl);
 
     try {
@@ -181,8 +202,13 @@ export default async function handler(req) {
     if (!targetUrl) {
       return jsonResponse({ success: false, status: 'error', error: 'Paramètre url manquant.' }, 400);
     }
+    const streamBackendUrl = getStreamBackendUrl();
+    const hasRemoteFfmpeg = Boolean(streamBackendUrl);
     try {
-      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: false });
+      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: hasRemoteFfmpeg });
+      if (hasRemoteFfmpeg && typeof statusData?.playbackUrl === 'string' && statusData.playbackUrl.startsWith('/api/video-stream')) {
+        statusData.playbackUrl = `${streamBackendUrl}${statusData.playbackUrl}`;
+      }
       const rawStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
       const httpStatus = (rawStatus === 200 || (rawStatus >= 400 && rawStatus <= 599)) ? rawStatus : 502;
       return jsonResponse(statusData, httpStatus, { 'Cache-Control': 'no-store' });
@@ -196,19 +222,23 @@ export default async function handler(req) {
     }
   }
 
-  // 5. Redirection sécurisée pour /api/video-stream (hôtes CDN/Debrid strictement allowlistés + URL normalisée sans CRLF)
+  // 5. Redirection sécurisée pour /api/video-stream (relai STREAM_BACKEND_URL si configuré, sinon CDN allowlisté)
   if (pathname === '/api/video-stream') {
     const safeTargetUrl = normalizeAllowedUrl(query.url);
     if (!safeTargetUrl) {
       return jsonResponse({ error: 'URL vidéo non autorisée.' }, 400);
     }
+    const streamBackendUrl = getStreamBackendUrl();
+    const redirectLocation = streamBackendUrl
+      ? `${streamBackendUrl}/api/video-stream${parsedUrl.search}`
+      : safeTargetUrl;
     return new Response(null, {
       status: 302,
       headers: {
         ...SECURITY_HEADERS,
         'Access-Control-Allow-Origin': corsOrigin,
         'Vary': 'Origin',
-        Location: safeTargetUrl,
+        Location: redirectLocation,
         'Cache-Control': 'no-store'
       }
     });
@@ -282,14 +312,14 @@ export default async function handler(req) {
 
   // 6b. Sous-titres intégrés MKV (relai vers STREAM_BACKEND_URL si configuré, sinon liste vide)
   if (pathname === '/api/embedded-subtitles') {
-    const rawStreamBackend = getEnv('STREAM_BACKEND_URL').trim().replace(/\/+$/, '');
-    const streamBackendUrl = /^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(rawStreamBackend) ? rawStreamBackend : '';
+    const streamBackendUrl = getStreamBackendUrl();
     const safeUrl = normalizeAllowedUrl(query.url);
     if (!streamBackendUrl || !safeUrl) {
       return jsonResponse({ success: true, subtitles: [] });
     }
     try {
       const r = await fetch(`${streamBackendUrl}/api/embedded-subtitles?url=${encodeURIComponent(safeUrl)}`, {
+        redirect: 'error',
         signal: AbortSignal.timeout(4000)
       });
       if (!r.ok) return jsonResponse({ success: true, subtitles: [] });
@@ -297,7 +327,7 @@ export default async function handler(req) {
       const subs = Array.isArray(data?.subtitles)
         ? data.subtitles.map(s => ({
             ...s,
-            url: (typeof s.url === 'string' && s.url.startsWith('/')) ? `${streamBackendUrl}${s.url}` : s.url
+            url: (typeof s.url === 'string' && s.url.startsWith('/api/embedded-subtitles-vtt?')) ? `${streamBackendUrl}${s.url}` : s.url
           }))
         : [];
       return jsonResponse({ success: true, subtitles: subs });

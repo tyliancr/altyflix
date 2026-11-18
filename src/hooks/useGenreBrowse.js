@@ -73,7 +73,7 @@ export default function useGenreBrowse({ genres, loadShelves, fetchGenrePage, ge
             }
         })();
         return () => { active = false; };
-    }, [selectedGenre, attempt]);
+    }, [selectedGenre, attempt, loadShelves, fetchGenrePage]);
 
     const loadMore = useCallback(async () => {
         if (!selectedGenre || loadingMore || page >= totalPages) return;

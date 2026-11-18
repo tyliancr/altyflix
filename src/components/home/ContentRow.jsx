@@ -98,7 +98,7 @@ const ContentRow = memo(({ title, subtitle, items = [], isTV = false, showMatchS
 
                         return (
                             <div
-                                key={item.id || index}
+                                key={`${item.media_type || item.type || (isTV ? 'tv' : 'movie')}-${item.id || item.contentId || index}`}
                                 className={`flex-none flex items-end relative ${isExpanded ? 'z-[200]' : 'z-[1]'}`}
                             >
                                 {ranked && (

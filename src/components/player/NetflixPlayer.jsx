@@ -292,6 +292,7 @@ export default function NetflixPlayer({
                 setActiveStream(prev => ({
                     ...(prev || {}),
                     url: result.playbackUrl,
+                    directUrl: result.directUrl || (typeof result.playbackUrl === 'string' && /^https?:\/\//i.test(result.playbackUrl) ? result.playbackUrl : prev?.directUrl),
                     isAvi: Boolean(prev?.isAvi || result.isAvi),
                     isTranscoded: Boolean(prev?.isTranscoded || result.isTranscoded),
                     isDownloading: false,
@@ -401,6 +402,7 @@ export default function NetflixPlayer({
         loadedUrlRef.current = null;
         transcodeOffsetRef.current = 0;
         setActiveStream(nextStream);
+        setCurrentAudioLang(nextStream.isFrench ? 'vf' : 'vo');
         const isUnverifiedTorrentio = typeof nextStream.url === 'string' && nextStream.url.includes('torrentio.strem.fun/resolve/');
         if (nextStream.isDownloading || isUnverifiedTorrentio) {
             setStreamState('downloading');
@@ -470,6 +472,7 @@ export default function NetflixPlayer({
         const streamUrl = activeStream?.url;
         if (streamState !== 'playing' || !streamUrl || !videoRef.current) return;
         if (loadedUrlRef.current === streamUrl) return;
+        skipNextCleanupSaveRef.current = false;
         loadedUrlRef.current = streamUrl;
 
         const video = videoRef.current;
@@ -482,7 +485,12 @@ export default function NetflixPlayer({
             startPos = Math.round(currentTimeRef.current);
         } else {
             const historyList = watchHistoryRef.current || [];
-            const saved = historyList.find(h => String(h.contentId || h.id) === String(id));
+            const expectedType = isTv ? 'tv' : 'movie';
+            const saved = historyList.find(h => {
+                if (String(h.contentId || h.id) !== String(id)) return false;
+                const hType = h.media_type || h.type;
+                return !hType || hType === expectedType;
+            });
             if (saved) {
                 const isMatching = !isTv || (Number(saved.season || 1) === Number(season) && Number(saved.episode || 1) === Number(episode));
                 if (isMatching && saved.progress < 90 && saved.lastWatchedPosition > 5) {
@@ -671,14 +679,20 @@ export default function NetflixPlayer({
     // Réinitialisation propre lors d'un changement d'épisode (sauvegarde l'ancien, purge flux & sous-titres)
     const resetEpisodeState = useCallback(() => {
         saveCurrentProgress();
-        skipNextCleanupSaveRef.current = true;
+        skipNextCleanupSaveRef.current = Boolean(loadedUrlRef.current);
         resolvedKeyRef.current = '';
         currentTimeRef.current = 0;
         transcodeOffsetRef.current = 0;
         loadedUrlRef.current = null;
+        activeSubRequestIdRef.current++;
+        if (subAbortRef.current) {
+            try { subAbortRef.current.abort(); } catch { /* ignore */ }
+            subAbortRef.current = null;
+        }
         cuesRef.current = [];
         autoSubAppliedKeyRef.current = '';
         userPickedSubRef.current = false;
+        selectedSubtitleIdRef.current = 'off';
         setCurrentTime(0);
         setDuration(0);
         setBuffered(0);
@@ -745,7 +759,8 @@ export default function NetflixPlayer({
     // le réactive, sans afficher de bandeau.
     useEffect(() => {
         if (!isAutoplayMuted) return undefined;
-        const unmute = () => {
+        const unmute = (e) => {
+            if (e?.target?.closest?.('[data-mute-button]')) return;
             const video = videoRef.current;
             if (video) {
                 video.muted = false;
@@ -755,7 +770,7 @@ export default function NetflixPlayer({
             setIsMuted(false);
         };
         const events = ['pointerdown', 'keydown', 'touchstart'];
-        events.forEach(type => window.addEventListener(type, unmute, { once: true, capture: true }));
+        events.forEach(type => window.addEventListener(type, unmute, { capture: true }));
         return () => events.forEach(type => window.removeEventListener(type, unmute, { capture: true }));
     }, [isAutoplayMuted, volume]);
 
@@ -989,15 +1004,14 @@ export default function NetflixPlayer({
             try { video.pause(); } catch { /* ignore */ }
         }
         saveCurrentProgress();
-        skipNextCleanupSaveRef.current = true;
+        skipNextCleanupSaveRef.current = Boolean(loadedUrlRef.current);
         loadedUrlRef.current = null;
         transcodeOffsetRef.current = 0;
-        setActiveStream(st);
-        if (st.isFrench) {
-            setCurrentAudioLang('vf');
-        } else if (hasTrueVf && !st.isFrench) {
-            setCurrentAudioLang('vo');
+        if (Boolean(st.isFrench) !== Boolean(activeStream?.isFrench)) {
+            userPickedSubRef.current = false;
         }
+        setActiveStream(st);
+        setCurrentAudioLang(st.isFrench ? 'vf' : 'vo');
 
         const isUnverifiedTorrentio = typeof st.url === 'string' && st.url.includes('torrentio.strem.fun/resolve/');
         if (st.isDownloading || isUnverifiedTorrentio) {
@@ -1059,6 +1073,8 @@ export default function NetflixPlayer({
 
         setSelectedSubtitleId(subId);
         selectedSubtitleIdRef.current = subId;
+        cuesRef.current = [];
+        setCurrentSubtitleLines([]);
         const video = videoRef.current;
         if (!video) return;
 
@@ -1070,8 +1086,6 @@ export default function NetflixPlayer({
         oldTracks.forEach(t => video.removeChild(t));
 
         if (subId === 'off') {
-            cuesRef.current = [];
-            setCurrentSubtitleLines([]);
             return;
         }
 
@@ -1118,10 +1132,11 @@ export default function NetflixPlayer({
     // Raccourci bascule rapide sous-titres (Touche C ou bouton direct)
     const toggleSubtitles = useCallback(() => {
         const subs = availableSubtitlesRef.current || [];
+        if (selectedSubtitleIdRef.current === 'off' && subs.length === 0) return;
         userPickedSubRef.current = true;
         if (selectedSubtitleIdRef.current !== 'off') {
             handleSelectSubtitle('off');
-        } else if (subs.length > 0) {
+        } else {
             const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
             const target = frSub || subs[0];
             handleSelectSubtitle(target.id, subs);
@@ -1138,12 +1153,14 @@ export default function NetflixPlayer({
     }, [currentProfile?.id, updateProfile, subsPrefKey]);
 
     // Chargement automatique des sous-titres (MKV intégrés + OpenSubtitles) & Auto-VOSTFR façon Netflix
+    const hasActiveStream = Boolean(activeStream);
     const activeStreamFilename = activeStream?.filename || '';
-    const activeStreamRawUrl = activeStream?.directUrl || activeStream?.originalUrl || '';
+    const activeStreamRawUrl = activeStream?.directUrl || activeStream?.originalUrl || (typeof activeStream?.url === 'string' && /^https?:\/\//i.test(activeStream.url) ? activeStream.url : '');
     const activeStreamIsVo = Boolean(activeStream && !activeStream.isFrench);
+    const streamMode = hasActiveStream ? (activeStreamIsVo ? 'vo' : 'vf') : 'pending';
     useEffect(() => {
         let active = true;
-        const currentMediaKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}-${activeStreamFilename}-${activeStreamIsVo ? 'vo' : 'vf'}`;
+        const currentMediaKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}-${activeStreamFilename}-${activeStreamRawUrl}-${streamMode}`;
         if (!id) return;
 
         const imdbId = contentRef.current?.external_ids?.imdb_id || contentRef.current?.imdb_id || resolvedImdbIdRef.current;
@@ -1158,18 +1175,37 @@ export default function NetflixPlayer({
             streamUrl: activeStreamRawUrl
         }).then(subs => {
             if (!active || !Array.isArray(subs)) return;
+            const prevSubs = availableSubtitlesRef.current || [];
             setAvailableSubtitles(subs);
             availableSubtitlesRef.current = subs;
+
+            // Si la piste active n'existe plus dans la nouvelle liste (ex: changement de MKV), basculer proprement
+            const currentSelectedId = selectedSubtitleIdRef.current;
+            if (currentSelectedId !== 'off' && !subs.some(s => s.id === currentSelectedId)) {
+                const prevSub = prevSubs.find(s => s.id === currentSelectedId);
+                const replacement = prevSub
+                    ? (subs.find(s => s.lang === prevSub.lang && Boolean(s.forced) === Boolean(prevSub.forced)) || subs.find(s => s.lang === prevSub.lang))
+                    : null;
+                if (replacement) handleSelectSubtitle(replacement.id, subs);
+                else handleSelectSubtitle('off');
+            }
+
+            // Attendre que la source active soit résolue avant d'appliquer et verrouiller Auto-VOSTFR
+            if (!hasActiveStream) return;
 
             // Auto-VOSTFR façon Netflix :
             // - En VO (ou si « Toujours activer » est coché) : activer automatiquement les sous-titres FR complets
             // - En VF : désactivés par défaut (sauf sous-titres FR forcés intégrés MKV s'il y en a)
             if (autoSubAppliedKeyRef.current !== currentMediaKey && !userPickedSubRef.current) {
-                autoSubAppliedKeyRef.current = currentMediaKey;
-                if ((activeStreamIsVo || subtitlesAlwaysOnRef.current) && subs.length > 0) {
-                    const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr') || subs[0];
-                    if (frSub) handleSelectSubtitle(frSub.id, subs);
+                const wantAutoSubs = activeStreamIsVo || subtitlesAlwaysOnRef.current;
+                if (wantAutoSubs) {
+                    if (subs.length > 0) {
+                        autoSubAppliedKeyRef.current = currentMediaKey;
+                        const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr') || subs[0];
+                        if (frSub) handleSelectSubtitle(frSub.id, subs);
+                    }
                 } else {
+                    autoSubAppliedKeyRef.current = currentMediaKey;
                     const forcedFr = subs.find(s => s.lang === 'fr' && s.forced && s.embedded);
                     if (forcedFr) handleSelectSubtitle(forcedFr.id, subs);
                     else if (selectedSubtitleIdRef.current !== 'off') handleSelectSubtitle('off');
@@ -1178,15 +1214,15 @@ export default function NetflixPlayer({
         }).catch(() => {});
 
         return () => { active = false; };
-    }, [id, isTv, season, episode, activeStreamFilename, activeStreamRawUrl, activeStreamIsVo, handleSelectSubtitle]);
+    }, [id, isTv, season, episode, hasActiveStream, activeStreamFilename, activeStreamRawUrl, activeStreamIsVo, streamMode, handleSelectSubtitle]);
 
     // Sélection de la langue audio (VF vs VO) avec bascule Auto-VOSTFR immédiate
     const handleSelectAudioLang = (lang) => {
-        setCurrentAudioLang(lang);
-        userPickedSubRef.current = false;
         const subs = availableSubtitlesRef.current || [];
 
         if (lang === 'vf') {
+            setCurrentAudioLang('vf');
+            userPickedSubRef.current = false;
             if (!subtitlesAlwaysOnRef.current) {
                 const forcedFr = subs.find(s => s.lang === 'fr' && s.forced && s.embedded);
                 handleSelectSubtitle(forcedFr ? forcedFr.id : 'off', subs);
@@ -1201,15 +1237,17 @@ export default function NetflixPlayer({
                 handleSelectStream(vfStream);
             }
         } else {
+            const voStream =
+                (availableStreams || []).find(s => !s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => !s.isFrench && !s.hasUnsupportedAudio) ||
+                (availableStreams || []).find(s => !s.isFrench && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => !s.isFrench) ||
+                null;
+            if (hasTrueVf && !voStream) return;
+            setCurrentAudioLang('vo');
+            userPickedSubRef.current = false;
             const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr');
             if (frSub) handleSelectSubtitle(frSub.id, subs);
-            if (!availableStreams || availableStreams.length <= 1) return;
-            const voStream =
-                availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-                availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio) ||
-                availableStreams.find(s => !s.isFrench && s.tierKey === '1080p') ||
-                availableStreams.find(s => !s.isFrench) ||
-                availableStreams[0];
             if (voStream && voStream.url !== activeStream?.url) {
                 handleSelectStream(voStream);
             }
@@ -1656,7 +1694,7 @@ export default function NetflixPlayer({
                                             <NetflixForward10Icon className="h-8 w-8" />
                                         </button>
                                         <div className="group/vol flex items-center">
-                                            <button type="button" onClick={toggleMute} aria-label={isMuted ? 'Activer le son' : 'Couper le son'} title="Son (M)" className={iconBtn}>
+                                            <button type="button" data-mute-button="" onClick={toggleMute} aria-label={isMuted ? 'Activer le son' : 'Couper le son'} title="Son (M)" className={iconBtn}>
                                                 <VolumeIcon className="h-8 w-8" />
                                             </button>
                                             <input

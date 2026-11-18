@@ -286,7 +286,7 @@ const UpcomingPage = () => {
                     <div className="skeleton mb-10 h-12 w-72" />
                     <GridSkeleton count={14} />
                 </div>
-            ) : allItems.length === 0 ? (
+            ) : visibleItems.length === 0 ? (
                 <div className="px-6 pt-40">
                     <EmptyState
                         title="Aucune sortie prévue pour le moment"
@@ -313,7 +313,7 @@ const UpcomingPage = () => {
                             value={activeFilter}
                             onChange={setActiveFilter}
                             options={[
-                                { id: 'all', label: 'Tout', count: allItems.length },
+                                { id: 'all', label: 'Tout', count: visibleItems.length },
                                 { id: 'movies', label: 'Films', count: movies.length },
                                 { id: 'series', label: 'Nouvelles séries', count: newSeries.length },
                                 { id: 'returning', label: 'Retours', count: returningSeries.length },

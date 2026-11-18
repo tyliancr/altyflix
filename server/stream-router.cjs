@@ -45,7 +45,7 @@ function createRouter(providers, check = probe, timeout = 2200) {
               if(await check(source,p.hosts,signal)) sources.push(source);
               break;
             } catch {
-              if(attempt===0 && !signal.aborted) await delay(80,null,{signal});
+              if(attempt===0 && !signal.aborted) await delay(80,null,{signal}).catch(()=>{});
             }
           }
         }

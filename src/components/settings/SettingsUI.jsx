@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Icon from '../ui/Icons';
 
@@ -125,45 +126,55 @@ export const Toast = ({ message }) => {
 };
 
 /* ─── Confirmation dialog ──────────────────────────────────────── */
-export const ConfirmModal = ({ title, message, onConfirm, onCancel, confirmLabel }) => (
-    <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        role="alertdialog"
-        aria-modal="true"
-        className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
-        onClick={onCancel}
-    >
+export const ConfirmModal = ({ title, message, onConfirm, onCancel, confirmLabel }) => {
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.key === 'Escape') onCancel?.();
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onCancel]);
+
+    return (
         <motion.div
-            initial={{ scale: 0.9, y: 16, opacity: 0 }}
-            animate={{ scale: 1, y: 0, opacity: 1 }}
-            exit={{ scale: 0.94, y: 8, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-            className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0e0e14] p-7 text-center shadow-[0_30px_80px_rgba(0,0,0,0.8)]"
-            onClick={e => e.stopPropagation()}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            role="alertdialog"
+            aria-modal="true"
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
+            onClick={onCancel}
         >
-            <span className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-full bg-[#E50914]/12 text-[#ff5a63]">
-                <Icon name="alert" className="h-6 w-6" />
-            </span>
-            {title && <h2 className="font-display text-xl font-bold tracking-tight text-white">{title}</h2>}
-            <p className={`leading-relaxed ${title ? 'mt-2 text-sm text-white/55' : 'text-[15px] font-semibold text-white'}`}>{message}</p>
-            <div className="mt-7 flex gap-3">
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    className="h-11 flex-1 rounded-xl border border-white/15 bg-white/[0.06] text-sm font-semibold text-white/80 transition-colors hover:bg-white/15 hover:text-white"
-                >
-                    Annuler
-                </button>
-                <button
-                    type="button"
-                    onClick={onConfirm}
-                    className="h-11 flex-1 rounded-xl bg-[#E50914] text-sm font-bold text-white transition-colors hover:bg-[#f6121d]"
-                >
-                    {confirmLabel || 'Confirmer'}
-                </button>
-            </div>
+            <motion.div
+                initial={{ scale: 0.9, y: 16, opacity: 0 }}
+                animate={{ scale: 1, y: 0, opacity: 1 }}
+                exit={{ scale: 0.94, y: 8, opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 320, damping: 26 }}
+                className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0e0e14] p-7 text-center shadow-[0_30px_80px_rgba(0,0,0,0.8)]"
+                onClick={e => e.stopPropagation()}
+            >
+                <span className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-full bg-[#E50914]/12 text-[#ff5a63]">
+                    <Icon name="alert" className="h-6 w-6" />
+                </span>
+                {title && <h2 className="font-display text-xl font-bold tracking-tight text-white">{title}</h2>}
+                <p className={`leading-relaxed ${title ? 'mt-2 text-sm text-white/55' : 'text-[15px] font-semibold text-white'}`}>{message}</p>
+                <div className="mt-7 flex gap-3">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="h-11 flex-1 rounded-xl border border-white/15 bg-white/[0.06] text-sm font-semibold text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+                    >
+                        Annuler
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onConfirm}
+                        className="h-11 flex-1 rounded-xl bg-[#E50914] text-sm font-bold text-white transition-colors hover:bg-[#f6121d]"
+                    >
+                        {confirmLabel || 'Confirmer'}
+                    </button>
+                </div>
+            </motion.div>
         </motion.div>
-    </motion.div>
-);
+    );
+};

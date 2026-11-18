@@ -11,8 +11,8 @@ export const GENRE_CHIPS = [
     { id: 53, labelKey: 'thriller', fallback: 'Thriller', type: 'movie' },
     { id: 10751, labelKey: 'family', fallback: 'Famille', type: 'movie', kidSafe: true },
     { id: 99, labelKey: 'documentary', fallback: 'Documentaire', type: 'movie' },
-    { id: 10765, labelKey: 'scifiTv', fallback: 'Sci-Fi Série', type: 'tv' },
-    { id: 10759, labelKey: 'actionTv', fallback: 'Action Série', type: 'tv' },
+    { id: 10765, labelKey: 'scifiSeries', fallback: 'Sci-Fi Série', type: 'tv' },
+    { id: 10759, labelKey: 'actionSeries', fallback: 'Action Série', type: 'tv' },
 ];
 
 export const SEARCH_TYPES = [

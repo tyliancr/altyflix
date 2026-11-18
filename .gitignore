@@ -29,10 +29,6 @@ dist-ssr
 .env.development.local
 .env.test.local
 .env.production.local
-discord-config.json
-scripts/bot-config.json
-scripts/user-data.json
-scripts/posted-cache.json
 *.zip
 
 # Netlify local files

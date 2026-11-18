@@ -4,7 +4,7 @@ Cette livraison contient le code source, une compilation reproductible avec `npm
 
 ## Mise en ligne sur Netlify
 
-1. Renouveler la clé TMDB. Si les services Discord sont utilisés, renouveler aussi le jeton du bot et le webhook qui étaient écrits dans les sources. Les anciens identifiants restent dans le dossier d’origine et peuvent aussi subsister dans d’anciennes versions publiées.
+1. Renouveler la clé TMDB. Les anciens identifiants restent dans le dossier d’origine et peuvent aussi subsister dans d’anciennes versions publiées.
 2. Dans les variables d’environnement Netlify, ajouter `TMDB_API_KEY` avec la nouvelle clé, accessible aux Functions. Supprimer `VITE_TMDB_API_KEY` : une variable VITE est destinée au navigateur.
 3. Vérifier les identifiants publics Firebase dans `netlify.toml`. Ils ont été conservés pour le projet existant. Ce ne sont pas des secrets administrateur. Autoriser le domaine final dans Firebase Authentication et activer les fournisseurs Email/Mot de passe et Google utilisés par le site.
 4. Sauvegarder les données Firebase avant de publier les règles. La collection historique `progress` doit porter `userId`, `profileId` et `contentId` correctement. Les documents anciens sans `userId` ne sont plus accessibles par une simple correspondance de préfixe. Une migration administrative peut être nécessaire ; aucune donnée de production n’a été modifiée ici.
@@ -59,10 +59,6 @@ node verification/node_modules/firebase-tools/lib/bin/firebase.js emulators:exec
 ```
 
 Ce test utilise exclusivement un projet `demo-` et des comptes fictifs. Ne remplacer pas cet identifiant par le projet de production. Le dossier `verification` n’est pas publié dans `dist`.
-
-## Services Discord optionnels
-
-Les scripts Discord sont conservés dans une archive d’annexes distincte. Ils ne sont pas nécessaires au fonctionnement du site. Ils utilisent désormais `DISCORD_TOKEN`, `DISCORD_WEBHOOK_URL` et `TMDB_API_KEY` fournis par l’hébergement du bot. Ne stocker aucun de ces secrets dans les fichiers JSON. Aucun message Discord n’a été envoyé pendant les vérifications.
 
 ## Retour arrière
 

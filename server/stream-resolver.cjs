@@ -203,7 +203,7 @@ function parseStreamDetails(stream) {
   const hasMp3 = /\bmp3\b/i.test(fullText);
   const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
-  const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx)\b/i.test(fullText);
+  const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st)\b/i.test(fullText);
   const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
 
   // Son garanti dans le navigateur : AAC / MP3 / Opus / FLAC ou conteneur MP4 web sans codec Dolby exclusif
@@ -316,11 +316,11 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
 
     // 4. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
     if (preferVo) {
-      if (!st.isFrench) score += 15000;
+      if (!st.isFrench) score += 130000;
       else score += 500;
     } else {
-      if (st.isFrench) score += 15000;
-      else if (st.isVostfr) score += 500;
+      if (st.isFrench) score += 130000;
+      else if (st.isVostfr) score += 15000;
     }
 
     // 5. Codec et format vidéo : H.264 universellement compatible web vs H.265/HEVC (peut échouer sans extension)
@@ -956,6 +956,9 @@ async function resolveStreamsServer({
 
   try {
     // Toutes les sources sont interrogées EN PARALLÈLE pour une latence minimale (< 1s)
+    const optionsPriorityFr = `providers=${ALL_PROVIDERS}|sort=qualitysize|foreign_lang=french|${provider}=${encodeURIComponent(token)}`;
+    const endpointPriorityFr = `https://torrentio.strem.fun/${optionsPriorityFr}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
+
     const optionsVf = `providers=${ALL_PROVIDERS}|sort=qualitysize|language=french|${provider}=${encodeURIComponent(token)}`;
     const endpointVf = `https://torrentio.strem.fun/${optionsVf}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 
@@ -1015,16 +1018,18 @@ async function resolveStreamsServer({
       }
     };
 
-    const [vfStreams, globalStreams, frenchioStreams] = await Promise.all([
+    const [priorityFrStreams, vfStreams, globalStreams, frenchioStreams, mylistStreams] = await Promise.all([
+      fetchTorrentio(endpointPriorityFr, 'FR Priority'),
       fetchTorrentio(endpointVf, 'VF'),
       fetchTorrentio(endpointGlobal, 'Global'),
-      fetchFrenchio()
+      fetchFrenchio(),
+      fetchMylist()
     ]);
 
     // Fusion avec déduplication stricte par URL
     const seenUrls = new Set();
     const rawStreams = [];
-    for (const s of [...frenchioStreams, ...vfStreams, ...globalStreams]) {
+    for (const s of [...(mylistStreams || []), ...priorityFrStreams, ...frenchioStreams, ...vfStreams, ...globalStreams]) {
       if (s && s.url && !seenUrls.has(s.url)) {
         seenUrls.add(s.url);
         rawStreams.push(s);
@@ -1169,17 +1174,21 @@ async function resolveStreamsServer({
       const pickBestReady = (list) => {
         if (!supportsAc3) {
           // Sur navigateur sans décodeur AC3 natif (ex. Google Chrome sur Windows) :
-          // Priorité absolue aux flux avec son garanti (AAC/Web-safe), puis VO avec sous-titres FR
+          // Priorité absolue aux flux VF avec son garanti (AAC/Web-safe)
           return list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
                  list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                  list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
                  list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
+                 // Si aucun flux VF AAC n'existe, conserver impérativement la VF demandée
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+                 // Seulement si aucune VF n'existe, bascule sur VO avec son web
                  list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
                  list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                  list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
                  list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
                  list.find(s => isPlayableFormat(s)) ||
                  list[0];
         }

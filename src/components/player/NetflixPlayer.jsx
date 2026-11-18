@@ -1467,9 +1467,36 @@ export default function NetflixPlayer({
         const key = `${id}-${season}-${episode}`;
         if (audioFallbackDoneRef.current === key) return;
         audioFallbackDoneRef.current = key;
-        const safe = (availableStreams || []).find(s => !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream.isFrench))
-            || (availableStreams || []).find(s => !s.hasUnsupportedAudio);
+        const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream.isFrench))
+            || (!activeStream.isFrench ? (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio) : null);
         if (safe) handleSelectStreamRef.current(safe);
+    }, [streamState, isAc3Supported, activeStream, availableStreams, id, season, episode]);
+
+    // Détection en temps réel du décodage audio : si la vidéo tourne depuis 2 s mais qu'aucun octet audio n'est décodé (ex. Chrome sur AC3/DTS non étiqueté),
+    // bascule automatique et transparente vers une source au son garanti dans la même langue.
+    useEffect(() => {
+        if (streamState !== 'playing' || isAc3Supported) return undefined;
+        const video = videoRef.current;
+        if (!video) return undefined;
+
+        const key = `${id}-${season}-${episode}-audiocheck`;
+        if (audioFallbackDoneRef.current === key) return undefined;
+
+        const checkAudio = () => {
+            if (!video || video.paused || video.muted || (video.currentTime || 0) < 2) return;
+            const isSilentDecode = typeof video.webkitAudioDecodedByteCount === 'number' && video.webkitAudioDecodedByteCount === 0;
+            const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
+            if (isSilentDecode || isMozSilent) {
+                audioFallbackDoneRef.current = key;
+                const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream?.isFrench));
+                if (safe) {
+                    handleSelectStreamRef.current(safe);
+                }
+            }
+        };
+
+        const timer = setInterval(checkAudio, 1500);
+        return () => clearInterval(timer);
     }, [streamState, isAc3Supported, activeStream, availableStreams, id, season, episode]);
 
     // Contrôles masqués : aucun bouton invisible ne garde le focus de la télécommande
@@ -1928,7 +1955,7 @@ export default function NetflixPlayer({
                                 onClick={() => { handleClose(); navigate('/settings'); }}
                                 className="rounded bg-[#E50914] px-6 py-2.5 text-sm font-bold text-white hover:bg-[#b80710]"
                             >
-                                Configurer Debrid
+                                Paramètres de lecture
                             </button>
                         )}
                         <button

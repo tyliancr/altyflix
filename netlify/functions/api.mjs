@@ -168,12 +168,13 @@ export default async function handler(req) {
 
   // 3. Résolution de flux sécurisée (TorBox / Torrentio / Cloud TorBox)
   if (pathname === '/api/stream-resolve') {
-    const { id, imdbId, type = 'movie', season = 1, episode = 1, lang = 'vf', title = '' } = query;
+    const { id, imdbId, type = 'movie', season = 1, episode = 1, lang = 'vf', title = '', clientAc3 } = query;
     const userProvider = req.headers.get('x-debrid-provider') || SERVER_DEBRID_PROVIDER;
     const userToken = req.headers.get('x-debrid-token') || SERVER_DEBRID_TOKEN;
     const userFrenchioUrl = req.headers.get('x-frenchio-url') || query.frenchioUrl || getEnv('FRENCHIO_URL');
     const streamBackendUrl = getStreamBackendUrl();
     const hasRemoteFfmpeg = Boolean(streamBackendUrl);
+    const supportsClientAc3 = clientAc3 === undefined ? true : (clientAc3 === '1' || clientAc3 === 'true');
 
     try {
       const result = await resolveStreamsServer({
@@ -190,7 +191,8 @@ export default async function handler(req) {
         enableAudioRemux: hasRemoteFfmpeg,
         enableAviTranscode: hasRemoteFfmpeg,
         videoStreamBaseUrl: streamBackendUrl,
-        tmdbApiKey: TMDB_API_KEY
+        tmdbApiKey: TMDB_API_KEY,
+        clientAc3: supportsClientAc3
       });
       return jsonResponse(result, 200, { 'Cache-Control': 'no-store' });
     } catch (err) {

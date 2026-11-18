@@ -122,7 +122,7 @@ export default function NetflixPlayer({
     const [selectedSubtitleId, setSelectedSubtitleId] = useState('off');
     const [currentAudioLang, setCurrentAudioLang] = useState('vf');
     const [centerAction, setCenterAction] = useState(null); // 'play' | 'pause' | null
-    const [isAutoplayMuted, setIsAutoplayMuted] = useState(false);
+    const autoplayMutedRef = useRef(false);
     const isAc3Supported = useMemo(() => canBrowserDecodeAc3(), []);
     // Pistes Dolby AC3/E-AC3/DTS que l'appareil ne sait pas décoder : on bascule tout seul
     // (une seule fois par épisode) sur une source au son compatible, sans aucun message.
@@ -162,6 +162,7 @@ export default function NetflixPlayer({
     activeStreamRef.current = activeStream;
     const isMutedRef = useRef(isMuted);
     isMutedRef.current = isMuted;
+    const userMutedRef = useRef(false);
     const playbackRateRef = useRef(playbackRate);
     playbackRateRef.current = playbackRate;
     const resolvedImdbIdRef = useRef('');
@@ -556,8 +557,8 @@ export default function NetflixPlayer({
             callbacks: {
                 onBufferingChange: (buffering) => setIsBuffering(buffering),
                 onAutoplayMuted: (muted) => {
-                    setIsAutoplayMuted(muted);
-                    setIsMuted(muted);
+                    autoplayMutedRef.current = muted;
+                    // Ne jamais forcer isMuted permanent : l'autoplay bloqué est un état temporaire du navigateur
                 },
                 onError: (err) => {
                     console.warn('[Altyflix Player] Erreur signalée par le moteur :', err);
@@ -631,25 +632,27 @@ export default function NetflixPlayer({
                 }
                 pendingResumeSeek = false;
             }
-            // Conserver la vitesse de lecture et les préférences de volume/mute de l'utilisateur
+            // Conserver la vitesse de lecture et le volume (ne jamais démarrer muet sauf si l'utilisateur a expressément cliqué Mute)
             video.playbackRate = playbackRateRef.current || 1;
-            const desiredMuted = Boolean(isMutedRef.current);
+            const desiredMuted = Boolean(userMutedRef.current);
             const desiredVolume = volumeRef.current ?? 1;
             video.muted = desiredMuted;
             video.volume = desiredVolume;
             seekingTranscodeRef.current = false;
             video.play().catch((err) => {
                 if (err?.name !== 'NotAllowedError') return;
+                // Autoplay bloqué par la politique du navigateur : muter temporairement pour lancer l'image
                 video.muted = true;
-                setIsAutoplayMuted(true);
-                setIsMuted(true);
+                autoplayMutedRef.current = true;
                 video.play().catch(() => {});
             });
         };
 
         const onVolumeChange = () => {
-            setIsMuted(video.muted);
-            setVolume(video.volume);
+            if (userMutedRef.current || !video.muted) {
+                setIsMuted(video.muted);
+                setVolume(video.volume);
+            }
         };
 
         const onWaiting = () => setIsBuffering(true);
@@ -728,6 +731,9 @@ export default function NetflixPlayer({
         autoSubAppliedKeyRef.current = '';
         userPickedSubRef.current = false;
         selectedSubtitleIdRef.current = 'off';
+        userMutedRef.current = false;
+        setIsMuted(false);
+        autoplayMutedRef.current = false;
         setCurrentTime(0);
         setDuration(0);
         setBuffered(0);
@@ -790,35 +796,33 @@ export default function NetflixPlayer({
         handleMouseMove();
     }, [handleMouseMove]);
 
-    // Son coupé par le navigateur au démarrage : le premier geste (clic, touche, toucher)
-    // le réactive, sans afficher de bandeau.
+    // Son coupé par le navigateur au démarrage : tout geste utilisateur (clic, touche, toucher) réactive le son
     useEffect(() => {
-        if (!isAutoplayMuted) return undefined;
         const unmute = (e) => {
             if (e?.target?.closest?.('[data-mute-button]')) return;
             const video = videoRef.current;
-            if (video) {
+            if (video && !userMutedRef.current && video.muted) {
                 video.muted = false;
-                video.volume = volume || 1;
+                video.volume = volumeRef.current || 1;
+                autoplayMutedRef.current = false;
+                setIsMuted(false);
             }
-            setIsAutoplayMuted(false);
-            setIsMuted(false);
         };
         const events = ['pointerdown', 'keydown', 'touchstart'];
         events.forEach(type => window.addEventListener(type, unmute, { capture: true }));
         return () => events.forEach(type => window.removeEventListener(type, unmute, { capture: true }));
-    }, [isAutoplayMuted, volume]);
+    }, []);
 
     // Bascule Lecture / Pause
     const togglePlay = useCallback(() => {
         const video = videoRef.current;
         if (!video) return;
 
-        // Réactivation automatique uniquement si le navigateur avait coupé le son à l'autoplay
-        if (isAutoplayMuted && video.muted) {
+        // Réactivation immédiate du son si la vidéo était coupée par l'autoplay
+        if (video.muted && !userMutedRef.current) {
             video.muted = false;
-            video.volume = volume || 1;
-            setIsAutoplayMuted(false);
+            video.volume = volumeRef.current || 1;
+            autoplayMutedRef.current = false;
             setIsMuted(false);
         }
 
@@ -835,7 +839,7 @@ export default function NetflixPlayer({
 
         if (centerTimeoutRef.current) clearTimeout(centerTimeoutRef.current);
         centerTimeoutRef.current = setTimeout(() => setCenterAction(null), 600);
-    }, [handleMouseMove, volume, isAutoplayMuted]);
+    }, [handleMouseMove]);
 
     // Déplacement direct et précis dans la vidéo (compatible HTTP 206 et transcodage à la volée)
     const seekToTime = useCallback((targetSec) => {
@@ -937,27 +941,34 @@ export default function NetflixPlayer({
     }, []);
 
     // Gestion du volume
-    const handleVolumeChange = (newVol) => {
+    const handleVolumeChange = useCallback((newVol) => {
         const v = Math.max(0, Math.min(1, newVol));
         setVolume(v);
-        setIsMuted(v === 0);
+        const shouldMute = v === 0;
+        userMutedRef.current = shouldMute;
+        setIsMuted(shouldMute);
+        autoplayMutedRef.current = false;
         if (videoRef.current) {
             videoRef.current.volume = v;
-            videoRef.current.muted = v === 0;
+            videoRef.current.muted = shouldMute;
         }
-    };
+    }, []);
 
     const toggleMute = useCallback(() => {
-        if (isMuted) {
+        const video = videoRef.current;
+        if (isMuted || (video && video.muted)) {
+            userMutedRef.current = false;
             setIsMuted(false);
-            if (videoRef.current) {
-                videoRef.current.muted = false;
-                videoRef.current.volume = volume || 0.8;
+            autoplayMutedRef.current = false;
+            if (video) {
+                video.muted = false;
+                video.volume = volume || 1;
             }
         } else {
+            userMutedRef.current = true;
             setIsMuted(true);
-            if (videoRef.current) {
-                videoRef.current.muted = true;
+            if (video) {
+                video.muted = true;
             }
         }
     }, [isMuted, volume]);
@@ -1423,7 +1434,7 @@ export default function NetflixPlayer({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, handleMouseMove, closePanel]);
+    }, [togglePlay, seekRelative, volume, handleVolumeChange, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, handleMouseMove, closePanel]);
 
     // Fin de l'épisode : enchaîne automatiquement sur le suivant (si autoplayNext activé)
     const autoplayNextEnabled = currentProfile?.autoplayNext !== false;

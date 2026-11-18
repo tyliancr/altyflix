@@ -768,7 +768,8 @@ async function resolveStreamsServer({
   enableAudioRemux = false,
   enableAviTranscode = enableAudioRemux,
   videoStreamBaseUrl = '',
-  tmdbApiKey = null
+  tmdbApiKey = null,
+  clientAc3 = true
 }) {
   const isTv = type === 'tv';
   const streamBase = String(videoStreamBaseUrl || '').trim().replace(/\/+$/, '');
@@ -1014,17 +1015,16 @@ async function resolveStreamsServer({
       }
     };
 
-    const [vfStreams, globalStreams, frenchioStreams, mylistStreams] = await Promise.all([
+    const [vfStreams, globalStreams, frenchioStreams] = await Promise.all([
       fetchTorrentio(endpointVf, 'VF'),
       fetchTorrentio(endpointGlobal, 'Global'),
-      fetchFrenchio(),
-      fetchMylist()
+      fetchFrenchio()
     ]);
 
-    // Fusion avec déduplication stricte par URL (Bibliothèque TorBox en tête)
+    // Fusion avec déduplication stricte par URL
     const seenUrls = new Set();
     const rawStreams = [];
-    for (const s of [...mylistStreams, ...frenchioStreams, ...vfStreams, ...globalStreams]) {
+    for (const s of [...frenchioStreams, ...vfStreams, ...globalStreams]) {
       if (s && s.url && !seenUrls.has(s.url)) {
         seenUrls.add(s.url);
         rawStreams.push(s);
@@ -1165,25 +1165,42 @@ async function resolveStreamsServer({
       const movieHdReady = type !== 'tv' ? readyStreams.filter(isHd1080) : [];
       const eligibleReady = (type !== 'tv' && movieHdReady.length > 0) ? movieHdReady : readyStreams;
 
-      const pickBestReady = (list) =>
-        // 1. Langue demandée (VF par défaut) avec audio natif navigateur (1080p -> 4K -> autre) et H.264
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
-        // 2. Format H.264 compatible même si audio AC3/EAC3/DTS
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '4k') ||
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
-        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
-        list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
-        // 3. Fallback VO uniquement si aucune VF prête n'existe (avec audio natif d'abord)
-        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
-        list.find(s => isPlayableFormat(s)) ||
-        list[0];
+      const supportsAc3 = Boolean(clientAc3);
+      const pickBestReady = (list) => {
+        if (!supportsAc3) {
+          // Sur navigateur sans décodeur AC3 natif (ex. Google Chrome sur Windows) :
+          // Priorité absolue aux flux avec son garanti (AAC/Web-safe), puis VO avec sous-titres FR
+          return list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
+                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+                 list.find(s => isPlayableFormat(s)) ||
+                 list[0];
+        }
+
+        // Sur appareil/navigateur avec support AC3 natif (Safari, Edge avec Dolby, Smart TV...)
+        return list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '4k') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
+               list.find(s => isPlayableFormat(s)) ||
+               list[0];
+      };
 
       active = pickBestReady(eligibleReady);
       // Préserver les flux prêts en tête, complétés par les alternatives vérifiées pour le fallback automatique

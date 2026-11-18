@@ -27,6 +27,18 @@ const STORAGE_KEY_PROVIDER = 'altyflix_stream_provider';
 const STORAGE_KEY_TOKEN = 'altyflix_stream_token';
 const STORAGE_KEY_FRENCHIO_URL = 'altyflix_frenchio_url';
 
+function checkBrowserAc3Support() {
+    if (typeof document === 'undefined') return false;
+    try {
+        const v = document.createElement('video');
+        const canAc3 = v.canPlayType('audio/mp4; codecs="ac-3"');
+        const canEc3 = v.canPlayType('audio/mp4; codecs="ec-3"');
+        return Boolean((canAc3 && canAc3 !== 'no') || (canEc3 && canEc3 !== 'no'));
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Récupère la configuration actuelle de la passerelle
  * Priorité : LocalStorage utilisateur si configuré, sinon clé globale serveur
@@ -573,7 +585,8 @@ export async function resolvePlaybackStreams({
             imdbId: String(imdbId),
             type: isTv ? 'tv' : 'movie',
             season: String(season || 1),
-            episode: String(episode || 1)
+            episode: String(episode || 1),
+            clientAc3: checkBrowserAc3Support() ? '1' : '0'
         });
         if (title) {
             queryParams.set('title', String(title));

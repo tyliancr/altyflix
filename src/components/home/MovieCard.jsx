@@ -42,6 +42,7 @@ const MovieCard = memo(({
     myIndex,
     isExpanded = false,
     isTop10: propIsTop10 = false,
+    eager = false,
 }) => {
     const navigate = useNavigate();
     const { play } = usePlayer();
@@ -281,7 +282,7 @@ const MovieCard = memo(({
                         transition: 'opacity 500ms ease, transform 500ms ease',
                         pointerEvents: 'none',
                     }}
-                    loading="lazy"
+                    loading={eager ? 'eager' : 'lazy'}
                     decoding="async"
                     fallback={
                         <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-[#181822] to-[#0c0c12] p-3 text-center">

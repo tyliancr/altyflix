@@ -143,6 +143,7 @@ const ContentRow = memo(({ title, subtitle, items = [], isTV = false, showMatchS
                                         myIndex={index}
                                         isExpanded={isExpanded}
                                         isTop10={isTop10Category && index < 10}
+                                        eager={index < 7}
                                     />
                                 </div>
                             </div>

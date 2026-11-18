@@ -14,6 +14,7 @@ const { HttpError } = require('./security.cjs');
 
 // Caches mémoire haute performance (zéro stockage disque)
 const streamResolveCache = new Map();
+const inFlightResolves = new Map();
 const RESOLVE_CACHE_TTL_MS = 120 * 1000; // 2 minutes
 const torboxMylistCache = new Map();
 const TORBOX_MYLIST_TTL_MS = 30 * 1000; // 30 secondes
@@ -165,12 +166,13 @@ function parseStreamDetails(stream) {
     metaLines.includes('multi subs')
   );
 
-  // Audio web safe
-  const hasAac = /aac/i.test(fullText);
-  const hasMp3 = /mp3/i.test(fullText);
-  const hasOpus = /opus/i.test(fullText);
-  const hasFlac = /flac/i.test(fullText);
-  const isWebAudioSafe = hasAac || hasMp3 || hasOpus || hasFlac || /yts|yify|rapta|pir8/i.test(fullText);
+  // Détection audio : codecs compatibles navigateur (AAC / MP3 / Opus / FLAC) vs codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD / Atmos)
+  const hasAac = /\baac\b/i.test(fullText);
+  const hasMp3 = /\bmp3\b/i.test(fullText);
+  const hasOpus = /\bopus\b/i.test(fullText);
+  const hasFlac = /\bflac\b/i.test(fullText);
+  const hasUnsupportedAudio = /\b(ac3|ac-3|e-?ac-?3|eac3|ddp\s*5\.?1|ddp5\.?1|dd\s*5\.?1|dd5\.?1|dd\+|dts(?:-?hd)?|truehd|atmos|lpcm)\b/i.test(fullText);
+  const isWebAudioSafe = (hasAac || hasMp3 || hasOpus || hasFlac || /yts|yify|rapta|pir8/i.test(fullText)) && !hasUnsupportedAudio;
 
   const isMp4 = /\.mp4(\?|$)/i.test(stream?.url || '') || /\.mp4/i.test(filename);
   const isAvi = /\.avi(\?|$)/i.test(stream?.url || '') || /\.avi/i.test(filename) || /xvid|divx/i.test(fullText);
@@ -195,6 +197,7 @@ function parseStreamDetails(stream) {
     isFrench,
     isVostfr,
     isWebAudioSafe,
+    hasUnsupportedAudio,
     isMp4,
     isAvi,
     size,
@@ -223,6 +226,7 @@ function curateStreams(rawStreams, provider) {
         isFrench: details.isFrench,
         isVostfr: details.isVostfr,
         isWebAudioSafe: details.isWebAudioSafe,
+        hasUnsupportedAudio: details.hasUnsupportedAudio,
         isMp4: details.isMp4,
         isAvi: details.isAvi,
         isTorboxLibrary: Boolean(s.isTorboxLibrary),
@@ -248,8 +252,9 @@ function curateStreams(rawStreams, provider) {
     if (st.isCached) score += 100000;
     if (st.isDownloading) score -= 50000;
 
-    // 2. Audio compatible navigateur HTML5 (AAC / MP3)
+    // 2. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
     if (st.isWebAudioSafe) score += 25000;
+    if (st.hasUnsupportedAudio) score -= 35000;
 
     // 3. Langue française prioritaire
     if (st.isFrench) score += 15000;
@@ -511,13 +516,16 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
     const searchWords = norm(title).split(/\s+/).filter(w => w.length > 2);
     if (searchWords.length === 0) return [];
     const videoExts = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts', '.m4v'];
-    const streams = [];
+    const episodePattern = /\b(?:s\d{1,2}e\d{1,2}|\d{1,2}x\d{2}|saison\s*\d+|season\s*\d+|integrale?|complete\s*series)\b/i;
+    const candidateFiles = [];
 
     for (const t of torrents) {
       if (!t.download_present && t.download_state !== 'completed') continue;
       const tNorm = norm(t.name);
       const isTitleMatch = searchWords.every(w => tNorm.includes(w));
       if (!isTitleMatch) continue;
+      // Pour un film, ignorer les torrents de séries TV (ex: S01E01 / Intégrale / Saison)
+      if (type === 'movie' && episodePattern.test(t.name || '')) continue;
 
       const files = Array.isArray(t.files) ? t.files : [];
       for (const f of files) {
@@ -530,30 +538,44 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
           const eNum = String(episode).padStart(2, '0');
           const epRegex = new RegExp(`(?:s${sNum}e${eNum}|${season}x${eNum}|ep\\s*0?${episode})`, 'i');
           if (!epRegex.test(fName) && !epRegex.test(t.name)) continue;
+        } else if (episodePattern.test(fName)) {
+          continue;
         }
 
+        candidateFiles.push({ torrent: t, file: f, fName, size: Number(f.size) || 0 });
+      }
+    }
+
+    // Limiter aux 2 meilleurs fichiers (plus gros en taille) et résoudre requestdl EN PARALLÈLE (< 300ms au lieu de 15s)
+    candidateFiles.sort((a, b) => b.size - a.size);
+    const topCandidates = candidateFiles.slice(0, 2);
+
+    const resolved = await Promise.all(
+      topCandidates.map(async ({ torrent: t, file: f, fName, size }) => {
         try {
           const dlRes = await fetch(`https://api.torbox.app/v1/api/torrents/requestdl?token=${torboxToken}&torrent_id=${t.id}&file_id=${f.id}`, {
-            signal: AbortSignal.timeout(3000)
+            signal: AbortSignal.timeout(2200)
           });
           if (dlRes.ok) {
             const dlData = await dlRes.json();
             if (dlData.success && dlData.data) {
-              const sizeGb = f.size ? (f.size / (1024 * 1024 * 1024)).toFixed(2) + ' GB' : '';
-              streams.push({
+              const sizeGb = size ? (size / (1024 * 1024 * 1024)).toFixed(2) + ' GB' : '';
+              return {
                 name: `[TB+] Torbox Cloud\n1080p`,
                 title: `${fName}\n👤 1 💾 ${sizeGb} ⚙️ Ma Bibliothèque TorBox\n🇫🇷`,
                 url: dlData.data,
                 isTorboxLibrary: true
-              });
+              };
             }
           }
         } catch (dlErr) {
           console.warn('[Altyflix Torbox Library] Erreur requestdl :', dlErr.message);
         }
-      }
-    }
-    return streams;
+        return null;
+      })
+    );
+
+    return resolved.filter(Boolean);
   } catch (err) {
     console.warn('[Altyflix Torbox Library] Erreur inspection mylist :', err.message);
     return [];
@@ -714,6 +736,13 @@ async function resolveStreamsServer({
     return cachedResult;
   }
 
+  // Coalescing des requêtes identiques simultanées (évite les doubles appels React StrictMode)
+  if (inFlightResolves.has(cacheKey)) {
+    return inFlightResolves.get(cacheKey);
+  }
+
+  const resolvePromise = (async () => {
+
   const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,torrent9,rutracker,rutor,cinemaz,ibit,torlock';
 
   console.log(`[Altyflix Stream Resolver] Recherche parallèle des flux pour ${type} ${imdbId} (S${season}E${episode}) via ${provider}...`);
@@ -864,96 +893,105 @@ async function resolveStreamsServer({
       };
     }
 
-    let active = curated.activeStream;
-    let initialStatus = 'ready';
-    let playbackUrl = active?.url || null;
-
-    // Si le flux sélectionné est un flux en téléchargement non en cache
-    if (active && active.isDownloading) {
-      initialStatus = 'downloading';
-      console.log(`[Altyflix Stream Resolver] Le flux sélectionné (${active.quality}) nécessite un débridage en cours.`);
-    } else if (active && !active.isTorboxLibrary && (active.originalUrl || active.url)) {
-      // Pré-résolution rapide de l'URL finale (avec nom de fichier connu pour éviter tout HEAD superflu)
-      try {
-        const check = await checkStreamStatus(active.originalUrl || active.url, active.filename || '');
-        if (check.ready && check.playbackUrl) {
-          playbackUrl = check.playbackUrl;
-          initialStatus = 'ready';
-          if (check.isAvi) {
-            active.isAvi = true;
-            active.isTranscoded = true;
+    // Pré-vérification PARALLÈLE de toutes les qualités sélectionnées (~150-350ms au total) :
+    // 1. Élimine définitivement le clip vert "Torrent is being downloaded to debrid..."
+    // 2. Pré-résout l'URL CDN directe de CHAQUE qualité (changement de qualité instantané)
+    // 3. Choisit automatiquement la meilleure source réellement prête + compatible audio
+    const verifiedList = await Promise.all(
+      curated.streams.map(async (st) => {
+        if (st.isTorboxLibrary) {
+          return { ...st, isCached: true, isDownloading: false, verifiedReady: true };
+        }
+        const rawTarget = st.originalUrl || st.url;
+        if (!rawTarget || !rawTarget.startsWith('http')) {
+          return { ...st, verifiedReady: !st.isDownloading };
+        }
+        try {
+          const check = await checkStreamStatus(rawTarget, st.filename || '');
+          if (check.ready && check.playbackUrl) {
+            const isAviNow = Boolean(st.isAvi || check.isAvi);
+            return {
+              ...st,
+              url: check.playbackUrl,
+              directUrl: check.directUrl || check.playbackUrl,
+              originalUrl: rawTarget,
+              isCached: true,
+              isDownloading: false,
+              isAvi: isAviNow,
+              isTranscoded: isAviNow,
+              verifiedReady: true
+            };
           }
-        } else if (check.status === 'downloading') {
-          initialStatus = 'downloading';
+          if (check.status === 'downloading') {
+            return {
+              ...st,
+              isCached: false,
+              isDownloading: true,
+              verifiedReady: false
+            };
+          }
+        } catch {
+          // Timeout réseau sur cette source -> marquée non vérifiée
         }
-      } catch {
-        // En cas de timeout, conserve l'URL d'origine
+        return { ...st, verifiedReady: false };
+      })
+    );
+
+    const readyStreams = verifiedList.filter(s => s.verifiedReady);
+    let initialStatus = 'ready';
+    let active = null;
+    let finalStreams = verifiedList;
+
+    if (readyStreams.length > 0) {
+      // Préférer VF + audio web compatible (AAC/MP3/Opus) + 1080p, sinon meilleure source prête
+      const pickBestReady = (list) =>
+        list.find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+        list.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
+        list.find(s => !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+        list.find(s => !s.hasUnsupportedAudio) ||
+        list.find(s => s.isFrench && s.tierKey === '1080p') ||
+        list.find(s => s.isFrench) ||
+        list[0];
+
+      active = pickBestReady(readyStreams);
+      // Ne montrer que les qualités réellement prêtes dans le menu : zéro écran vert au changement de qualité !
+      finalStreams = readyStreams;
+      initialStatus = 'ready';
+    } else {
+      // Aucune source en cache : on lance le débridage proprement avec l'écran de chargement
+      active = verifiedList.find(s => s.isFrench) || verifiedList[0];
+      if (active) {
+        active = { ...active, isDownloading: true, isCached: false };
       }
-    }
-
-    // BASCULEMENT AUTOMATIQUE INSTANTANÉ (style Netflix) :
-    // Si la 1ère source sélectionnée n'est finalement pas prête (faux cache), tester les autres en parallèle
-    // et lancer immédiatement la première source réellement prête !
-    if (initialStatus !== 'ready' && curated.streams.length > 1) {
-      const candidates = curated.streams
-        .filter(s => s.id !== active?.id && !s.isTorboxLibrary)
-        .slice(0, 5);
-
-      if (candidates.length > 0) {
-        console.log(`[Altyflix Stream Resolver] Recherche automatique d'une source instantanément prête parmi ${candidates.length} alternatives...`);
-        const checks = await Promise.all(
-          candidates.map(async (cand) => {
-            try {
-              const resCheck = await checkStreamStatus(cand.originalUrl || cand.url, cand.filename || '');
-              return { cand, resCheck };
-            } catch {
-              return { cand, resCheck: { ready: false } };
-            }
-          })
-        );
-
-        const readyHit =
-          checks.find(x => x.resCheck?.ready && x.resCheck.playbackUrl && x.cand.isFrench) ||
-          checks.find(x => x.resCheck?.ready && x.resCheck.playbackUrl);
-
-        if (readyHit) {
-          console.log(`[Altyflix Stream Resolver] Bascule automatique sur une source prête : ${readyHit.cand.qualityLabel}`);
-          active = {
-            ...readyHit.cand,
-            isCached: true,
-            isDownloading: false,
-            isAvi: Boolean(readyHit.cand.isAvi || readyHit.resCheck.isAvi),
-            isTranscoded: Boolean(readyHit.cand.isAvi || readyHit.resCheck.isAvi)
-          };
-          playbackUrl = readyHit.resCheck.playbackUrl;
-          initialStatus = 'ready';
-        }
-      }
+      initialStatus = 'downloading';
     }
 
     // Si le flux est un AVI et n'est pas encore encapsulé dans /api/video-stream
-    if (active && active.isAvi && playbackUrl && !playbackUrl.startsWith('/api/video-stream')) {
-      playbackUrl = `/api/video-stream?url=${encodeURIComponent(playbackUrl)}`;
-      active.isTranscoded = true;
+    if (active && active.isAvi && active.url && !active.url.startsWith('/api/video-stream')) {
+      active = {
+        ...active,
+        url: `/api/video-stream?url=${encodeURIComponent(active.url)}`,
+        isTranscoded: true
+      };
     }
 
     const finalActive = active
-      ? { ...active, url: playbackUrl || active.url, originalUrl: active.originalUrl || active.url }
+      ? { ...active, originalUrl: active.originalUrl || active.url }
       : null;
 
     // Synchroniser l'élément actif dans la liste streams pour que la sélection de qualité reste cohérente
-    const syncedStreams = curated.streams.map(s =>
+    const syncedStreams = finalStreams.map(s =>
       (finalActive && s.id === finalActive.id) ? finalActive : s
     );
 
-    console.log(`[Altyflix Stream Resolver] Résolution terminée : ${syncedStreams.length} qualités disponibles. Statut : ${initialStatus}.`);
+    console.log(`[Altyflix Stream Resolver] Résolution terminée : ${syncedStreams.length} qualités prêtes. Statut : ${initialStatus}.`);
 
     const responsePayload = {
       success: true,
       status: initialStatus,
       activeStream: finalActive,
       streams: syncedStreams,
-      hasTrueVf: curated.hasTrueVf,
+      hasTrueVf: syncedStreams.some(s => s.isFrench) || curated.hasTrueVf,
       imdbId
     };
 
@@ -972,6 +1010,14 @@ async function resolveStreamsServer({
       imdbId,
       streams: []
     };
+  }
+  })();
+
+  inFlightResolves.set(cacheKey, resolvePromise);
+  try {
+    return await resolvePromise;
+  } finally {
+    inFlightResolves.delete(cacheKey);
   }
 }
 

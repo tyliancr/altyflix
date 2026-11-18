@@ -278,10 +278,72 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 429, { error: 'Trop de requêtes. Réessayez dans une minute.' });
   }
 
-  // Stream Proxy Universel avec support HTTP 206 Range (Lecture native 100% Altyflix)
+  // Stream Proxy Universel avec support HTTP 206 Range + remux audio AAC instantané (AC3/EAC3/DTS -> AAC sans ré-encodage vidéo)
   if (pathname === '/api/video-stream') {
     const targetUrl = query.url;
     if (!targetUrl || !targetUrl.startsWith('http')) return sendJSON(res, 400, { error: 'URL invalide.' });
+
+    const wantsAudioRemux = query.audio === 'aac';
+    const spawnFfmpegRemux = (inputUrl, { copyVideo }) => {
+      res.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Cache-Control': 'no-cache'
+      });
+
+      const { spawn } = require('child_process');
+      const ffmpegArgs = [
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '3',
+        '-probesize', '2000000',
+        '-analyzeduration', '2000000'
+      ];
+
+      if (query.t || query.start) {
+        ffmpegArgs.push('-ss', String(query.t || query.start));
+      }
+
+      ffmpegArgs.push('-i', inputUrl);
+      if (copyVideo) {
+        // Copie vidéo directe (zéro perte qualité, quasi 0% CPU, démarrage instantané) + conversion audio AC3/DTS -> AAC stéréo
+        ffmpegArgs.push('-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-ac', '2', '-b:a', '192k');
+      } else {
+        ffmpegArgs.push('-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-c:a', 'aac', '-ac', '2', '-b:a', '160k');
+      }
+
+      ffmpegArgs.push(
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-f', 'mp4',
+        'pipe:1'
+      );
+
+      const ffmpegProc = spawn('ffmpeg', ffmpegArgs, {
+        stdio: ['ignore', 'pipe', 'ignore']
+      });
+
+      req.on('close', () => {
+        try { ffmpegProc.kill(); } catch {}
+      });
+      ffmpegProc.on('error', () => {
+        try { res.destroy(); } catch {}
+      });
+      ffmpegProc.stdout.on('error', () => {
+        try { res.destroy(); } catch {}
+      });
+      res.on('error', () => {
+        try { ffmpegProc.kill(); } catch {}
+      });
+
+      ffmpegProc.stdout.pipe(res);
+    };
+
+    if (wantsAudioRemux) {
+      console.log(`[Video Stream Proxy] Remux audio instantané (copie vidéo + AC3/DTS -> AAC)...`);
+      spawnFfmpegRemux(targetUrl, { copyVideo: true });
+      return;
+    }
 
     const upstreamHeaders = {};
     if (req.headers.range) {
@@ -311,55 +373,8 @@ const server = http.createServer(async (req, res) => {
       // Si le format est un AVI ancien non décodé par HTML5, conversion dynamique à la volée vers fMP4
       if (isAvi) {
         console.log(`[Video Stream Proxy] Transcodage dynamique à la volée du flux AVI vers MP4 HTML5...`);
-        // Libère la connexion fetch initiale
         try { abortCtrl.abort(); } catch {}
-
-        res.writeHead(200, {
-          'Content-Type': 'video/mp4',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Cache-Control': 'no-cache'
-        });
-
-        const { spawn } = require('child_process');
-        const ffmpegArgs = [
-          '-probesize', '2000000',
-          '-analyzeduration', '2000000'
-        ];
-
-        // Support du saut temporel (seek) si demandé
-        if (query.t || query.start) {
-          ffmpegArgs.push('-ss', String(query.t || query.start));
-        }
-
-        ffmpegArgs.push(
-          '-i', finalUrl,
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-tune', 'zerolatency',
-          '-c:a', 'aac',
-          '-b:a', '128k',
-          '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-          '-f', 'mp4',
-          'pipe:1'
-        );
-
-        const ffmpegProc = spawn('ffmpeg', ffmpegArgs, {
-          stdio: ['ignore', 'pipe', 'ignore']
-        });
-
-        req.on('close', () => {
-          try { ffmpegProc.kill(); } catch {}
-        });
-
-        ffmpegProc.stdout.on('error', () => {
-          try { res.destroy(); } catch {}
-        });
-        res.on('error', () => {
-          try { ffmpegProc.kill(); } catch {}
-        });
-
-        ffmpegProc.stdout.pipe(res);
+        spawnFfmpegRemux(finalUrl, { copyVideo: false });
         return;
       }
 

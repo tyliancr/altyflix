@@ -734,6 +734,15 @@ export class UnifiedStreamingEngine {
         this.detachVideoListeners();
         this.cleanupAdapters();
 
+        // Arrêter et vider immédiatement le <video> pour éviter tout son ou image fantôme en arrière-plan
+        if (this.videoElement) {
+            try {
+                this.videoElement.pause();
+                this.videoElement.removeAttribute('src');
+                this.videoElement.load();
+            } catch { /* ignore */ }
+        }
+
         if (typeof window !== 'undefined') {
             window.removeEventListener('online', this.handleOnline);
             window.removeEventListener('offline', this.handleOffline);

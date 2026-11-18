@@ -139,6 +139,9 @@ export default function NetflixPlayer({
     const watchHistoryRef = useRef(watchHistory);
     watchHistoryRef.current = watchHistory;
     const loadedUrlRef = useRef(null);
+    const activeStreamRef = useRef(activeStream);
+    activeStreamRef.current = activeStream;
+    const audioFallbackAttemptedRef = useRef(new Set());
     const resolvedKeyRef = useRef('');
     const resolvedImdbIdRef = useRef('');
     const pollingAbortControllerRef = useRef(null);
@@ -446,6 +449,7 @@ export default function NetflixPlayer({
         });
 
         let hasInitialSaved = false;
+        let audioSilenceChecked = false;
         const onPlay = () => {
             setIsPlaying(true);
             if (!hasInitialSaved) {
@@ -464,6 +468,40 @@ export default function NetflixPlayer({
             const currentOffset = transcodeOffsetRef.current || 0;
             const realCurrent = (video.currentTime || 0) + currentOffset;
             setCurrentTime(realCurrent);
+
+            // Détection automatique d'absence de son (AC3 / E-AC3 / DTS / TrueHD non décodé par Chrome/Brave)
+            const silenceThreshold = activeStreamRef.current?.hasUnsupportedAudio ? 1.0 : 2.2;
+            if (
+                !audioSilenceChecked &&
+                !video.paused &&
+                !video.muted &&
+                video.volume > 0 &&
+                video.currentTime >= silenceThreshold &&
+                typeof video.webkitAudioDecodedByteCount === 'number'
+            ) {
+                audioSilenceChecked = true;
+                if (video.webkitAudioDecodedByteCount === 0 && !audioFallbackAttemptedRef.current.has(streamUrl)) {
+                    audioFallbackAttemptedRef.current.add(streamUrl);
+                    const curStream = activeStreamRef.current;
+                    if (!isTranscoded && streamUrl.startsWith('http')) {
+                        console.warn('[Altyflix Player] Codec audio silencieux détecté (AC3/DTS) — activation automatique du remux audio AAC...');
+                        const remuxUrl = `/api/video-stream?audio=aac&url=${encodeURIComponent(streamUrl)}`;
+                        loadedUrlRef.current = null;
+                        setIsBuffering(true);
+                        setActiveStream({
+                            ...(curStream || {}),
+                            url: remuxUrl,
+                            originalUrl: curStream?.originalUrl || streamUrl,
+                            isTranscoded: true,
+                            audioRemuxed: true
+                        });
+                        return;
+                    }
+                    console.warn('[Altyflix Player] Flux toujours silencieux après remux — bascule automatique vers la source suivante...');
+                    handleStreamErrorRef.current?.();
+                    return;
+                }
+            }
 
             let dur = video.duration;
             const knownTmdbDur = tmdbDurationRef.current || 0;
@@ -831,15 +869,25 @@ export default function NetflixPlayer({
         if (videoRef.current) videoRef.current.playbackRate = playbackRate;
     }, [playbackRate, activeStream?.url, streamState]);
 
-    // Changement de flux (qualité)
+    // Changement de flux (qualité) — fermeture propre du panneau, arrêt immédiat de l'ancien flux et zéro écran vert
     const handleSelectStream = (st) => {
         if (!st) return;
+        setPanel(null);
         if (st.id === activeStream?.id && st.url === activeStream?.url) {
             return;
         }
         if (pollingAbortControllerRef.current) {
             pollingAbortControllerRef.current.abort();
             pollingAbortControllerRef.current = null;
+        }
+        // Couper immédiatement la lecture précédente pour qu'aucun son/image ne reste en arrière-plan
+        const video = videoRef.current;
+        if (video) {
+            try {
+                video.pause();
+                video.removeAttribute('src');
+                video.load();
+            } catch { /* ignore */ }
         }
         loadedUrlRef.current = null;
         transcodeOffsetRef.current = 0;
@@ -850,7 +898,8 @@ export default function NetflixPlayer({
             setCurrentAudioLang('vo');
         }
 
-        if (st.isDownloading) {
+        const isUnverifiedTorrentio = typeof st.url === 'string' && st.url.includes('torrentio.strem.fun/resolve/');
+        if (st.isDownloading || isUnverifiedTorrentio) {
             setStreamState('downloading');
             startStreamPolling(st.originalUrl || st.url);
         } else {
@@ -1005,16 +1054,14 @@ export default function NetflixPlayer({
         if (!availableStreams || availableStreams.length <= 1) return;
 
         if (lang === 'vf') {
-            const vfStream = availableStreams.find(s => s.isFrench && s.isWebAudioSafe) || availableStreams.find(s => s.isFrench);
+            const vfStream = availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio) || availableStreams.find(s => s.isFrench);
             if (vfStream && vfStream.url !== activeStream?.url) {
-                loadedUrlRef.current = null;
-                setActiveStream(vfStream);
+                handleSelectStream(vfStream);
             }
         } else {
-            const voStream = availableStreams.find(s => !s.isFrench) || availableStreams[0];
+            const voStream = availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio) || availableStreams.find(s => !s.isFrench) || availableStreams[0];
             if (voStream && voStream.url !== activeStream?.url) {
-                loadedUrlRef.current = null;
-                setActiveStream(voStream);
+                handleSelectStream(voStream);
             }
         }
     };

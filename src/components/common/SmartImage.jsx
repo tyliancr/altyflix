@@ -37,7 +37,7 @@ const SmartImage = memo(({
     decoding = 'async',
     fetchPriority,
     fallback = null,
-    fade = true,
+    fade = false,
     onLoad,
     onError,
 }) => {

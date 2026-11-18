@@ -132,4 +132,8 @@ test('Netlify API function enforces health, SSRF and CRLF protections', async ()
 
   const ssrfSub = await netlifyApiHandler(new Request('https://altyflix.netlify.app/api/subtitles-vtt?url=http://169.254.169.254/latest/meta-data'));
   assert.ok([400, 403].includes(ssrfSub.status), `Expected 400/403, got ${ssrfSub.status}`);
+
+  const embeddedNetlify = await netlifyApiHandler(new Request('https://altyflix.netlify.app/api/embedded-subtitles?url=http://127.0.0.1/a.mkv'));
+  assert.equal(embeddedNetlify.status, 200);
+  assert.deepEqual((await embeddedNetlify.json()).subtitles, []);
 });

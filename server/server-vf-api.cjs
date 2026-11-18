@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { URL } = require('url');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const HAS_FFMPEG = (() => {
   try {
@@ -28,8 +28,170 @@ const HAS_FFMPEG = (() => {
     return false;
   }
 })();
+const HAS_FFPROBE = (() => {
+  try {
+    return spawnSync('ffprobe', ['-version'], { stdio: 'ignore', timeout: 3000 }).status === 0;
+  } catch {
+    return false;
+  }
+})();
 const MAX_CONCURRENT_FFMPEG = 4;
 let activeFfmpegJobs = 0;
+const mediaProbeCache = new BoundedCache(200, 30 * 60 * 1000);
+const TEXT_SUB_CODECS = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text']);
+
+async function resolveSafeRedirects(startUrl) {
+  let current = normalizeAllowedUrl(startUrl);
+  if (!current) return null;
+  try {
+    for (let hop = 0; hop < 4; hop++) {
+      const safeHop = normalizeAllowedUrl(current);
+      if (!safeHop) return null;
+      const headRes = await fetch(safeHop, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(5000)
+      });
+      if (headRes.status >= 300 && headRes.status < 400 && headRes.headers.get('location')) {
+        try { await headRes.body?.cancel(); } catch {}
+        current = new URL(headRes.headers.get('location'), safeHop).toString();
+        continue;
+      }
+      try { await headRes.body?.cancel(); } catch {}
+      return safeHop;
+    }
+  } catch {
+    // HEAD non supporté par le CDN : on garde l'URL déjà validée
+  }
+  return normalizeAllowedUrl(current);
+}
+
+function probeMediaStreams(resolvedUrl) {
+  if (!HAS_FFPROBE) return Promise.resolve([]);
+  const safeUrl = normalizeAllowedUrl(resolvedUrl);
+  if (!safeUrl) return Promise.resolve([]);
+  const cached = mediaProbeCache.get(safeUrl);
+  if (cached) return Promise.resolve(cached);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let out = '';
+    const finish = (streams) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (Array.isArray(streams) && streams.length > 0) {
+        mediaProbeCache.set(safeUrl, streams, 30 * 60 * 1000);
+      }
+      resolve(Array.isArray(streams) ? streams : []);
+    };
+
+    let proc;
+    try {
+      proc = spawn('ffprobe', [
+        '-v', 'error',
+        '-protocol_whitelist', 'https,tls,tcp',
+        '-rw_timeout', '3000000',
+        '-probesize', '500000',
+        '-analyzeduration', '500000',
+        '-show_entries', 'stream=index,codec_type,codec_name:stream_tags=language,title:stream_disposition=forced,default',
+        '-of', 'json',
+        safeUrl
+      ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      return finish([]);
+    }
+
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      finish([]);
+    }, 3000);
+    timer.unref?.();
+
+    proc.stdout.on('data', (chunk) => {
+      if (out.length < 131072) out += chunk.toString('utf8');
+    });
+    proc.on('error', () => finish([]));
+    proc.on('close', (code) => {
+      if (code !== 0 || !out) return finish([]);
+      try {
+        const parsed = JSON.parse(out);
+        finish(Array.isArray(parsed?.streams) ? parsed.streams : []);
+      } catch {
+        finish([]);
+      }
+    });
+  });
+}
+
+function pickAudioStreamIndex(streams, desiredLang = 'vf') {
+  const audios = (streams || []).filter(s => s && s.codec_type === 'audio' && Number.isInteger(s.index));
+  if (audios.length <= 1) return null;
+  const isCommentary = (s) => /commentary|commentaire|audio\s*desc|description/i.test(String(s.tags?.title || ''));
+  const isFrenchTrack = (s) => {
+    const lang = String(s.tags?.language || '').toLowerCase();
+    const title = String(s.tags?.title || '').toLowerCase();
+    return ['fre', 'fra', 'fr'].includes(lang) || /\b(?:french|fran[cç]ais|vff|vfq|vf2|vfi|truefrench|vf|fr)\b/i.test(title);
+  };
+  const wantVo = String(desiredLang || 'vf').toLowerCase() === 'vo';
+  if (!wantVo) {
+    const fr = audios.find(s => isFrenchTrack(s) && !isCommentary(s)) || audios.find(isFrenchTrack);
+    return fr ? fr.index : null;
+  }
+  const vo = audios.find(s => !isFrenchTrack(s) && !isCommentary(s)) || audios.find(s => !isFrenchTrack(s));
+  return vo ? vo.index : null;
+}
+
+function extractEmbeddedTextSubtitles(streams, encodedSourceUrl) {
+  const subs = (streams || []).filter(s =>
+    s &&
+    s.codec_type === 'subtitle' &&
+    Number.isInteger(s.index) &&
+    TEXT_SUB_CODECS.has(String(s.codec_name || '').toLowerCase())
+  );
+  const out = [];
+  let frForced = 0;
+  let frFull = 0;
+  let enCount = 0;
+  for (const s of subs) {
+    const langTag = String(s.tags?.language || '').toLowerCase();
+    const titleTag = String(s.tags?.title || '');
+    const isForced = Boolean(s.disposition?.forced === 1 || /\b(?:forced|forc[eé]s?)\b/i.test(titleTag));
+    const isSdh = Boolean(/\b(?:sdh|cc|malentendant|hearing)\b/i.test(titleTag));
+    const isFr = ['fre', 'fra', 'fr'].includes(langTag) || /\b(?:french|fran[cç]ais|fr)\b/i.test(titleTag);
+    const isEn = ['eng', 'en'].includes(langTag) || /\b(?:english|anglais|us|uk)\b/i.test(titleTag);
+    if (!isFr && !isEn) continue;
+    if (isFr) {
+      if (isForced && frForced >= 1) continue;
+      if (!isForced && frFull >= 2) continue;
+      if (isForced) frForced++; else frFull++;
+      const label = isForced
+        ? 'Français (forcés)'
+        : (frFull === 1 ? 'Français' : `Français (Option ${frFull})`);
+      out.push({
+        id: `mkv-fr-${s.index}`,
+        lang: 'fr',
+        label,
+        hint: isForced ? 'Forcés · MKV' : (isSdh ? 'SDH · MKV' : 'Synchro MKV'),
+        forced: isForced,
+        embedded: true,
+        url: `/api/embedded-subtitles-vtt?stream=${s.index}&url=${encodedSourceUrl}`
+      });
+    } else if (isEn && enCount < 2) {
+      enCount++;
+      out.push({
+        id: `mkv-en-${s.index}`,
+        lang: 'en',
+        label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
+        hint: isSdh ? 'SDH · MKV' : 'Synchro MKV',
+        forced: isForced,
+        embedded: true,
+        url: `/api/embedded-subtitles-vtt?stream=${s.index}&url=${encodedSourceUrl}`
+      });
+    }
+  }
+  return out;
+}
 
 const COMPRESSIBLE_EXTS = new Set(['.js', '.mjs', '.css', '.html', '.svg', '.json', '.webmanifest', '.txt', '.xml']);
 const staticGzipCache = new Map();
@@ -305,7 +467,7 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
-    const spawnFfmpegRemux = (rawInputUrl, { copyVideo }) => {
+    const spawnFfmpegRemux = (rawInputUrl, { copyVideo, audioStreamIndex = null }) => {
       if (res.destroyed || res.writableEnded) return;
       if (!HAS_FFMPEG) {
         return sendJSON(res, 503, { error: 'Remux audio indisponible sur ce serveur.' });
@@ -322,8 +484,8 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 400, { error: 'Hôte vidéo non autorisé.' });
       }
 
-      const { spawn } = require('child_process');
       const seekSec = Math.max(0, parseInt(query.t || query.start || '0', 10) || 0);
+      const audioMap = Number.isInteger(audioStreamIndex) ? `0:${audioStreamIndex}` : '0:a:0?';
       const ffmpegArgs = [
         '-protocol_whitelist', 'https,tls,tcp',
         '-rw_timeout', '15000000',
@@ -345,7 +507,7 @@ const server = http.createServer(async (req, res) => {
       if (copyVideo) {
         ffmpegArgs.push(
           '-map', '0:v:0',
-          '-map', '0:a:0?',
+          '-map', audioMap,
           '-map_chapters', '-1',
           '-c:v', 'copy',
           '-c:a', 'aac',
@@ -357,7 +519,7 @@ const server = http.createServer(async (req, res) => {
       } else {
         ffmpegArgs.push(
           '-map', '0:v:0',
-          '-map', '0:a:0?',
+          '-map', audioMap,
           '-map_chapters', '-1',
           '-c:v', 'libx264',
           '-preset', 'ultrafast',
@@ -459,33 +621,15 @@ const server = http.createServer(async (req, res) => {
 
     if (wantsAudioRemux) {
       // Pré-résoudre et valider chaque redirection en Node (anti-SSRF) avant d'invoquer FFmpeg
-      let resolvedRemuxUrl = targetUrl;
-      try {
-        for (let hop = 0; hop < 4; hop++) {
-          const safeHop = normalizeAllowedUrl(resolvedRemuxUrl);
-          if (!safeHop) return sendJSON(res, 403, { error: 'Hôte de redirection non autorisé.' });
-          const headRes = await fetch(safeHop, {
-            method: 'HEAD',
-            redirect: 'manual',
-            signal: AbortSignal.timeout(8000)
-          });
-          if (headRes.status >= 300 && headRes.status < 400 && headRes.headers.get('location')) {
-            try { await headRes.body?.cancel(); } catch {}
-            resolvedRemuxUrl = new URL(headRes.headers.get('location'), safeHop).toString();
-            continue;
-          }
-          try { await headRes.body?.cancel(); } catch {}
-          resolvedRemuxUrl = safeHop;
-          break;
-        }
-      } catch {
-        // En cas de HEAD non supporté par le CDN, on continue avec l'URL déjà validée par normalizeAllowedUrl
-      }
-      if (!normalizeAllowedUrl(resolvedRemuxUrl)) {
+      const resolvedRemuxUrl = await resolveSafeRedirects(targetUrl);
+      if (!resolvedRemuxUrl) {
         return sendJSON(res, 403, { error: 'Hôte vidéo non autorisé.' });
       }
-      console.log(`[Video Stream Proxy] Remux audio instantané (copie vidéo + AC3/DTS -> AAC)...`);
-      spawnFfmpegRemux(resolvedRemuxUrl, { copyVideo: true });
+      const desiredAudioLang = String(query.lang || 'vf').toLowerCase() === 'vo' ? 'vo' : 'vf';
+      const probedStreams = await probeMediaStreams(resolvedRemuxUrl);
+      const audioStreamIndex = pickAudioStreamIndex(probedStreams, desiredAudioLang);
+      console.log(`[Video Stream Proxy] Remux audio instantané (piste ${audioStreamIndex ?? 'défaut'} / ${desiredAudioLang.toUpperCase()} -> AAC)...`);
+      spawnFfmpegRemux(resolvedRemuxUrl, { copyVideo: true, audioStreamIndex });
       return;
     }
 
@@ -602,6 +746,105 @@ const server = http.createServer(async (req, res) => {
       }
       try { res.destroy(); } catch {}
     }
+    return;
+  }
+
+  // Sous-titres texte intégrés dans un fichier MKV/MP4 (détection rapide via ffprobe + streaming WebVTT)
+  if (pathname === '/api/embedded-subtitles') {
+    const rawTarget = normalizeAllowedUrl(query.url);
+    if (!rawTarget) {
+      return sendJSON(res, 400, { success: false, subtitles: [], error: 'URL média non autorisée.' });
+    }
+    if (!HAS_FFPROBE || !HAS_FFMPEG) {
+      return sendJSON(res, 200, { success: true, subtitles: [] });
+    }
+    try {
+      const resolvedUrl = await resolveSafeRedirects(rawTarget);
+      if (!resolvedUrl) return sendJSON(res, 200, { success: true, subtitles: [] });
+      const streams = await probeMediaStreams(resolvedUrl);
+      const subtitles = extractEmbeddedTextSubtitles(streams, encodeURIComponent(resolvedUrl));
+      return sendJSON(res, 200, { success: true, subtitles });
+    } catch {
+      return sendJSON(res, 200, { success: true, subtitles: [] });
+    }
+  }
+
+  if (pathname === '/api/embedded-subtitles-vtt') {
+    const rawTarget = normalizeAllowedUrl(query.url);
+    const streamIdx = Number(query.stream);
+    if (!rawTarget || !Number.isInteger(streamIdx) || streamIdx < 0 || streamIdx > 64) {
+      return sendJSON(res, 400, { error: 'Paramètres de sous-titres intégrés invalides.' });
+    }
+    if (!HAS_FFMPEG) {
+      return sendJSON(res, 503, { error: 'Extraction de sous-titres indisponible sur ce serveur.' });
+    }
+    const clientIp = req.headers['x-forwarded-for']
+      ? String(req.headers['x-forwarded-for']).split(',')[0].trim()
+      : (req.socket.remoteAddress || 'local');
+    if (!allowRemuxRequest(clientIp)) {
+      res.setHeader('Retry-After', '60');
+      return sendJSON(res, 429, { error: 'Trop de requêtes.' });
+    }
+    if (activeFfmpegJobs >= MAX_CONCURRENT_FFMPEG) {
+      return sendJSON(res, 503, { error: 'Serveur occupé.' });
+    }
+
+    const resolvedUrl = await resolveSafeRedirects(rawTarget);
+    if (!resolvedUrl) {
+      return sendJSON(res, 403, { error: 'Hôte média non autorisé.' });
+    }
+
+    let proc;
+    try {
+      proc = spawn('ffmpeg', [
+        '-protocol_whitelist', 'https,tls,tcp',
+        '-rw_timeout', '15000000',
+        '-i', resolvedUrl,
+        '-vn', '-an',
+        '-map', `0:${streamIdx}`,
+        '-f', 'webvtt',
+        'pipe:1'
+      ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      return sendJSON(res, 502, { error: 'Impossible de lancer l’extraction des sous-titres.' });
+    }
+
+    activeFfmpegJobs++;
+    let cleaned = false;
+    let maxTimer = null;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (maxTimer) clearTimeout(maxTimer);
+      activeFfmpegJobs = Math.max(0, activeFfmpegJobs - 1);
+      try { if (proc.exitCode === null && !proc.killed) proc.kill('SIGTERM'); } catch {}
+    };
+    maxTimer = setTimeout(() => { cleanup(); try { res.destroy(); } catch {} }, 5 * 60 * 1000);
+    maxTimer.unref?.();
+
+    req.on('close', cleanup);
+    res.on('close', cleanup);
+    res.on('error', cleanup);
+    proc.on('error', () => {
+      cleanup();
+      if (!res.headersSent) sendJSON(res, 502, { error: 'Extraction sous-titres indisponible.' });
+      else try { res.destroy(); } catch {}
+    });
+    proc.on('exit', () => {
+      cleanup();
+      if (!res.headersSent) sendJSON(res, 502, { error: 'Piste de sous-titres illisible.' });
+    });
+    proc.stdout.once('data', (firstChunk) => {
+      if (res.destroyed || res.writableEnded) { cleanup(); return; }
+      res.writeHead(200, {
+        'Content-Type': 'text/vtt; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Cache-Control': 'private, no-store'
+      });
+      res.write(firstChunk);
+      proc.stdout.pipe(res);
+    });
     return;
   }
 

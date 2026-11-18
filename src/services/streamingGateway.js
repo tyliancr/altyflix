@@ -1031,7 +1031,7 @@ function rankOpenSubtitlesClient(osList, { filename = '', limit = 4 } = {}) {
 /**
  * Recherche les sous-titres disponibles pour un film ou un épisode (OpenSubtitles direct en priorité absolue)
  */
-export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type = 'movie', season = 1, episode = 1, filename = '' }) {
+export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type = 'movie', season = 1, episode = 1, filename = '', streamUrl = '' }) {
     let imdbId = initialImdbId;
 
     // Si l'identifiant IMDb est absent ou mal formaté, le résoudre automatiquement depuis TMDB
@@ -1043,17 +1043,30 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         }
     }
 
-    if (!imdbId || !/^tt\d+$/i.test(String(imdbId))) {
-        return [];
-    }
-
-    const cleanImdbId = String(imdbId).toLowerCase();
-    const numericImdb = cleanImdbId.replace(/^tt/, '');
+    const cleanImdbId = (imdbId && /^tt\d+$/i.test(String(imdbId))) ? String(imdbId).toLowerCase() : '';
+    const numericImdb = cleanImdbId ? cleanImdbId.replace(/^tt/, '') : '';
     const isTv = type === 'tv';
-    const stremKey = isTv ? `${cleanImdbId}:${season}:${episode}` : `${cleanImdbId}`;
+    const stremKey = cleanImdbId ? (isTv ? `${cleanImdbId}:${season}:${episode}` : `${cleanImdbId}`) : '';
+
+    // 0. Source PREMIUM (synchro frame-accurate) : sous-titres texte intégrés dans le fichier MKV/MP4 (si backend FFmpeg dispo)
+    const embeddedPromise = (async () => {
+        if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) return [];
+        const s = createTimeoutSignal(3500);
+        try {
+            const res = await fetch(`/api/embedded-subtitles?url=${encodeURIComponent(streamUrl)}`, { signal: s.signal });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return Array.isArray(data?.subtitles) ? data.subtitles : [];
+        } catch {
+            return [];
+        } finally {
+            s.cleanup();
+        }
+    })();
 
     // 1. Source PRINCIPALE : OpenSubtitles REST directement depuis le navigateur (CORS natif, contourne les blocages IP AWS/Netlify)
     const fetchDirectOpenSubtitles = async (osLang, timeoutMs) => {
+        if (!numericImdb) return [];
         const s = createTimeoutSignal(timeoutMs);
         try {
             const osUrl = isTv
@@ -1105,14 +1118,49 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
     })();
 
     try {
-        const [[directFrRaw, directEnRaw], backendSubs] = await Promise.all([directOsPromise, backendSubsPromise]);
+        const [embeddedSubs, [directFrRaw, directEnRaw], backendSubs] = await Promise.all([
+            embeddedPromise,
+            directOsPromise,
+            backendSubsPromise
+        ]);
 
         const normalized = [];
         const seenUrls = new Set();
         let frCount = 0;
         let enCount = 0;
 
-        // A. OpenSubtitles direct (priorité absolue : fonctionne sur Netlify ET en local avec classement par release/FPS)
+        // 0. Sous-titres texte intégrés MKV en tête (synchro parfaite avec la vidéo)
+        for (const sub of embeddedSubs) {
+            if (!sub?.url || seenUrls.has(sub.url)) continue;
+            seenUrls.add(sub.url);
+            if (sub.lang === 'fr') {
+                if (!sub.forced) frCount++;
+                normalized.push({
+                    id: sub.id || `mkv-fr-${normalized.length}`,
+                    lang: 'fr',
+                    label: sub.label || (sub.forced ? 'Français (forcés)' : 'Français'),
+                    hint: sub.hint || (sub.forced ? 'Forcés · MKV' : 'Synchro MKV'),
+                    forced: Boolean(sub.forced),
+                    embedded: true,
+                    url: sub.url,
+                    encoding: 'utf-8'
+                });
+            } else if (sub.lang === 'en') {
+                enCount++;
+                normalized.push({
+                    id: sub.id || `mkv-en-${normalized.length}`,
+                    lang: 'en',
+                    label: sub.label || 'Anglais',
+                    hint: sub.hint || 'Synchro MKV',
+                    forced: Boolean(sub.forced),
+                    embedded: true,
+                    url: sub.url,
+                    encoding: 'utf-8'
+                });
+            }
+        }
+
+        // A. OpenSubtitles direct (fonctionne sur Netlify ET en local avec classement par release/FPS)
         for (const { item: s, hint } of rankOpenSubtitlesClient(directFrRaw, { filename, limit: 4 })) {
             if (frCount >= 4 || seenUrls.has(s.SubDownloadLink)) continue;
             frCount++;
@@ -1178,7 +1226,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         }
 
         // C. Dernier recours Stremio OpenSubtitles v3 uniquement si FR ou EN manquent encore (filtré strictement FR/EN)
-        if (frCount === 0 || enCount === 0) {
+        if ((frCount === 0 || enCount === 0) && stremKey) {
             const st = createTimeoutSignal(4500);
             try {
                 const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${stremKey}.json`;
@@ -1308,10 +1356,44 @@ export function parseVttCues(rawText) {
 /**
  * Récupère et parse directement les sous-titres en mémoire (détection gzip par magic bytes + encodages Windows-1252 / UTF-8)
  */
-export async function fetchSubtitleCues(subUrl, subEncoding = null, fallbackUrl = null) {
+export async function fetchSubtitleCues(subUrl, subEncoding = null, fallbackUrl = null, { onPartialCues = null, signal = null } = {}) {
     if (!subUrl) return [];
+    const isProgressiveMkv = subUrl.includes('/api/embedded-subtitles-vtt');
+
     const loadFromUrl = async (targetUrl) => {
-        const st = createTimeoutSignal(8000);
+        if (isProgressiveMkv && typeof onPartialCues === 'function') {
+            const res = await fetch(targetUrl, signal ? { signal } : undefined);
+            if (!res.ok) return null;
+            if (!res.body || typeof res.body.getReader !== 'function') {
+                return parseVttCues(await res.text());
+            }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let acc = '';
+            let lastEmit = 0;
+            try {
+                for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+                    if (signal?.aborted) {
+                        try { await reader.cancel(); } catch { /* ignore */ }
+                        return [];
+                    }
+                    acc += decoder.decode(chunk.value, { stream: true });
+                    const now = Date.now();
+                    if (now - lastEmit > 350) {
+                        lastEmit = now;
+                        const partial = parseVttCues(acc);
+                        if (partial.length > 0) onPartialCues(partial);
+                    }
+                }
+                acc += decoder.decode();
+                return parseVttCues(acc);
+            } catch {
+                try { await reader.cancel(); } catch { /* ignore */ }
+                return parseVttCues(acc);
+            }
+        }
+
+        const st = createTimeoutSignal(8000, signal);
         let res;
         try {
             res = await fetch(targetUrl, { signal: st.signal });
@@ -1355,12 +1437,13 @@ export async function fetchSubtitleCues(subUrl, subEncoding = null, fallbackUrl 
     try {
         const primary = await loadFromUrl(subUrl);
         if (primary && primary.length > 0) return primary;
-        if (fallbackUrl && fallbackUrl !== subUrl) {
+        if (fallbackUrl && fallbackUrl !== subUrl && !signal?.aborted) {
             const fallback = await loadFromUrl(fallbackUrl);
             if (fallback && fallback.length > 0) return fallback;
         }
         return [];
     } catch (err) {
+        if (signal?.aborted) return [];
         if (fallbackUrl && fallbackUrl !== subUrl) {
             try {
                 const fallback = await loadFromUrl(fallbackUrl);

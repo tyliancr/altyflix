@@ -166,6 +166,7 @@ export default function NetflixPlayer({
     const volumeRef = useRef(volume);
     volumeRef.current = volume;
     const activeSubRequestIdRef = useRef(0);
+    const subAbortRef = useRef(null);
     const autoSubAppliedKeyRef = useRef('');
     const availableSubtitlesRef = useRef([]);
     availableSubtitlesRef.current = availableSubtitles;
@@ -1047,9 +1048,15 @@ export default function NetflixPlayer({
     }, []);
     updateSubtitleLinesRef.current = updateSubtitleLines;
 
-    // Sélection d'une piste de sous-titres (sécurisée en mémoire pour éliminer les bugs d'empilement)
+    // Sélection d'une piste de sous-titres (sécurisée en mémoire + streaming progressif pour pistes MKV intégrées)
     const handleSelectSubtitle = useCallback(async (subId, customList = null) => {
         const reqId = ++activeSubRequestIdRef.current;
+        if (subAbortRef.current) {
+            try { subAbortRef.current.abort(); } catch { /* ignore */ }
+        }
+        const subController = new AbortController();
+        subAbortRef.current = subController;
+
         setSelectedSubtitleId(subId);
         selectedSubtitleIdRef.current = subId;
         const video = videoRef.current;
@@ -1074,11 +1081,18 @@ export default function NetflixPlayer({
 
         try {
             // Fichier vide ou injoignable : on essaie les autres pistes de la même langue
-            const candidates = [sub, ...list.filter(s => s.id !== sub.id && s.lang === sub.lang)];
+            const candidates = [sub, ...list.filter(s => s.id !== sub.id && s.lang === sub.lang && Boolean(s.forced) === Boolean(sub.forced))];
             let cues = [];
             let chosen = sub;
             for (const cand of candidates) {
-                cues = await fetchSubtitleCues(cand.url, cand.encoding, cand.fallbackUrl);
+                cues = await fetchSubtitleCues(cand.url, cand.encoding, cand.fallbackUrl, {
+                    signal: subController.signal,
+                    onPartialCues: (partial) => {
+                        if (reqId !== activeSubRequestIdRef.current || !videoRef.current) return;
+                        cuesRef.current = partial;
+                        if (updateSubtitleLinesRef.current) updateSubtitleLinesRef.current();
+                    }
+                });
                 if (reqId !== activeSubRequestIdRef.current || !videoRef.current) return;
                 if (cues.length > 0) { chosen = cand; break; }
             }
@@ -1089,17 +1103,26 @@ export default function NetflixPlayer({
             cuesRef.current = cues;
             if (updateSubtitleLinesRef.current) updateSubtitleLinesRef.current();
         } catch (err) {
-            console.warn('[Altyflix Subtitles] Erreur chargement VTT :', err);
+            if (!subController.signal.aborted) {
+                console.warn('[Altyflix Subtitles] Erreur chargement VTT :', err);
+            }
+        }
+    }, []);
+
+    useEffect(() => () => {
+        if (subAbortRef.current) {
+            try { subAbortRef.current.abort(); } catch { /* ignore */ }
         }
     }, []);
 
     // Raccourci bascule rapide sous-titres (Touche C ou bouton direct)
     const toggleSubtitles = useCallback(() => {
         const subs = availableSubtitlesRef.current || [];
+        userPickedSubRef.current = true;
         if (selectedSubtitleIdRef.current !== 'off') {
             handleSelectSubtitle('off');
         } else if (subs.length > 0) {
-            const frSub = subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
+            const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
             const target = frSub || subs[0];
             handleSelectSubtitle(target.id, subs);
         }
@@ -1114,11 +1137,13 @@ export default function NetflixPlayer({
         }
     }, [currentProfile?.id, updateProfile, subsPrefKey]);
 
-    // Chargement automatique des sous-titres disponibles (classés selon la release/FPS de la vidéo active)
+    // Chargement automatique des sous-titres (MKV intégrés + OpenSubtitles) & Auto-VOSTFR façon Netflix
     const activeStreamFilename = activeStream?.filename || '';
+    const activeStreamRawUrl = activeStream?.directUrl || activeStream?.originalUrl || '';
+    const activeStreamIsVo = Boolean(activeStream && !activeStream.isFrench);
     useEffect(() => {
         let active = true;
-        const currentMediaKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}-${activeStreamFilename}`;
+        const currentMediaKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}-${activeStreamFilename}-${activeStreamIsVo ? 'vo' : 'vf'}`;
         if (!id) return;
 
         const imdbId = contentRef.current?.external_ids?.imdb_id || contentRef.current?.imdb_id || resolvedImdbIdRef.current;
@@ -1129,34 +1154,44 @@ export default function NetflixPlayer({
             type: isTv ? 'tv' : 'movie',
             season,
             episode,
-            filename: activeStreamFilename
+            filename: activeStreamFilename,
+            streamUrl: activeStreamRawUrl
         }).then(subs => {
             if (!active || !Array.isArray(subs)) return;
             setAvailableSubtitles(subs);
             availableSubtitlesRef.current = subs;
 
-            // Auto-sélection des sous-titres les mieux synchronisés avec la release active
+            // Auto-VOSTFR façon Netflix :
+            // - En VO (ou si « Toujours activer » est coché) : activer automatiquement les sous-titres FR complets
+            // - En VF : désactivés par défaut (sauf sous-titres FR forcés intégrés MKV s'il y en a)
             if (autoSubAppliedKeyRef.current !== currentMediaKey && !userPickedSubRef.current) {
                 autoSubAppliedKeyRef.current = currentMediaKey;
-                if (subtitlesAlwaysOnRef.current && subs.length > 0) {
-                    const frSub = subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
-                    const targetSub = frSub || subs[0];
-                    if (targetSub) {
-                        handleSelectSubtitle(targetSub.id, subs);
-                    }
+                if ((activeStreamIsVo || subtitlesAlwaysOnRef.current) && subs.length > 0) {
+                    const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr') || subs[0];
+                    if (frSub) handleSelectSubtitle(frSub.id, subs);
+                } else {
+                    const forcedFr = subs.find(s => s.lang === 'fr' && s.forced && s.embedded);
+                    if (forcedFr) handleSelectSubtitle(forcedFr.id, subs);
+                    else if (selectedSubtitleIdRef.current !== 'off') handleSelectSubtitle('off');
                 }
             }
         }).catch(() => {});
 
         return () => { active = false; };
-    }, [id, isTv, season, episode, activeStreamFilename, handleSelectSubtitle]);
+    }, [id, isTv, season, episode, activeStreamFilename, activeStreamRawUrl, activeStreamIsVo, handleSelectSubtitle]);
 
-    // Sélection de la langue audio (VF vs VO)
+    // Sélection de la langue audio (VF vs VO) avec bascule Auto-VOSTFR immédiate
     const handleSelectAudioLang = (lang) => {
         setCurrentAudioLang(lang);
-        if (!availableStreams || availableStreams.length <= 1) return;
+        userPickedSubRef.current = false;
+        const subs = availableSubtitlesRef.current || [];
 
         if (lang === 'vf') {
+            if (!subtitlesAlwaysOnRef.current) {
+                const forcedFr = subs.find(s => s.lang === 'fr' && s.forced && s.embedded);
+                handleSelectSubtitle(forcedFr ? forcedFr.id : 'off', subs);
+            }
+            if (!availableStreams || availableStreams.length <= 1) return;
             const vfStream =
                 availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                 availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
@@ -1166,6 +1201,9 @@ export default function NetflixPlayer({
                 handleSelectStream(vfStream);
             }
         } else {
+            const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr');
+            if (frSub) handleSelectSubtitle(frSub.id, subs);
+            if (!availableStreams || availableStreams.length <= 1) return;
             const voStream =
                 availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                 availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio) ||

@@ -280,6 +280,32 @@ export default async function handler(req) {
     }
   }
 
+  // 6b. Sous-titres intégrés MKV (relai vers STREAM_BACKEND_URL si configuré, sinon liste vide)
+  if (pathname === '/api/embedded-subtitles') {
+    const rawStreamBackend = getEnv('STREAM_BACKEND_URL').trim().replace(/\/+$/, '');
+    const streamBackendUrl = /^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(rawStreamBackend) ? rawStreamBackend : '';
+    const safeUrl = normalizeAllowedUrl(query.url);
+    if (!streamBackendUrl || !safeUrl) {
+      return jsonResponse({ success: true, subtitles: [] });
+    }
+    try {
+      const r = await fetch(`${streamBackendUrl}/api/embedded-subtitles?url=${encodeURIComponent(safeUrl)}`, {
+        signal: AbortSignal.timeout(4000)
+      });
+      if (!r.ok) return jsonResponse({ success: true, subtitles: [] });
+      const data = await r.json();
+      const subs = Array.isArray(data?.subtitles)
+        ? data.subtitles.map(s => ({
+            ...s,
+            url: (typeof s.url === 'string' && s.url.startsWith('/')) ? `${streamBackendUrl}${s.url}` : s.url
+          }))
+        : [];
+      return jsonResponse({ success: true, subtitles: subs });
+    } catch {
+      return jsonResponse({ success: true, subtitles: [] });
+    }
+  }
+
   // 7. Sous-titres multi-sources (OpenSubtitles REST FR + EN + Stremio v3)
   if (pathname === '/api/subtitles') {
     const { id, imdbId: queryImdbId, type = 'movie', season = 1, episode = 1, filename = '' } = query;

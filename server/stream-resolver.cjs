@@ -741,18 +741,20 @@ async function resolveStreamsServer({
   const finalizeStreamUrl = (s) => {
     if (!s) return s;
     const rawDirect = s.directUrl || s.originalUrl || s.url;
+    const audioLangParam = s.isFrench ? 'vf' : 'vo';
     if (s.isAvi && enableAviTranscode && rawDirect) {
       if (s.url && s.url.startsWith('/api/video-stream')) {
-        return streamBase ? { ...s, url: `${streamBase}${s.url}`, isTranscoded: true } : s;
+        const withLang = s.url.includes('lang=') ? s.url : `${s.url}&lang=${audioLangParam}`;
+        return streamBase ? { ...s, url: `${streamBase}${withLang}`, isTranscoded: true } : { ...s, url: withLang, isTranscoded: true };
       }
       if (rawDirect.startsWith('http')) {
-        return { ...s, url: `${streamBase}/api/video-stream?url=${encodeURIComponent(rawDirect)}`, isTranscoded: true };
+        return { ...s, url: `${streamBase}/api/video-stream?lang=${audioLangParam}&url=${encodeURIComponent(rawDirect)}`, isTranscoded: true };
       }
     }
     if (enableAudioRemux && s.hasUnsupportedAudio && s.verifiedReady && s.url && s.url.startsWith('http')) {
       return {
         ...s,
-        url: `${streamBase}/api/video-stream?audio=aac&url=${encodeURIComponent(s.url)}`,
+        url: `${streamBase}/api/video-stream?audio=aac&lang=${audioLangParam}&url=${encodeURIComponent(s.url)}`,
         directUrl: s.directUrl || s.url,
         isTranscoded: true,
         audioRemuxed: true

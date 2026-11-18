@@ -634,10 +634,10 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
     if (cachedMylist) {
       torrents = cachedMylist;
     } else {
-      const res = await fetch('https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true', {
+      const res = await fetch('https://api.torbox.app/v1/api/torrents/mylist', {
         headers: { 'Authorization': `Bearer ${torboxToken}` },
         redirect: 'error',
-        signal: AbortSignal.timeout(2500)
+        signal: AbortSignal.timeout(5000)
       });
       if (!res.ok) return [];
       const json = await res.json();
@@ -697,7 +697,7 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
           });
           const dlRes = await fetch(`https://api.torbox.app/v1/api/torrents/requestdl?${dlQuery.toString()}`, {
             redirect: 'error',
-            signal: AbortSignal.timeout(2200)
+            signal: AbortSignal.timeout(4500)
           });
           if (dlRes.ok) {
             const dlData = await dlRes.json();

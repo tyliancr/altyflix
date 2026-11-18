@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
 import { resolvePlaybackStreams, pollStreamStatus, getGatewayConfig, saveGatewayConfig, fetchSubtitlesForContent, fetchSubtitleCues, DEFAULT_PROVIDER, DEFAULT_TOKEN } from '../../services/streamingGateway';
-import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon, formatClock } from './PlayerPanels';
+import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon } from './PlayerPanels';
+import { formatClock } from './playerUtils';
 import { IN_TV_APP, moveFocusWithin } from '../../hooks/useTVNavigation';
 import { UnifiedStreamingEngine } from './engine/UnifiedStreamingEngine';
 import { useProfile } from '../../contexts/ProfileContext';
@@ -1303,7 +1304,7 @@ export default function NetflixPlayer({
                     {/* Clic souris : lecture / pause */}
                     {!compact && centerAction && (
                         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
-                            <div className="grid h-24 w-24 place-items-center rounded-full bg-black/50 player-flash">
+                            <div className="liquid-glass-pill grid h-24 w-24 place-items-center rounded-full player-flash">
                                 {centerAction === 'play'
                                     ? <NetflixPlayIcon className="h-12 w-12 translate-x-0.5" />
                                     : <NetflixPauseIcon className="h-12 w-12" />}
@@ -1482,14 +1483,14 @@ export default function NetflixPlayer({
                                             </button>
                                         )}
                                         {isTv && (
-                                            <button type="button" onClick={() => openPanel('episodes')} aria-label="Épisodes" title="Épisodes" aria-expanded={panel === 'episodes'} className={iconBtn}>
+                                            <button type="button" onClick={() => openPanel('episodes')} aria-label="Épisodes" title="Épisodes" aria-expanded={panel === 'episodes'} className={`${iconBtn} ${panel === 'episodes' ? 'liquid-glass-pill !text-white' : ''}`}>
                                                 <NetflixEpisodesIcon className="h-8 w-8" />
                                             </button>
                                         )}
-                                        <button type="button" onClick={() => openPanel('audio')} aria-label="Audio et sous-titres" title="Audio et sous-titres (C)" aria-expanded={panel === 'audio'} className={iconBtn}>
+                                        <button type="button" onClick={() => openPanel('audio')} aria-label="Audio et sous-titres" title="Audio et sous-titres (C)" aria-expanded={panel === 'audio'} className={`${iconBtn} ${panel === 'audio' ? 'liquid-glass-pill !text-white' : ''}`}>
                                             <NetflixSubtitlesIcon className="h-8 w-8" />
                                         </button>
-                                        <button type="button" onClick={() => openPanel('speed')} aria-label="Vitesse de lecture" title="Vitesse de lecture" aria-expanded={panel === 'speed'} className={iconBtn}>
+                                        <button type="button" onClick={() => openPanel('speed')} aria-label="Vitesse de lecture" title="Vitesse de lecture" aria-expanded={panel === 'speed'} className={`${iconBtn} ${panel === 'speed' ? 'liquid-glass-pill !text-white' : ''}`}>
                                             <SpeedIcon className="h-8 w-8" />
                                         </button>
                                         <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'} title="Plein écran (F)" className={iconBtn}>
@@ -1506,7 +1507,7 @@ export default function NetflixPlayer({
                         <button
                             type="button"
                             onClick={handleNextEpisode}
-                            className={`absolute z-40 flex items-center gap-2 rounded bg-white px-5 py-2.5 text-sm font-bold text-black shadow-lg hover:bg-white/85 ${
+                            className={`absolute z-40 flex items-center gap-2.5 rounded-full bg-white/95 px-6 py-3 text-sm font-bold text-black shadow-[0_14px_38px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(255,255,255,1)] backdrop-blur-xl transition-all duration-200 hover:scale-[1.03] hover:bg-white active:scale-95 cursor-pointer ${
                                 compact ? 'bottom-24 right-5' : 'bottom-32 right-10'
                             }`}
                         >
@@ -1574,14 +1575,14 @@ export default function NetflixPlayer({
                                 .filter(st => st.id !== activeStream?.id)
                                 .slice(0, 4)
                                 .map(st => (
-                                    <button
-                                        key={st.id || st.url}
-                                        type="button"
-                                        onClick={() => handleSelectStream(st)}
-                                        className="rounded border border-white/25 px-3 py-1.5 text-xs font-medium text-white/80 hover:border-white hover:text-white"
-                                    >
-                                        {getShortQualityBadge(st)}
-                                    </button>
+                                        <button
+                                            key={st.id || st.url}
+                                            type="button"
+                                            onClick={() => handleSelectStream(st)}
+                                            className="liquid-glass-pill rounded-full px-4 py-1.5 text-xs font-semibold text-white/85 hover:text-white cursor-pointer"
+                                        >
+                                            {getShortQualityBadge(st)}
+                                        </button>
                                 ))}
                         </div>
                     )}

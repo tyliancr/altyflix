@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800;900&display=swap&font-display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -633,12 +631,73 @@ video::-webkit-media-text-track-container {
 @keyframes player-flash { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.35); } }
 .player-flash { animation: player-flash 0.6s ease-out forwards; }
 @keyframes player-fade-in { from { opacity: 0; } to { opacity: 1; } }
-.player-fade-in { animation: player-fade-in 0.35s ease-out both; }
-@keyframes player-pop-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
-.player-pop-in { animation: player-pop-in 0.18s ease-out both; transform-origin: bottom right; }
+.player-fade-in { animation: player-fade-in 0.28s ease-out both; }
+@keyframes player-pop-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.player-pop-in {
+  animation: player-pop-in 0.26s cubic-bezier(0.22, 1.12, 0.36, 1) both;
+  transform-origin: bottom right;
+}
+
+/* Lecteur : Liquid Glass subtil et épuré (NE PAS définir position ici pour préserver absolute) */
+.liquid-glass-panel {
+  background: linear-gradient(160deg, rgba(22, 22, 28, 0.72) 0%, rgba(12, 12, 16, 0.82) 100%);
+  backdrop-filter: blur(32px) saturate(165%);
+  -webkit-backdrop-filter: blur(32px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.20),
+    0 24px 64px -12px rgba(0, 0, 0, 0.75);
+}
+
+.liquid-glass-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, transparent 45%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.liquid-glass-sheet {
+  background: linear-gradient(165deg, rgba(20, 20, 26, 0.78) 0%, rgba(9, 9, 13, 0.88) 100%);
+  backdrop-filter: blur(36px) saturate(165%);
+  -webkit-backdrop-filter: blur(36px) saturate(165%);
+}
+
+.liquid-glass-pill {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.16);
+  transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.liquid-glass-pill:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.liquid-glass-card-active {
+  background: rgba(255, 255, 255, 0.11);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.16);
+}
+
+.liquid-glass-card-idle {
+  background: transparent;
+  transition: background-color 150ms ease;
+}
+
+.liquid-glass-card-idle:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
 
 /* Lecteur : barre de défilement fine dans les panneaux */
 .player-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.22) transparent; }
-.player-scroll::-webkit-scrollbar { width: 6px; }
+.player-scroll::-webkit-scrollbar { width: 5px; }
 .player-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 9999px; }
 .player-scroll::-webkit-scrollbar-track { background: transparent; }

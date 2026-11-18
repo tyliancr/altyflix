@@ -49,7 +49,7 @@ export const ProfileProvider = ({ children }) => {
         }
         return null;
     });
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !currentProfile);
 
     const activeUser = useRef(null);
     activeUser.current = currentUser?.uid || null;
@@ -142,7 +142,11 @@ export const ProfileProvider = ({ children }) => {
                 storage.remove('altyflix_cached_active_profile');
             }
             previousUser.current = currentUser.uid;
-            setLoading(true);
+            if (isDifferentUser || !activeProfile.current) {
+                setLoading(true);
+            } else {
+                setLoading(false);
+            }
             loadProfiles();
         } else {
             previousUser.current = null;

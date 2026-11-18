@@ -11,12 +11,47 @@ import { useTranslation } from '../hooks/useTranslation';
 import useRecommendations from '../hooks/useRecommendations';
 import ResumeRow from '../components/home/ResumeRow';
 
+const HOME_CACHE_TTL_MS = 30 * 60 * 1000; // 30 min instant stale-while-revalidate
+
+function readHomeCache(cacheKey) {
+    try {
+        const raw = localStorage.getItem(cacheKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.categories) || parsed.categories.length === 0) return null;
+        if (Date.now() - (parsed.ts || 0) > HOME_CACHE_TTL_MS) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function writeHomeCache(cacheKey, heroContent, categories) {
+    try {
+        if (!Array.isArray(categories) || categories.length === 0) return;
+        localStorage.setItem(cacheKey, JSON.stringify({
+            ts: Date.now(),
+            heroContent: (heroContent || []).slice(0, 5),
+            categories
+        }));
+    } catch {
+        // Quota localStorage plein — on ignore silencieusement
+    }
+}
+
 const Home = () => {
     const { currentProfile, watchHistory } = useProfile();
-    const [loading, setLoading] = useState(true);
-    const [heroContent, setHeroContent] = useState([]);
-    const [categories, setCategories] = useState([]);
     const { t } = useTranslation();
+
+    const kids = Boolean(currentProfile?.isKid || currentProfile?.name?.toLowerCase() === 'enfant');
+    const profileId = currentProfile?.id;
+    const langKey = currentProfile?.language || 'fr';
+    const homeCacheKey = `altyflix_home_feed_${langKey}_${kids ? 'kids' : 'std'}`;
+
+    const initialCache = readHomeCache(homeCacheKey);
+    const [loading, setLoading] = useState(() => !initialCache);
+    const [heroContent, setHeroContent] = useState(() => initialCache?.heroContent || []);
+    const [categories, setCategories] = useState(() => initialCache?.categories || []);
 
     // Smart recommendations hook
     const {
@@ -27,16 +62,22 @@ const Home = () => {
 
     const [request, setRequest] = useState(0);
     const [catalogueFailed, setCatalogueFailed] = useState(false);
-    const kids = Boolean(currentProfile?.isKid || currentProfile?.name?.toLowerCase() === 'enfant');
-    const profileId = currentProfile?.id;
+
     useEffect(() => {
         if (!profileId) return;
         let active = true;
         const loadContent = async () => {
             try {
-                setLoading(true);
-                setHeroContent([]);
-                setCategories([]);
+                const cached = readHomeCache(homeCacheKey);
+                if (cached) {
+                    setHeroContent(cached.heroContent || []);
+                    setCategories(cached.categories || []);
+                    setLoading(false);
+                } else {
+                    setLoading(true);
+                    setHeroContent([]);
+                    setCategories([]);
+                }
 
                 // KIDS MODE LOGIC
                 setCatalogueFailed(false);
@@ -54,15 +95,14 @@ const Home = () => {
 
                     if (!active) return;
                     const topKidsContent = kidsMovies.results?.slice(0, 5) || [];
-                    setHeroContent(topKidsContent);
-
-                    setCategories([
+                    const kidsCats = [
                         { title: 'Dessins Animés Populaires', content: kidsSeries.results || [] },
                         { title: 'Films pour toute la famille', content: kidsMovies.results || [] },
                         { title: 'Aventures Magiques', content: allKidsMovies.results || [] },
-                    ]);
-
-
+                    ];
+                    setHeroContent(topKidsContent);
+                    setCategories(kidsCats);
+                    writeHomeCache(homeCacheKey, topKidsContent, kidsCats);
                     setLoading(false);
                 } else {
                     // STANDARD MODE - Phase 1 (Critical initial content)
@@ -109,7 +149,9 @@ const Home = () => {
                         { title: t('home.trending'), content: trendingData.results || [], ranked: true },
                         { title: t('home.newReleases'), content: newReleasesList }
                     ];
-                    setCategories(initialCategories);
+                    if (!cached) {
+                        setCategories(initialCategories);
+                    }
 
                     // First Paint
                     setLoading(false);
@@ -166,8 +208,12 @@ const Home = () => {
                             { title: t('home.upcoming'), content: upcomingMoviesData.results || [] }
                         ];
 
-                        setCatalogueFailed(!baseCategories.some(row => row.content.length) && [...phase1Results, ...phase2Results].some(result => result.status === 'rejected'));
-                        setCategories(baseCategories);
+                        const hasAny = baseCategories.some(row => row.content.length);
+                        setCatalogueFailed(!hasAny && [...phase1Results, ...phase2Results].some(result => result.status === 'rejected'));
+                        if (hasAny) {
+                            setCategories(baseCategories);
+                            writeHomeCache(homeCacheKey, topTrending, baseCategories);
+                        }
                     });
                 }
             } catch (error) {

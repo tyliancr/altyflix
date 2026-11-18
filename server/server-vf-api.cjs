@@ -17,7 +17,24 @@ const { SECURITY_HEADERS, HttpError, validateStreams, arteLimit, tmdbUrl, Bounde
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { URL } = require('url');
+
+const COMPRESSIBLE_EXTS = new Set(['.js', '.mjs', '.css', '.html', '.svg', '.json', '.webmanifest', '.txt', '.xml']);
+const staticGzipCache = new Map();
+
+function getGzippedStatic(filePath, mtimeMs, rawBuffer) {
+  const key = `${filePath}:${mtimeMs}`;
+  const cached = staticGzipCache.get(key);
+  if (cached) return cached;
+  const gz = zlib.gzipSync(rawBuffer, { level: 6 });
+  if (staticGzipCache.size > 120) {
+    const first = staticGzipCache.keys().next().value;
+    if (first) staticGzipCache.delete(first);
+  }
+  staticGzipCache.set(key, gz);
+  return gz;
+}
 
 // Chargement des variables d'environnement depuis .env
 function loadEnv() {
@@ -170,17 +187,34 @@ function serveStaticFile(req, res, pathname) {
     if (!allowed) return sendJSON(res, 403, { error: 'Accès interdit.' });
   }
   if (actualPath && fs.statSync(actualPath).isFile()) {
+    const stat = fs.statSync(actualPath);
     fs.readFile(actualPath, (readErr, data) => {
       if (readErr) {
         return sendJSON(res, 500, { success: false, error: 'Erreur lecture fichier' });
       }
       const ext = path.extname(actualPath).toLowerCase();
       const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-      res.writeHead(200, {
+      const isHashedAsset = pathname.startsWith('/assets/');
+      const isNoCache = ext === '.html' || pathname === '/sw.js' || pathname === '/manifest.webmanifest';
+      const cacheControl = isHashedAsset
+        ? 'public, max-age=31536000, immutable'
+        : isNoCache
+          ? 'no-cache'
+          : 'public, max-age=86400';
+
+      const acceptsGzip = /\bgzip\b/i.test(req.headers['accept-encoding'] || '');
+      const shouldCompress = acceptsGzip && COMPRESSIBLE_EXTS.has(ext) && data.length > 1024;
+      const body = shouldCompress ? getGzippedStatic(actualPath, stat.mtimeMs, data) : data;
+      const headers = {
         'Content-Type': contentType,
+        'Cache-Control': cacheControl,
+        'Vary': 'Accept-Encoding',
         ...SECURITY_HEADERS
-      });
-      res.end(data);
+      };
+      if (shouldCompress) headers['Content-Encoding'] = 'gzip';
+      headers['Content-Length'] = body.length;
+      res.writeHead(200, headers);
+      res.end(body);
     });
     return;
   }
@@ -201,11 +235,19 @@ function serveStaticFile(req, res, pathname) {
     if (readErr) {
       return sendJSON(res, 404, { success: false, error: 'index.html introuvable' });
     }
-    res.writeHead(200, {
+    const stat = fs.statSync(fallbackPath);
+    const acceptsGzip = /\bgzip\b/i.test(req.headers['accept-encoding'] || '');
+    const body = acceptsGzip ? getGzippedStatic(fallbackPath, stat.mtimeMs, data) : data;
+    const headers = {
       'Content-Type': MIME_TYPES['.html'],
+      'Cache-Control': 'no-cache',
+      'Vary': 'Accept-Encoding',
       ...SECURITY_HEADERS
-    });
-    res.end(data);
+    };
+    if (acceptsGzip) headers['Content-Encoding'] = 'gzip';
+    headers['Content-Length'] = body.length;
+    res.writeHead(200, headers);
+    res.end(body);
   });
 }
 
@@ -689,14 +731,25 @@ const server = http.createServer(async (req, res) => {
       const tmdbPath = pathname.replace('/api/tmdb/', '');
       const upstreamUrl = tmdbUrl(tmdbPath, parsedUrl.searchParams, TMDB_API_KEY);
       const cacheKey = upstreamUrl.toString();
-      const cached = getCache(cacheKey);
-      if (cached) {
-        return sendJSON(res, 200, cached);
+      let data = getCache(cacheKey);
+      if (!data) {
+        data = await fetchJson(upstreamUrl);
+        setCache(cacheKey, data);
       }
 
-      const data = await fetchJson(upstreamUrl);
-      setCache(cacheKey, data);
-      return sendJSON(res, 200, data);
+      const rawJson = Buffer.from(JSON.stringify(data));
+      const acceptsGzip = /\bgzip\b/i.test(req.headers['accept-encoding'] || '');
+      const body = (acceptsGzip && rawJson.length > 1024) ? zlib.gzipSync(rawJson, { level: 4 }) : rawJson;
+      const headers = {
+        ...SECURITY_HEADERS,
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'public, max-age=300',
+        'Vary': 'Accept-Encoding',
+        'Content-Length': body.length
+      };
+      if (acceptsGzip && rawJson.length > 1024) headers['Content-Encoding'] = 'gzip';
+      res.writeHead(200, headers);
+      return res.end(body);
     } catch (err) {
       return sendJSON(res, err.status || 502, { success: false, error: err instanceof HttpError ? err.message : 'Service indisponible.' });
     }
@@ -759,4 +812,18 @@ const server = http.createServer(async (req, res) => {
 module.exports = server;
 if (require.main === module) server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 ALTYFLIX (site web et API) démarré sur le port ${PORT} ! (http://localhost:${PORT})`);
+  // Préchauffage silencieux des routes TMDB principales de la page d'accueil
+  const warmEndpoints = [
+    'trending/all/week?language=fr-FR',
+    'movie/popular?language=fr-FR',
+    'tv/popular?language=fr-FR',
+    'tv/airing_today?language=fr-FR'
+  ];
+  warmEndpoints.forEach((ep) => {
+    try {
+      const [p, qs] = ep.split('?');
+      const upstreamUrl = tmdbUrl(p, new URLSearchParams(qs), TMDB_API_KEY);
+      fetchJson(upstreamUrl).then(d => setCache(upstreamUrl.toString(), d)).catch(() => {});
+    } catch {}
+  });
 });

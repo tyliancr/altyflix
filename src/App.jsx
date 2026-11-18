@@ -62,9 +62,10 @@ class ErrorBoundary extends Component {
   }
 }
 
+import Home from './pages/Home';
+
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const ProfileSelector = lazy(() => import('./pages/ProfileSelector'));
-const Home = lazy(() => import('./pages/Home'));
 const DetailPage = lazy(() => import('./pages/DetailPage'));
 const FilmsPage = lazy(() => import('./pages/FilmsPage'));
 const SeriesPage = lazy(() => import('./pages/SeriesPage'));
@@ -386,7 +387,6 @@ const AppRoutes = () => {
 // lancement d'une vidéo) soient instantanés, on les précharge dès que le navigateur
 // est au repos : les pages d'abord, le lecteur (plus lourd) ensuite.
 const PAGE_CHUNKS = [
-  () => import('./pages/Home'),
   () => import('./pages/DetailPage'),
   () => import('./pages/FilmsPage'),
   () => import('./pages/SeriesPage'),

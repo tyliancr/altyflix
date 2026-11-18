@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
+import { getMovieDetails, getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
 import { resolvePlaybackStreams, pollStreamStatus, getGatewayConfig, saveGatewayConfig, fetchSubtitlesForContent, fetchSubtitleCues, DEFAULT_PROVIDER, DEFAULT_TOKEN } from '../../services/streamingGateway';
 import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon } from './PlayerPanels';
@@ -139,9 +139,7 @@ export default function NetflixPlayer({
     const watchHistoryRef = useRef(watchHistory);
     watchHistoryRef.current = watchHistory;
     const loadedUrlRef = useRef(null);
-    const activeStreamRef = useRef(activeStream);
-    activeStreamRef.current = activeStream;
-    const audioFallbackAttemptedRef = useRef(new Set());
+    const [resolvedDurationSec, setResolvedDurationSec] = useState(0);
     const resolvedKeyRef = useRef('');
     const resolvedImdbIdRef = useRef('');
     const pollingAbortControllerRef = useRef(null);
@@ -160,19 +158,40 @@ export default function NetflixPlayer({
     selectedSubtitleIdRef.current = selectedSubtitleId;
     const updateSubtitleLinesRef = useRef(() => {});
 
-    // Récupération des détails de la série
+    // Récupération des détails (série / épisode / film) incluant la durée réelle TMDB pour la barre de lecture
     useEffect(() => {
         let live = true;
+        setResolvedDurationSec(0);
         if (isTv && id) {
-            getSeriesDetails(id).then(d => { if (live) setTvDetails(d); }).catch(() => {});
+            getSeriesDetails(id).then(d => {
+                if (!live) return;
+                setTvDetails(d);
+                const fallbackEpDur = Number(d?.episode_run_time?.[0]) * 60 || 0;
+                if (fallbackEpDur > 60) {
+                    setResolvedDurationSec(prev => (prev > 60 ? prev : fallbackEpDur));
+                }
+            }).catch(() => {});
             getSeasonDetails(id, season).then(data => {
                 if (!live) return;
                 const ep = data?.episodes?.find(e => e.episode_number === episode);
                 setCurrentEpTitle(ep?.name || '');
                 setCurrentEpOverview(ep?.overview || '');
+                const epDur = Number(ep?.runtime) * 60 || 0;
+                if (epDur > 60) setResolvedDurationSec(epDur);
                 const hasNext = data?.episodes?.some(e => e.episode_number > episode);
                 setNextEpAvailable(hasNext);
             }).catch(() => {});
+        } else if (!isTv && id) {
+            const initialMovieDur = Number(contentRef.current?.runtime) * 60 || 0;
+            if (initialMovieDur > 60) {
+                setResolvedDurationSec(initialMovieDur);
+            } else {
+                getMovieDetails(id).then(d => {
+                    if (!live) return;
+                    const dur = Number(d?.runtime) * 60 || 0;
+                    if (dur > 60) setResolvedDurationSec(dur);
+                }).catch(() => {});
+            }
         }
         return () => { live = false; };
     }, [isTv, id, season, episode]);
@@ -348,8 +367,9 @@ export default function NetflixPlayer({
         });
     }, [activeStream?.url]);
 
-    // Durée réelle connue depuis TMDB (utilisée pour fiabiliser la timeline et le transcodage)
-    const tmdbDuration = (contentRef.current?.runtime ? Number(contentRef.current.runtime) * 60 : 0) ||
+    // Durée réelle connue depuis TMDB (utilisée pour fiabiliser la timeline et le remux audio/AVI)
+    const tmdbDuration = resolvedDurationSec ||
+                         (contentRef.current?.runtime ? Number(contentRef.current.runtime) * 60 : 0) ||
                          (contentRef.current?.episode_run_time?.[0] ? Number(contentRef.current.episode_run_time[0]) * 60 : 0);
     const durationRef = useRef(duration);
     durationRef.current = duration;
@@ -357,6 +377,13 @@ export default function NetflixPlayer({
     tmdbDurationRef.current = tmdbDuration;
     const handleStreamErrorRef = useRef(handleStreamError);
     handleStreamErrorRef.current = handleStreamError;
+
+    // Dès que la durée TMDB arrive, mettre à jour la timeline si le flux est remuxé ou n'a pas encore de durée fiable
+    useEffect(() => {
+        if (tmdbDuration > 60 && (duration <= 60 || activeStream?.isTranscoded || activeStream?.url?.includes('/api/video-stream'))) {
+            setDuration(tmdbDuration);
+        }
+    }, [tmdbDuration, duration, activeStream?.isTranscoded, activeStream?.url]);
 
     // Sauvegarde immédiate de la progression exacte dans le compte utilisateur (stable via refs)
     // Garantit l'apparition systématique dans « Reprendre la lecture » dès le démarrage
@@ -449,7 +476,6 @@ export default function NetflixPlayer({
         });
 
         let hasInitialSaved = false;
-        let audioSilenceChecked = false;
         const onPlay = () => {
             setIsPlaying(true);
             if (!hasInitialSaved) {
@@ -468,40 +494,6 @@ export default function NetflixPlayer({
             const currentOffset = transcodeOffsetRef.current || 0;
             const realCurrent = (video.currentTime || 0) + currentOffset;
             setCurrentTime(realCurrent);
-
-            // Détection automatique d'absence de son (AC3 / E-AC3 / DTS / TrueHD non décodé par Chrome/Brave)
-            const silenceThreshold = activeStreamRef.current?.hasUnsupportedAudio ? 1.0 : 2.2;
-            if (
-                !audioSilenceChecked &&
-                !video.paused &&
-                !video.muted &&
-                video.volume > 0 &&
-                video.currentTime >= silenceThreshold &&
-                typeof video.webkitAudioDecodedByteCount === 'number'
-            ) {
-                audioSilenceChecked = true;
-                if (video.webkitAudioDecodedByteCount === 0 && !audioFallbackAttemptedRef.current.has(streamUrl)) {
-                    audioFallbackAttemptedRef.current.add(streamUrl);
-                    const curStream = activeStreamRef.current;
-                    if (!isTranscoded && streamUrl.startsWith('http')) {
-                        console.warn('[Altyflix Player] Codec audio silencieux détecté (AC3/DTS) — activation automatique du remux audio AAC...');
-                        const remuxUrl = `/api/video-stream?audio=aac&url=${encodeURIComponent(streamUrl)}`;
-                        loadedUrlRef.current = null;
-                        setIsBuffering(true);
-                        setActiveStream({
-                            ...(curStream || {}),
-                            url: remuxUrl,
-                            originalUrl: curStream?.originalUrl || streamUrl,
-                            isTranscoded: true,
-                            audioRemuxed: true
-                        });
-                        return;
-                    }
-                    console.warn('[Altyflix Player] Flux toujours silencieux après remux — bascule automatique vers la source suivante...');
-                    handleStreamErrorRef.current?.();
-                    return;
-                }
-            }
 
             let dur = video.duration;
             const knownTmdbDur = tmdbDurationRef.current || 0;
@@ -708,12 +700,15 @@ export default function NetflixPlayer({
         if (isTranscoded) {
             const base = (activeStream?.url || '').replace(/([&?])t=\d+/, '');
             const sep = base.includes('?') ? '&' : '?';
-            const seekUrl = `${base}${sep}t=${Math.floor(target)}`;
+            const seekSec = Math.floor(target);
+            const seekUrl = `${base}${sep}t=${seekSec}`;
 
-            transcodeOffsetRef.current = Math.floor(target);
+            transcodeOffsetRef.current = seekSec;
             setCurrentTime(target);
+            setIsBuffering(true);
+            video.pause();
             video.src = seekUrl;
-            video.currentTime = 0;
+            video.load();
             video.play().catch(() => {});
         } else {
             video.currentTime = target;
@@ -924,9 +919,12 @@ export default function NetflixPlayer({
         }
 
         const matching = cues.filter(c => t >= c.start && t <= c.end);
+        const adSpamPattern = /osdb\.link|opensubtitles|subtitles\.org|watch online movies|become vip|devenez membre vip|advertise your product|support us and/i;
         const lines = [];
         matching.forEach(c => {
-            const parts = String(c.text || '').split('\n');
+            const rawText = String(c.text || '');
+            if (adSpamPattern.test(rawText)) return;
+            const parts = rawText.split('\n');
             parts.forEach(p => {
                 const cleaned = p.replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').trim();
                 if (cleaned && !lines.includes(cleaned)) {

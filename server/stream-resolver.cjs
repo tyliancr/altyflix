@@ -595,7 +595,8 @@ async function resolveStreamsServer({
   title = '',
   userProvider = null,
   userToken = null,
-  userFrenchioUrl = null
+  userFrenchioUrl = null,
+  enableAudioRemux = false
 }) {
   const isTv = type === 'tv';
   const provider = (userProvider && userProvider.trim()) || process.env.DEBRID_PROVIDER || 'torbox';
@@ -966,22 +967,30 @@ async function resolveStreamsServer({
       initialStatus = 'downloading';
     }
 
-    // Si le flux est un AVI et n'est pas encore encapsulé dans /api/video-stream
-    if (active && active.isAvi && active.url && !active.url.startsWith('/api/video-stream')) {
-      active = {
-        ...active,
-        url: `/api/video-stream?url=${encodeURIComponent(active.url)}`,
-        isTranscoded: true
-      };
-    }
+    // Synchroniser l'élément actif dans la liste streams et activer le remux audio AAC pour AC3/DTS si FFmpeg est dispo
+    const finalizeStreamUrl = (s) => {
+      if (!s) return s;
+      if (s.isAvi && s.url && !s.url.startsWith('/api/video-stream')) {
+        return { ...s, url: `/api/video-stream?url=${encodeURIComponent(s.url)}`, isTranscoded: true };
+      }
+      if (enableAudioRemux && s.hasUnsupportedAudio && s.verifiedReady && s.url && s.url.startsWith('http')) {
+        return {
+          ...s,
+          url: `/api/video-stream?audio=aac&url=${encodeURIComponent(s.url)}`,
+          directUrl: s.directUrl || s.url,
+          isTranscoded: true,
+          audioRemuxed: true
+        };
+      }
+      return s;
+    };
 
     const finalActive = active
-      ? { ...active, originalUrl: active.originalUrl || active.url }
+      ? finalizeStreamUrl({ ...active, originalUrl: active.originalUrl || active.url })
       : null;
 
-    // Synchroniser l'élément actif dans la liste streams pour que la sélection de qualité reste cohérente
     const syncedStreams = finalStreams.map(s =>
-      (finalActive && s.id === finalActive.id) ? finalActive : s
+      (finalActive && s.id === finalActive.id) ? finalActive : finalizeStreamUrl(s)
     );
 
     console.log(`[Altyflix Stream Resolver] Résolution terminée : ${syncedStreams.length} qualités prêtes. Statut : ${initialStatus}.`);

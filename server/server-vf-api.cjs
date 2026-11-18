@@ -19,6 +19,15 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { URL } = require('url');
+const { spawnSync } = require('child_process');
+
+const HAS_FFMPEG = (() => {
+  try {
+    return spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 3000 }).status === 0;
+  } catch {
+    return false;
+  }
+})();
 
 const COMPRESSIBLE_EXTS = new Set(['.js', '.mjs', '.css', '.html', '.svg', '.json', '.webmanifest', '.txt', '.xml']);
 const staticGzipCache = new Map();
@@ -284,6 +293,17 @@ const server = http.createServer(async (req, res) => {
     if (!targetUrl || !targetUrl.startsWith('http')) return sendJSON(res, 400, { error: 'URL invalide.' });
 
     const wantsAudioRemux = query.audio === 'aac';
+
+    // Répondre immédiatement aux requêtes HEAD sans lancer un processus FFmpeg inutile
+    if (req.method === 'HEAD' && wantsAudioRemux) {
+      res.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache'
+      });
+      return res.end();
+    }
+
     const spawnFfmpegRemux = (inputUrl, { copyVideo }) => {
       res.writeHead(200, {
         'Content-Type': 'video/mp4',
@@ -293,24 +313,46 @@ const server = http.createServer(async (req, res) => {
       });
 
       const { spawn } = require('child_process');
+      const seekSec = Math.max(0, parseInt(query.t || query.start || '0', 10) || 0);
       const ffmpegArgs = [
         '-reconnect', '1',
-        '-reconnect_streamed', '1',
         '-reconnect_delay_max', '3',
         '-probesize', '2000000',
         '-analyzeduration', '2000000'
       ];
 
-      if (query.t || query.start) {
-        ffmpegArgs.push('-ss', String(query.t || query.start));
+      // -ss AVANT -i = seek HTTP Range instantané (< 0.5s au lieu de relire depuis 0:00)
+      if (seekSec > 0) {
+        ffmpegArgs.push('-ss', String(seekSec));
       }
 
       ffmpegArgs.push('-i', inputUrl);
       if (copyVideo) {
-        // Copie vidéo directe (zéro perte qualité, quasi 0% CPU, démarrage instantané) + conversion audio AC3/DTS -> AAC stéréo
-        ffmpegArgs.push('-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-ac', '2', '-b:a', '192k');
+        // Copie vidéo directe (zéro perte qualité, quasi 0% CPU) + conversion audio AC3/DTS -> AAC stéréo
+        // -avoid_negative_ts make_zero remet les timestamps à 0 après un seek pour que Chrome/Brave lise sans jamais couper
+        ffmpegArgs.push(
+          '-map', '0:v:0',
+          '-map', '0:a:0?',
+          '-c:v', 'copy',
+          '-c:a', 'aac',
+          '-ac', '2',
+          '-b:a', '192k',
+          '-avoid_negative_ts', 'make_zero',
+          '-muxpreload', '0',
+          '-muxdelay', '0',
+          '-max_muxing_queue_size', '1024'
+        );
       } else {
-        ffmpegArgs.push('-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-c:a', 'aac', '-ac', '2', '-b:a', '160k');
+        ffmpegArgs.push(
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-tune', 'zerolatency',
+          '-c:a', 'aac',
+          '-ac', '2',
+          '-b:a', '160k',
+          '-avoid_negative_ts', 'make_zero',
+          '-max_muxing_queue_size', '1024'
+        );
       }
 
       ffmpegArgs.push(
@@ -610,7 +652,8 @@ const server = http.createServer(async (req, res) => {
         title,
         userProvider,
         userToken,
-        userFrenchioUrl
+        userFrenchioUrl,
+        enableAudioRemux: HAS_FFMPEG
       });
       return sendJSON(res, 200, result);
     } catch (err) {

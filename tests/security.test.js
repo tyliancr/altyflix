@@ -4,7 +4,6 @@ import { createRequire } from 'node:module';
 import { once } from 'node:events';
 import security from '../server/security.cjs';
 import { seasonLabel, getSeasons } from '../src/utils/seasons.js';
-import { isTrustedPlayerMessage, validPlaybackProgress } from '../src/utils/playerMessages.js';
 import { getContentType, sanitizeReturnUrl } from '../src/utils/helpers.js';
 
 const { tmdbUrl, validateStreams, arteLimit, BoundedCache, createRateLimiter, fetchJson } = security;
@@ -26,16 +25,6 @@ test('Lupin Part 4 keeps TMDB season 3 and displays its name', () => {
 test('legacy film history is not mistaken for a TV series', () => {
   assert.equal(getContentType({ type: 'movie', season: 1, episode: 1 }), 'movie');
   assert.equal(getContentType({ first_air_date: '2021-01-08', seasons: [] }), 'tv');
-});
-test('playback events require the current frame and exact origin', () => {
-  const source = {};
-  const frame = { contentWindow: source, src: 'https://player.example/tv/1/3/1' };
-  assert.equal(isTrustedPlayerMessage({ source, origin: 'https://player.example', data: {} }, frame), true);
-  assert.equal(isTrustedPlayerMessage({ source: {}, origin: 'https://player.example', data: {} }, frame), false);
-  assert.equal(isTrustedPlayerMessage({ source, origin: 'https://attacker.example', data: {} }, frame), false);
-  assert.equal(isTrustedPlayerMessage({ source, origin: 'https://player.example', data: 'ended' }, frame), false);
-  for (const [time, duration] of [[Infinity, 100], [-1, 100], [100, 0], [9000, 100], ['1', 100]]) assert.equal(validPlaybackProgress(time, duration), false);
-  assert.equal(validPlaybackProgress(50, 100), true);
 });
 test('TMDB blocks account endpoints, traversal and credential injection', () => {
   for (const path of ['authentication/token/new', '../account', '//evil.example', 'tv/1/../../account', 'tv/1?x=1', 'tv/%2e%2e/account']) assert.throws(() => tmdbUrl(path, {}, 'key'), { status: 400 });

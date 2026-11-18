@@ -932,7 +932,7 @@ async function checkAndPostNouveautes(forced = false) {
           { name: 'Qualité & Audio', value: '🟢 4K Ultra HD · VF & VOSTFR', inline: true },
         ],
         image: poster ? { url: poster } : undefined,
-        footer: { text: 'AltyFlix Nouveautés 24/7 · 5 Lecteurs serveurs disponibles' },
+        footer: { text: 'AltyFlix Nouveautés 24/7' },
         timestamp: new Date().toISOString(),
       }],
       allowed_mentions: roleNouveautesId ? { roles: [roleNouveautesId] } : undefined,
@@ -1004,7 +1004,6 @@ async function checkAndPostDailyDrop(forced = false) {
       color: COLOR_GOLD,
       fields: [
         { name: 'Note critique', value: `${stars} ${rating}`, inline: true },
-        { name: 'Serveurs streaming', value: '⚡ 5 flux miroirs haute vitesse', inline: true },
         { name: 'Avis communauté', value: 'L\'avez-vous déjà vu ? Votez ci-dessous !', inline: false },
       ],
       image: backdrop ? { url: backdrop } : undefined,
@@ -1765,7 +1764,7 @@ async function handleSlashCommand(d) {
     await respondInteraction(interactionId, interactionToken, {
       embeds: [{
         title: '🌐 Plateforme Officielle ALTYFLIX',
-        description: '**Films, Séries, Documentaires en illimité et 100% gratuit.**\n\n• Résolution 4K UHD & 1080p FHD\n• 5 Serveurs miroirs haute vitesse (Videasy, VidLink, Vidzy...)\n• Double audio (VF / VOSTFR intégrés)\n• Reprise de lecture synchronisée & mode Kids',
+        description: '**Films, Séries, Documentaires en illimité et 100% gratuit.**\n\n• Résolution 4K UHD & 1080p FHD\n• Double audio (VF / VOSTFR intégrés)\n• Reprise de lecture synchronisée & mode Kids',
         color: COLOR_RED,
         fields: [
           { name: '🔗 Lien d\'accès', value: `[👉 Ouvrir AltyFlix en grand écran](${SITE_URL})` },
@@ -1784,7 +1783,6 @@ async function handleSlashCommand(d) {
         color: COLOR_BLUE,
         fields: [
           { name: '🎬 Catalogue', value: '+100 000 Films & Séries disponibles', inline: true },
-          { name: '⚡ Serveurs actifs', value: '5 flux miroirs de secours', inline: true },
           { name: '🔊 Pistes Audio', value: 'VF Française & VOSTFR', inline: true },
           { name: '📱 Compatibilité', value: 'PWA Web, Mobile, Smart TV & PC', inline: true },
           { name: '🛡️ Sécurité & Adblock', value: 'Lecteurs épurés et sécurisés', inline: true },

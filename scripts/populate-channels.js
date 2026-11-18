@@ -71,10 +71,6 @@ async function run() {
       { 
         name: '📋 Modèle de signalement recommandé', 
         value: "• **Page / Titre concerné** : (ex: Film Inception ou Page Profil)\n• **Appareil / Navigateur** : (ex: PC Chrome, iPhone Safari, Smart TV...)\n• **Description du bug** : Que s'est-il passé ?\n• **Capture d'écran** : (si possible)" 
-      },
-      { 
-        name: '⚡ Lecteurs de secours', 
-        value: "N'oubliez pas que le lecteur AltyFlix intègre 5 serveurs de streaming (Videasy, VidLink, Vidzy...). Changez de serveur en un clic dans le lecteur !" 
       }
     ],
     footer: { text: 'AltyFlix · Support Technique 🛡️' }

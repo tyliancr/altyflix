@@ -143,6 +143,9 @@ export default async function handler(req) {
     const userProvider = req.headers.get('x-debrid-provider') || SERVER_DEBRID_PROVIDER;
     const userToken = req.headers.get('x-debrid-token') || SERVER_DEBRID_TOKEN;
     const userFrenchioUrl = req.headers.get('x-frenchio-url') || query.frenchioUrl || getEnv('FRENCHIO_URL');
+    const rawStreamBackend = getEnv('STREAM_BACKEND_URL').trim().replace(/\/+$/, '');
+    const streamBackendUrl = /^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(rawStreamBackend) ? rawStreamBackend : '';
+    const hasRemoteFfmpeg = Boolean(streamBackendUrl);
 
     try {
       const result = await resolveStreamsServer({
@@ -156,8 +159,9 @@ export default async function handler(req) {
         userProvider,
         userToken,
         userFrenchioUrl,
-        enableAudioRemux: false,
-        enableAviTranscode: false,
+        enableAudioRemux: hasRemoteFfmpeg,
+        enableAviTranscode: hasRemoteFfmpeg,
+        videoStreamBaseUrl: streamBackendUrl,
         tmdbApiKey: TMDB_API_KEY
       });
       return jsonResponse(result, 200, { 'Cache-Control': 'no-store' });

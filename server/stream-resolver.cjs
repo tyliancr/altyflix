@@ -149,21 +149,24 @@ function parseStreamDetails(stream) {
     isDownloading = !isCached;
   }
 
-  // Détection de résolution
+  // Détection de résolution (ne jamais classer un DVDRip / XviD en 1080p par défaut)
   let resolution = '1080p FHD';
   let tierKey = '1080p';
-  if (/4k|2160p|uhd/i.test(fullText)) {
+  if (/\b(?:4k|2160p|uhd)\b/i.test(fullText)) {
     resolution = '4K Ultra HD';
     tierKey = '4k';
-  } else if (/1080p|fhd/i.test(fullText)) {
+  } else if (/\b(?:1080p|fhd)\b/i.test(fullText)) {
     resolution = '1080p FHD';
     tierKey = '1080p';
-  } else if (/720p|hd/i.test(fullText)) {
+  } else if (/\b720p\b/i.test(fullText)) {
     resolution = '720p HD';
     tierKey = '720p';
-  } else if (/480p|sd|xvid/i.test(fullText)) {
+  } else if (/\b(?:480p|360p|sd|dvdrip|xvid|divx)\b/i.test(fullText)) {
     resolution = '480p SD';
     tierKey = '480p';
+  } else if (/\bhd\b/i.test(fullText)) {
+    resolution = '720p HD';
+    tierKey = '720p';
   }
 
   // Audio / Langue
@@ -192,11 +195,11 @@ function parseStreamDetails(stream) {
   );
 
   // Détection audio : codecs compatibles navigateur (AAC / MP3 / Opus / FLAC) vs codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD / Atmos)
-  const hasAac = /\baac\b/i.test(fullText);
+  const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasMp3 = /\bmp3\b/i.test(fullText);
-  const hasOpus = /\bopus\b/i.test(fullText);
+  const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
-  const hasUnsupportedAudio = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp\s*5\.?1|ddp5\.?1|dd\s*5\.?1|dd5\.?1|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
+  const hasUnsupportedAudio = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
   const isWebAudioSafe = (hasAac || hasMp3 || hasOpus || hasFlac || /yts|yify|rapta|pir8/i.test(fullText)) && !hasUnsupportedAudio;
 
   const isMp4 = /\.mp4(\?|$)/i.test(stream?.url || '') || /\.mp4/i.test(filename);
@@ -236,7 +239,7 @@ function parseStreamDetails(stream) {
 /**
  * Système de score et curation des flux vidéo
  */
-function curateStreams(rawStreams, provider, { enableAviTranscode = true, preferredLang = 'vf', contentType = 'movie' } = {}) {
+function curateStreams(rawStreams, provider, { enableAviTranscode = true, enableAudioRemux = enableAviTranscode, preferredLang = 'vf', contentType = 'movie' } = {}) {
   const preferVo = String(preferredLang || '').toLowerCase() === 'vo' || String(preferredLang || '').toLowerCase() === 'vostfr';
   const isMovie = String(contentType || 'movie').toLowerCase() !== 'tv';
   const isHd1080Plus = (s) => s.tierKey === '1080p' || s.tierKey === '4k';
@@ -293,8 +296,9 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
     else score += isMovie ? -80000 : 0;
 
     // 3. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
-    if (st.isWebAudioSafe) score += 25000;
-    if (st.hasUnsupportedAudio) score -= 35000;
+    // Sans remux FFmpeg (ex: Netlify serverless), un flux AC3/DTS est muet -> pénalité massive pour privilégier AAC/Opus
+    if (st.isWebAudioSafe) score += enableAudioRemux ? 25000 : 35000;
+    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 35000 : 75000;
 
     // 4. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
     if (preferVo) {
@@ -331,14 +335,20 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
   const anyCached = scored.some(s => s.isCached);
   const allDownloading = !anyCached && scored.every(s => s.isDownloading);
 
-  // Détermination du meilleur flux actif (priorité langue demandée + 1080p/4K en cache)
+  // Détermination du meilleur flux actif (priorité langue demandée + audio fonctionnel sans remux + 1080p/4K en cache)
   const matchesPrefLang = (s) => (preferVo ? !s.isFrench : s.isFrench);
+  const audioPlayable = (s) => enableAudioRemux || !s.hasUnsupportedAudio;
   let defaultActive = null;
   if (anyCached) {
     const cachedPreferred =
+      scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
+      scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
+      scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s)) ||
       scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '1080p') ||
       scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '4k') ||
       scored.find(s => s.isCached && matchesPrefLang(s)) ||
+      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '1080p') ||
+      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '4k') ||
       scored.find(s => s.isCached && s.tierKey === '1080p') ||
       scored.find(s => s.isCached && s.tierKey === '4k') ||
       scored.find(s => s.isCached);
@@ -346,6 +356,8 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
   } else {
     // Si aucun n'est en cache, on prend le meilleur disponible (langue préférée + 1080p/4K prioritaire)
     defaultActive =
+      scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
+      scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
       scored.find(s => matchesPrefLang(s) && s.tierKey === '1080p') ||
       scored.find(s => matchesPrefLang(s) && s.tierKey === '4k') ||
       scored.find(s => matchesPrefLang(s)) ||
@@ -633,8 +645,14 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
             const safeDlUrl = dlData?.success ? normalizeAllowedUrl(dlData.data) : null;
             if (safeDlUrl) {
               const sizeGb = size ? (size / (1024 * 1024 * 1024)).toFixed(2) + ' GB' : '';
+              const metaStr = `${t.name || ''} ${fName}`;
+              const inferredRes = /\b(?:2160p|4k|uhd)\b/i.test(metaStr) ? '4K'
+                : /\b1080p\b/i.test(metaStr) ? '1080p'
+                : /\b720p\b/i.test(metaStr) ? '720p'
+                : /\b(?:480p|dvdrip|xvid|divx)\b/i.test(metaStr) ? '480p'
+                : '';
               return {
-                name: `[TB+] Torbox Cloud\n1080p`,
+                name: `[TB+] Torbox Cloud${inferredRes ? `\n${inferredRes}` : ''}`,
                 title: `${fName}\n👤 1 💾 ${sizeGb} ⚙️ Ma Bibliothèque TorBox\n🇫🇷`,
                 url: safeDlUrl,
                 isTorboxLibrary: true
@@ -671,9 +689,11 @@ async function resolveStreamsServer({
   userFrenchioUrl = null,
   enableAudioRemux = false,
   enableAviTranscode = enableAudioRemux,
+  videoStreamBaseUrl = '',
   tmdbApiKey = null
 }) {
   const isTv = type === 'tv';
+  const streamBase = String(videoStreamBaseUrl || '').trim().replace(/\/+$/, '');
   const normalizedLang = String(lang || 'vf').toLowerCase() === 'vo' || String(lang || 'vf').toLowerCase() === 'vostfr' ? 'vo' : 'vf';
   const rawProvider = ((userProvider && userProvider.trim()) || process.env.DEBRID_PROVIDER || 'torbox').toLowerCase();
   const provider = ALLOWED_PROVIDERS.has(rawProvider) ? rawProvider : 'torbox';
@@ -702,13 +722,19 @@ async function resolveStreamsServer({
 
   const finalizeStreamUrl = (s) => {
     if (!s) return s;
-    if (s.isAvi && enableAviTranscode && s.url && !s.url.startsWith('/api/video-stream')) {
-      return { ...s, url: `/api/video-stream?url=${encodeURIComponent(s.url)}`, isTranscoded: true };
+    const rawDirect = s.directUrl || s.originalUrl || s.url;
+    if (s.isAvi && enableAviTranscode && rawDirect) {
+      if (s.url && s.url.startsWith('/api/video-stream')) {
+        return streamBase ? { ...s, url: `${streamBase}${s.url}`, isTranscoded: true } : s;
+      }
+      if (rawDirect.startsWith('http')) {
+        return { ...s, url: `${streamBase}/api/video-stream?url=${encodeURIComponent(rawDirect)}`, isTranscoded: true };
+      }
     }
     if (enableAudioRemux && s.hasUnsupportedAudio && s.verifiedReady && s.url && s.url.startsWith('http')) {
       return {
         ...s,
-        url: `/api/video-stream?audio=aac&url=${encodeURIComponent(s.url)}`,
+        url: `${streamBase}/api/video-stream?audio=aac&url=${encodeURIComponent(s.url)}`,
         directUrl: s.directUrl || s.url,
         isTranscoded: true,
         audioRemuxed: true
@@ -988,7 +1014,7 @@ async function resolveStreamsServer({
       }
     }
 
-    const curated = curateStreams(rawStreams, provider, { enableAviTranscode, preferredLang: normalizedLang, contentType: type });
+    const curated = curateStreams(rawStreams, provider, { enableAviTranscode, enableAudioRemux, preferredLang: normalizedLang, contentType: type });
 
     if (!curated.streams || curated.streams.length === 0) {
       return {

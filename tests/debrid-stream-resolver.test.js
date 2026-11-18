@@ -224,3 +224,43 @@ test('Debrid Stream Resolver: 1080p minimum impose sur les films (avec fallback 
   const tvCurated = curateStreams(mixedStreams, 'torbox', { contentType: 'tv' });
   assert.ok(tvCurated.streams.some(s => s.tierKey === '720p'));
 });
+
+test('Debrid Stream Resolver: detection AAC5.1/DDP2.0/DVDRip et priorite audio AAC sans FFmpeg (Netlify)', () => {
+  const aac51 = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Film.2024.FRENCH.1080p.BluRay.x265.AAC5.1.mp4\n👤 5 💾 2.5 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/h1/f.mp4'
+  });
+  assert.equal(aac51.isWebAudioSafe, true);
+  assert.equal(aac51.hasUnsupportedAudio, false);
+
+  const ddp20 = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Show.S01E01.1080p.WEB-DL.DDP2.0.H.264.mkv\n👤 5 💾 1.5 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/h2/f.mkv'
+  });
+  assert.equal(ddp20.hasUnsupportedAudio, true);
+
+  const dvdrip = parseStreamDetails({
+    name: '[TB+] Torbox Cloud',
+    title: 'lagence.tous.risques.vf.Dvdrip.xvid-T911.avi\n👤 1 💾 0.7 GB',
+    url: 'https://nexus-320.ceur.tb-cdn.st/dld/abc'
+  });
+  assert.equal(dvdrip.tierKey, '480p');
+
+  // Sans remux FFmpeg (Netlify), la VF 4K AAC (avec son) doit battre la VF 1080p AC3 (muette)
+  const netlifyChoice = curateStreams([
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Inception.2010.MULTi.VFF.1080p.HDLight.AC3.5.1.mkv\n👤 30 💾 3.5 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/h3/ac3.mkv'
+    },
+    {
+      name: '[TB+] Torrentio\n4k',
+      title: 'Inception.2010.MULTi.VFF.2160p.BluRay.HE.AAC.5.1.mkv\n👤 10 💾 12.0 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/h4/aac.mkv'
+    }
+  ], 'torbox', { enableAudioRemux: false, enableAviTranscode: false, contentType: 'movie' });
+  assert.equal(netlifyChoice.activeStream.tierKey, '4k');
+  assert.equal(netlifyChoice.activeStream.isWebAudioSafe, true);
+});

@@ -1,15 +1,27 @@
 /**
- * ALTYFLIX — Unified Netlify Function (/api/*)
+ * ALTYFLIX — Unified Netlify Function (/.netlify/functions/api, routée via /api et /api/* dans _redirects)
  * 100 % Serverless sur Netlify (zéro Render requis, zéro exposition de clés API).
  * Réutilise directement les modules sécurisés server/stream-resolver.cjs et server/security.cjs.
  */
 
 import zlib from 'node:zlib';
+import { promisify } from 'node:util';
 import streamResolver from '../../server/stream-resolver.cjs';
 import security from '../../server/security.cjs';
 
-const { resolveStreamsServer, checkStreamStatus } = streamResolver;
-const { SECURITY_HEADERS, HttpError, arteLimit, tmdbUrl, BoundedCache, fetchJson } = security;
+const gunzipAsync = promisify(zlib.gunzip);
+const { resolveStreamsServer, checkStreamStatus, isAllowedUrl } = streamResolver;
+const {
+  SECURITY_HEADERS,
+  HttpError,
+  positiveInteger,
+  arteLimit,
+  tmdbUrl,
+  BoundedCache,
+  fetchJson,
+  isAllowedSubtitleUrl,
+  readBoundedBuffer
+} = security;
 
 const memoryCache = new BoundedCache(200);
 
@@ -28,9 +40,10 @@ const DOCUMENTARY_CATEGORIES = [
   { id: 'nature', name: 'Nature & Environnement', icon: '🌿' },
   { id: 'history', name: 'Histoire & Civilisations', icon: '📜' },
   { id: 'science', name: 'Sciences & Espace', icon: '🚀' },
-  { id: 'crime', name: 'Enquêtes & True Crime', icon: '🔍' },
-  { id: 'sport', name: 'Sport & Exploits', icon: '🏆' },
-  { id: 'society', name: 'Société & Géopolitique', icon: '🌍' }
+  { id: 'truecrime', name: 'Enquêtes & True Crime', icon: '🔍' },
+  { id: 'sports', name: 'Sports & Exploits', icon: '🏆' },
+  { id: 'society', name: 'Société & Géopolitique', icon: '🌍' },
+  { id: 'music', name: 'Musique & Culture', icon: '🎵' }
 ];
 
 function jsonResponse(data, status = 200, extraHeaders = {}) {
@@ -40,7 +53,7 @@ function jsonResponse(data, status = 200, extraHeaders = {}) {
       ...SECURITY_HEADERS,
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url',
       ...extraHeaders
     }
@@ -54,20 +67,21 @@ export default async function handler(req) {
       headers: {
         ...SECURITY_HEADERS,
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url'
       }
     });
   }
 
-  if (!['GET', 'HEAD', 'POST'].includes(req.method)) {
+  if (!['GET', 'HEAD'].includes(req.method)) {
     return jsonResponse({ success: false, error: 'Méthode non autorisée.' }, 405, {
-      Allow: 'GET, HEAD, POST, OPTIONS'
+      Allow: 'GET, HEAD, OPTIONS'
     });
   }
 
   const parsedUrl = new URL(req.url);
-  const pathname = parsedUrl.pathname;
+  // Supporte aussi les appels directs /.netlify/functions/api
+  const pathname = parsedUrl.pathname.replace(/^\/\.netlify\/functions\/api/, '/api');
   const query = Object.fromEntries(parsedUrl.searchParams);
 
   const TMDB_API_KEY = getEnv('TMDB_API_KEY', 'a0819950449844817a0942ca79a4ccb0');
@@ -119,13 +133,14 @@ export default async function handler(req) {
         id,
         imdbId,
         type,
-        season: parseInt(season, 10) || 1,
-        episode: parseInt(episode, 10) || 1,
+        season: positiveInteger(season, 10000) ? Number(season) : 1,
+        episode: positiveInteger(episode, 10000) ? Number(episode) : 1,
         lang,
         title,
         userProvider,
         userToken,
-        userFrenchioUrl
+        userFrenchioUrl,
+        enableAudioRemux: false
       });
       return jsonResponse(result, 200, { 'Cache-Control': 'no-store' });
     } catch (err) {
@@ -133,7 +148,7 @@ export default async function handler(req) {
       return jsonResponse({
         success: false,
         status: 'error',
-        error: 'Erreur lors de la résolution du flux : ' + err.message
+        error: 'Erreur interne lors de la résolution du flux.'
       }, 500);
     }
   }
@@ -146,61 +161,83 @@ export default async function handler(req) {
     }
     try {
       const statusData = await checkStreamStatus(targetUrl);
-      return jsonResponse(statusData, 200, { 'Cache-Control': 'no-store' });
+      const httpStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
+      return jsonResponse(statusData, httpStatus, { 'Cache-Control': 'no-store' });
     } catch (err) {
+      console.error('[Netlify API /api/stream-poll] Error:', err);
       return jsonResponse({
         success: false,
         status: 'error',
-        error: 'Erreur lors de la vérification : ' + err.message
+        error: 'Erreur lors de la vérification du flux.'
       }, 500);
     }
   }
 
-  // 5. Redirection directe pour /api/video-stream (sur Netlify serverless sans FFmpeg)
+  // 5. Redirection sécurisée pour /api/video-stream (hôtes CDN/Debrid strictement allowlistés)
   if (pathname === '/api/video-stream') {
     const targetUrl = query.url;
-    if (!targetUrl || !targetUrl.startsWith('http')) {
-      return jsonResponse({ error: 'URL invalide.' }, 400);
+    if (!targetUrl || !isAllowedUrl(targetUrl)) {
+      return jsonResponse({ error: 'URL vidéo non autorisée.' }, 400);
     }
     return new Response(null, {
       status: 302,
       headers: {
         ...SECURITY_HEADERS,
+        'Access-Control-Allow-Origin': '*',
         Location: targetUrl,
         'Cache-Control': 'no-store'
       }
     });
   }
 
-  // 6. Sous-titres VTT proxy & décompression gzip
+  // 6. Sous-titres VTT proxy & décompression gzip bornée (anti SSRF + anti Gzip Bomb)
   if (pathname === '/api/subtitles-vtt') {
     const targetUrl = query.url;
-    if (!targetUrl || !targetUrl.startsWith('http')) {
-      return jsonResponse({ error: 'URL invalide.' }, 400);
+    if (!targetUrl || !isAllowedSubtitleUrl(targetUrl)) {
+      return jsonResponse({ error: 'URL de sous-titres non autorisée.' }, 400);
     }
     try {
-      const vttRes = await fetch(targetUrl, {
-        headers: { 'User-Agent': 'TemporaryUserAgent' },
-        signal: AbortSignal.timeout(8000)
-      });
-      if (!vttRes.ok) return jsonResponse({ error: 'Erreur sous-titre' }, vttRes.status);
-      const rawBuf = Buffer.from(await vttRes.arrayBuffer());
+      let currentUrl = targetUrl;
+      let vttRes = null;
+      for (let hop = 0; hop < 4; hop++) {
+        if (!isAllowedSubtitleUrl(currentUrl)) {
+          return jsonResponse({ error: 'Redirection sous-titres non autorisée.' }, 403);
+        }
+        vttRes = await fetch(currentUrl, {
+          headers: { 'User-Agent': 'TemporaryUserAgent' },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(8000)
+        });
+        if (vttRes.status >= 300 && vttRes.status < 400 && vttRes.headers.get('location')) {
+          try { await vttRes.body?.cancel(); } catch {}
+          currentUrl = new URL(vttRes.headers.get('location'), currentUrl).toString();
+          continue;
+        }
+        break;
+      }
+      if (!vttRes || !vttRes.ok) return jsonResponse({ error: 'Erreur sous-titre.' }, vttRes?.status || 502);
+      const rawBuf = await readBoundedBuffer(vttRes, 2 * 1024 * 1024);
       let text;
       if (rawBuf.length >= 2 && rawBuf[0] === 0x1f && rawBuf[1] === 0x8b) {
-        try { text = zlib.gunzipSync(rawBuf).toString('utf8'); }
-        catch { text = rawBuf.toString('utf8'); }
+        try {
+          const inflated = await gunzipAsync(rawBuf, { maxOutputLength: 5 * 1024 * 1024 });
+          text = inflated.toString('utf8');
+        } catch {
+          text = rawBuf.toString('utf8');
+        }
       } else {
         text = rawBuf.toString('utf8');
       }
 
+      text = text.replace(/^\uFEFF/, '');
       if (!text.trim().startsWith('WEBVTT')) {
         text = 'WEBVTT\n\n' + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
       }
       text = text
-        .replace(/.*(?:opensubtitles|osdb\.link|subtitles\.org|devenez membre vip|advertisement).*\n?/gi, '')
+        .replace(/.*(?:opensubtitles|osdb\.link|subtitles\.org|watch online movies|devenez membre vip|become vip|advertisement).*\n?/gi, '')
         .trim();
 
-      return new Response(text, {
+      return new Response(req.method === 'HEAD' ? null : text, {
         status: 200,
         headers: {
           ...SECURITY_HEADERS,
@@ -210,24 +247,30 @@ export default async function handler(req) {
         }
       });
     } catch (err) {
-      return jsonResponse({ error: 'Échec sous-titres : ' + err.message }, 502);
+      return jsonResponse(
+        { error: err instanceof HttpError ? err.message : 'Service de sous-titres indisponible.' },
+        err instanceof HttpError ? err.status : 502
+      );
     }
   }
 
-  // 7. Sous-titres multi-sources (OpenSubtitles REST + Stremio v3)
+  // 7. Sous-titres multi-sources (OpenSubtitles REST FR + EN + Stremio v3)
   if (pathname === '/api/subtitles') {
     const { id, type = 'movie', season = 1, episode = 1 } = query;
+    const safeType = type === 'tv' ? 'tv' : 'movie';
+    const safeSeason = positiveInteger(season, 10000) ? Number(season) : 1;
+    const safeEpisode = positiveInteger(episode, 10000) ? Number(episode) : 1;
     try {
       let imdbId = null;
-      if (TMDB_API_KEY && id) {
+      if (TMDB_API_KEY && positiveInteger(id)) {
         try {
-          const extUrl = type === 'tv'
-            ? `https://api.themoviedb.org/3/tv/${id}/external_ids?api_key=${TMDB_API_KEY}`
-            : `https://api.themoviedb.org/3/movie/${id}/external_ids?api_key=${TMDB_API_KEY}`;
+          const extUrl = tmdbUrl(safeType === 'tv' ? `tv/${id}/external_ids` : `movie/${id}/external_ids`, {}, TMDB_API_KEY);
           const extRes = await fetch(extUrl, { signal: AbortSignal.timeout(3500) });
           if (extRes.ok) {
             const extData = await extRes.json();
-            imdbId = extData.imdb_id;
+            if (/^tt\d{5,10}$/.test(String(extData.imdb_id || ''))) {
+              imdbId = extData.imdb_id;
+            }
           }
         } catch {
           // Ignore TMDB fallback error
@@ -238,42 +281,64 @@ export default async function handler(req) {
       const cleanImdb = imdbId ? imdbId.replace('tt', '') : null;
 
       if (cleanImdb) {
-        try {
-          const osUrlFr = type === 'tv'
-            ? `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}/season-${season}/episode-${episode}`
-            : `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}`;
-          const osRes = await fetch(osUrlFr, { headers: { 'User-Agent': 'TemporaryUserAgent' }, signal: AbortSignal.timeout(4000) });
-          if (osRes.ok) {
-            const osData = await osRes.json();
-            if (Array.isArray(osData)) {
-              osData.slice(0, 3).forEach((s, idx) => {
-                if (s.SubDownloadLink) {
-                  formatted.push({
-                    id: `fr-os-${idx}`,
-                    label: idx === 0 ? 'Français' : `Français [${idx + 1}]`,
-                    lang: 'fr',
-                    url: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`
-                  });
-                }
-              });
-            }
+        const [frList, enList] = await Promise.all([
+          (async () => {
+            try {
+              const osUrlFr = safeType === 'tv'
+                ? `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}/season-${safeSeason}/episode-${safeEpisode}`
+                : `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}`;
+              const osRes = await fetch(osUrlFr, { headers: { 'User-Agent': 'TemporaryUserAgent' }, signal: AbortSignal.timeout(4000) });
+              if (!osRes.ok) return [];
+              const osData = await osRes.json();
+              return Array.isArray(osData) ? osData.slice(0, 3) : [];
+            } catch { return []; }
+          })(),
+          (async () => {
+            try {
+              const osUrlEn = safeType === 'tv'
+                ? `https://rest.opensubtitles.org/search/sublanguageid-eng/imdbid-${cleanImdb}/season-${safeSeason}/episode-${safeEpisode}`
+                : `https://rest.opensubtitles.org/search/sublanguageid-eng/imdbid-${cleanImdb}`;
+              const osRes = await fetch(osUrlEn, { headers: { 'User-Agent': 'TemporaryUserAgent' }, signal: AbortSignal.timeout(3000) });
+              if (!osRes.ok) return [];
+              const osData = await osRes.json();
+              return Array.isArray(osData) ? osData.slice(0, 2) : [];
+            } catch { return []; }
+          })()
+        ]);
+
+        frList.forEach((s, idx) => {
+          if (s.SubDownloadLink && isAllowedSubtitleUrl(s.SubDownloadLink)) {
+            formatted.push({
+              id: `fr-os-${idx}`,
+              label: idx === 0 ? 'Français' : `Français [${idx + 1}]`,
+              lang: 'fr',
+              url: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`
+            });
           }
-        } catch {
-          // Ignore OpenSubtitles FR error
-        }
+        });
+        enList.forEach((s, idx) => {
+          if (s.SubDownloadLink && isAllowedSubtitleUrl(s.SubDownloadLink)) {
+            formatted.push({
+              id: `en-os-${idx}`,
+              label: idx === 0 ? 'English' : `English [${idx + 1}]`,
+              lang: 'en',
+              url: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`
+            });
+          }
+        });
       }
 
       if (formatted.length === 0 && imdbId) {
         try {
-          const stremPath = type === 'tv'
-            ? `https://opensubtitles-v3.strem.io/subtitles/series/${imdbId}:${season}:${episode}.json`
+          const stremPath = safeType === 'tv'
+            ? `https://opensubtitles-v3.strem.io/subtitles/series/${imdbId}:${safeSeason}:${safeEpisode}.json`
             : `https://opensubtitles-v3.strem.io/subtitles/movie/${imdbId}.json`;
           const stremRes = await fetch(stremPath, { signal: AbortSignal.timeout(3500) });
           if (stremRes.ok) {
             const data = await stremRes.json();
             const list = Array.isArray(data?.subtitles) ? data.subtitles : [];
             list.slice(0, 3).forEach((s, idx) => {
-              if (s.url) {
+              if (s.url && isAllowedSubtitleUrl(s.url)) {
                 formatted.push({
                   id: `strem-${idx}`,
                   label: s.lang === 'eng' ? (idx === 0 ? 'English' : `English [${idx + 1}]`) : (s.lang || 'Piste ' + (idx + 1)),
@@ -344,7 +409,3 @@ export default async function handler(req) {
 
   return jsonResponse({ success: false, error: 'Route API introuvable.' }, 404);
 }
-
-export const config = {
-  path: ['/api', '/api/*']
-};

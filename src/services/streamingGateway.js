@@ -256,6 +256,7 @@ function curateStreams(rawStreams, provider) {
                 isVostfr: details.isVostfr,
                 isWebAudioSafe: details.isWebAudioSafe,
                 hasBadAudio: details.hasBadAudio,
+                hasUnsupportedAudio: details.hasBadAudio,
                 isPureFrench: details.isPureFrench,
                 isMp4: details.isMp4,
                 isAvi: details.isAvi,
@@ -472,7 +473,8 @@ export async function resolvePlaybackStreams({
     type = 'movie',
     season = 1,
     episode = 1,
-    title = ''
+    title = '',
+    signal: callerSignal = null
 }) {
     const config = getGatewayConfig();
     const isTv = type === 'tv';
@@ -481,6 +483,9 @@ export async function resolvePlaybackStreams({
     let imdbId = initialImdbId;
     if (!imdbId && id) {
         imdbId = await getImdbIdForContent({ id, type });
+    }
+    if (callerSignal?.aborted) {
+        return { success: false, aborted: true, streams: [] };
     }
 
     if (!imdbId) {
@@ -493,6 +498,7 @@ export async function resolvePlaybackStreams({
     }
 
     // 1. PRIORITÉ ABSOLUE : Résolution via le backend sécurisé (Zero exposition de clé)
+    let backendError = null;
     try {
         const queryParams = new URLSearchParams({
             id: String(id || ''),
@@ -514,11 +520,16 @@ export async function resolvePlaybackStreams({
             headers['x-frenchio-url'] = config.frenchioUrl;
         }
 
+        const timeoutSignal = AbortSignal.timeout(10000);
+        const reqSignal = callerSignal && typeof AbortSignal.any === 'function'
+            ? AbortSignal.any([callerSignal, timeoutSignal])
+            : (callerSignal || timeoutSignal);
+
         console.log(`[Altyflix Stream Resolver] Résolution sécurisée via backend pour ${type} ${imdbId}...`);
         const serverRes = await fetch(`/api/stream-resolve?${queryParams.toString()}`, {
             headers,
             cache: 'no-store',
-            signal: AbortSignal.timeout(9000)
+            signal: reqSignal
         });
 
         if (serverRes.ok) {
@@ -534,8 +545,18 @@ export async function resolvePlaybackStreams({
                     hasTrueVf: Boolean(serverData.hasTrueVf)
                 };
             }
+            if (!serverData.success && (serverData.reason || serverData.message)) {
+                backendError = {
+                    success: false,
+                    reason: serverData.reason || 'NO_STREAMS_FOUND',
+                    message: serverData.message || serverData.error || 'Aucun flux direct disponible pour ce titre actuellement.',
+                    imdbId: serverData.imdbId || imdbId,
+                    streams: []
+                };
+            }
         }
     } catch (backendErr) {
+        if (callerSignal?.aborted) return { success: false, aborted: true, streams: [] };
         console.warn('[Altyflix Stream Resolver] Backend non disponible, tentative directe...', backendErr.message);
     }
 
@@ -545,6 +566,7 @@ export async function resolvePlaybackStreams({
     const activeToken = config.token || '';
 
     if (!activeToken) {
+        if (backendError) return backendError;
         return {
             success: false,
             reason: 'NO_STREAMS_AVAILABLE',
@@ -650,6 +672,7 @@ export async function pollStreamStatus({
 
     console.log(`[Altyflix Stream Poll] Démarrage de la surveillance du débridage...`);
     let attempts = 0;
+    let consecutiveErrors = 0;
     const startTime = Date.now();
 
     while (attempts < maxAttempts) {
@@ -668,30 +691,55 @@ export async function pollStreamStatus({
                 cache: 'no-store'
             });
 
-            if (res.ok) {
-                const data = await res.json();
+            let data = null;
+            try { data = await res.json(); } catch { /* ignore */ }
 
+            if (res.ok && data) {
+                consecutiveErrors = 0;
                 if (data.ready && data.playbackUrl) {
                     console.log(`[Altyflix Stream Poll] ✅ Flux PRÊT après ${elapsedSec}s (${attempts} vérifications) !`);
                     return {
                         ready: true,
                         playbackUrl: data.playbackUrl,
+                        isAvi: Boolean(data.isAvi),
+                        isTranscoded: Boolean(data.isTranscoded),
                         elapsedSec
                     };
                 }
 
                 if (data.status === 'downloading') {
                     console.log(`[Altyflix Stream Poll] ⏳ En cours de téléchargement vers le debrid (${elapsedSec}s)...`);
+                } else if (data.status === 'error' && data.success === false) {
+                    return { ready: false, error: data.error || 'Source indisponible.' };
+                }
+            } else if (res.status === 400 || res.status === 403 || (data?.status === 'error' && data?.success === false)) {
+                return { ready: false, error: data?.error || 'Source indisponible.' };
+            } else {
+                consecutiveErrors++;
+                if (consecutiveErrors >= 3) {
+                    return { ready: false, error: 'Impossible de vérifier la source pour le moment.' };
                 }
             }
         } catch (err) {
             if (signal?.aborted) return { ready: false, aborted: true };
+            consecutiveErrors++;
             console.warn(`[Altyflix Stream Poll] Échec de la vérification #${attempts} :`, err.message);
+            if (consecutiveErrors >= 3) {
+                return { ready: false, error: 'Erreur réseau lors de la vérification du flux.' };
+            }
         }
 
-        // Pause avec backoff raisonnable
+        // Pause annulable immédiatement sur abort
         const waitTime = Math.min(intervalMs + (attempts * 100), 4000);
-        await new Promise((resolve) => setTimeout(resolve, waitTime));
+        await new Promise((resolve) => {
+            if (signal?.aborted) return resolve();
+            const onAbort = () => { clearTimeout(timer); resolve(); };
+            const timer = setTimeout(() => {
+                signal?.removeEventListener?.('abort', onAbort);
+                resolve();
+            }, waitTime);
+            signal?.addEventListener?.('abort', onAbort, { once: true });
+        });
     }
 
     console.warn(`[Altyflix Stream Poll] Timeout dépassé après ${maxAttempts} vérifications.`);
@@ -829,7 +877,6 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
     }
 
     const cleanImdbId = String(imdbId).toLowerCase();
-    const numericImdbId = cleanImdbId.replace(/^tt/, '');
     const isTv = type === 'tv';
     const stremKey = isTv ? `${cleanImdbId}:${season}:${episode}` : `${cleanImdbId}`;
 
@@ -849,26 +896,29 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         }
     })();
 
-    // 2. Source 2 : OpenSubtitles REST (très riche en sous-titres français)
-    const restPromise = (async () => {
+    // 2. Source 2 : Backend /api/subtitles (proxy OpenSubtitles REST FR/EN sans CORS)
+    const backendSubsPromise = (async () => {
+        if (!id) return [];
         try {
-            const restUrl = isTv
-                ? `https://rest.opensubtitles.org/search/episode-${episode}/imdbid-${numericImdbId}/season-${season}/sublanguageid-fre`
-                : `https://rest.opensubtitles.org/search/imdbid-${numericImdbId}/sublanguageid-fre`;
-            const res = await fetch(restUrl, {
-                headers: { 'User-Agent': 'TemporaryUserAgent' },
+            const q = new URLSearchParams({
+                id: String(id),
+                type: isTv ? 'tv' : 'movie',
+                season: String(season || 1),
+                episode: String(episode || 1)
+            });
+            const res = await fetch(`/api/subtitles?${q.toString()}`, {
                 signal: AbortSignal.timeout(6000)
             });
             if (!res.ok) return [];
             const data = await res.json();
-            return Array.isArray(data) ? data : [];
+            return Array.isArray(data?.subtitles) ? data.subtitles : [];
         } catch {
             return [];
         }
     })();
 
     try {
-        const [stremSubs, restSubs] = await Promise.all([stremPromise, restPromise]);
+        const [stremSubs, backendSubs] = await Promise.all([stremPromise, backendSubsPromise]);
 
         const normalized = [];
         const seenUrls = new Set();
@@ -876,24 +926,34 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         let enCount = 0;
         let esCount = 0;
 
-        // A. Sous-titres français depuis OpenSubtitles REST
-        for (const sub of restSubs) {
-            const downloadUrl = sub.SubDownloadLink || sub.ZipDownloadLink;
-            if (downloadUrl && !seenUrls.has(downloadUrl) && frCount < 3) {
+        // A. Sous-titres via backend (/api/subtitles-vtt, zéro CORS, déjà convertis en UTF-8 WebVTT)
+        for (const sub of backendSubs) {
+            if (!sub?.url || seenUrls.has(sub.url)) continue;
+            const rawLang = String(sub.lang || '').toLowerCase();
+            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && frCount < 3) {
                 frCount++;
-                seenUrls.add(downloadUrl);
+                seenUrls.add(sub.url);
                 normalized.push({
-                    id: `rest-fr-${frCount}-${sub.IDSubtitleFile || sub.IDSubtitle || frCount}`,
+                    id: sub.id || `api-fr-${frCount}`,
                     lang: 'fr',
                     label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
-                    url: downloadUrl,
-                    encoding: sub.SubEncoding || 'windows-1252',
-                    fileName: sub.SubFileName || ''
+                    url: sub.url,
+                    encoding: 'utf-8'
+                });
+            } else if ((rawLang === 'en' || rawLang === 'eng') && enCount < 2) {
+                enCount++;
+                seenUrls.add(sub.url);
+                normalized.push({
+                    id: sub.id || `api-en-${enCount}`,
+                    lang: 'en',
+                    label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
+                    url: sub.url,
+                    encoding: 'utf-8'
                 });
             }
         }
 
-        // B. Sous-titres depuis Stremio OpenSubtitles v3
+        // B. Sous-titres depuis Stremio OpenSubtitles v3 (routés via /api/subtitles-vtt si possible ou direct)
         const langMap = {
             fre: 'fr', fra: 'fr', fr: 'fr',
             eng: 'en', en: 'en',
@@ -953,7 +1013,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
 /**
  * Parse le texte brut SRT ou WebVTT en un tableau de repères temporels structurés
  */
-const CUE_TIME_RE = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?/;
+const CUE_TIME_RE = /^\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?/;
 
 function cueTimeToSec(h, min, s, ms) {
     const frac = ms ? parseInt(ms.padEnd(3, '0'), 10) / 1000 : 0;
@@ -961,8 +1021,8 @@ function cueTimeToSec(h, min, s, ms) {
 }
 
 /**
- * Lecture ligne par ligne : tol\u00E8re les fichiers sans ligne vide entre deux rep\u00E8res,
- * les millisecondes sur 1 ou 2 chiffres, les lignes vides dans un texte et les en-t\u00EAtes WebVTT.
+ * Lecture ligne par ligne : gère les lignes vides, les identifiants de cue WebVTT/SRT
+ * sans effacer les dialogues numériques ("1999", "42"), les entités HTML et les blocs NOTE/STYLE.
  */
 export function parseVttCues(rawText) {
     if (!rawText) return [];
@@ -970,16 +1030,17 @@ export function parseVttCues(rawText) {
     const cues = [];
     let current = null;
 
-    const flush = () => {
+    const flush = (stripTrailingIndex = false) => {
         if (!current) return;
-        // Retire le num\u00E9ro du rep\u00E8re SRT suivant, rest\u00E9 en fin de texte
-        while (current.text.length && /^\s*(\d+)?\s*$/.test(current.text[current.text.length - 1])) {
+        if (stripTrailingIndex && current.text.length > 1 && /^\s*\d+\s*$/.test(current.text[current.text.length - 1])) {
             current.text.pop();
         }
         const text = current.text.join('\n')
             .replace(/<[^>]+>/g, '')
             .replace(/\{[^}]+\}/g, '')
             .replace(/&nbsp;/g, ' ')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;|&apos;/g, "'")
             .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
@@ -992,9 +1053,10 @@ export function parseVttCues(rawText) {
     };
 
     for (const line of lines) {
+        const trimmed = line.trim();
         const m = line.match(CUE_TIME_RE);
         if (m) {
-            flush();
+            flush(true);
             current = {
                 start: cueTimeToSec(m[1], m[2], m[3], m[4]),
                 end: cueTimeToSec(m[5], m[6], m[7], m[8]),
@@ -1002,45 +1064,55 @@ export function parseVttCues(rawText) {
             };
             continue;
         }
-        if (!current) continue;
-        if (/^(NOTE|STYLE|REGION)\b/.test(line.trim())) {
-            flush();
+        if (!trimmed) {
+            flush(false);
+            continue;
+        }
+        if (!current) {
+            // Ignorer les en-têtes WebVTT / NOTE / STYLE / REGION et les identifiants de repère
             continue;
         }
         current.text.push(line);
     }
-    flush();
+    flush(false);
 
     cues.sort((a, b) => a.start - b.start);
     return cues;
 }
 
 /**
- * Récupère et parse directement les sous-titres en mémoire (avec support transparent .gz et encodages Windows-1252 / UTF-8)
+ * Récupère et parse directement les sous-titres en mémoire (détection gzip par magic bytes + encodages Windows-1252 / UTF-8)
  */
 export async function fetchSubtitleCues(subUrl, subEncoding = null) {
     if (!subUrl) return [];
     try {
-        const isGz = subUrl.endsWith('.gz') || subUrl.includes('/filead/');
         const res = await fetch(subUrl, {
-            headers: isGz ? { 'User-Agent': 'TemporaryUserAgent' } : {},
             signal: AbortSignal.timeout(8000)
         });
         if (!res.ok) return [];
 
-        let rawText;
-        if (isGz && typeof DecompressionStream !== 'undefined') {
+        let buf = await res.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        // Décompresser uniquement si les magic bytes gzip (0x1F 0x8B) sont réellement présents
+        if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b && typeof DecompressionStream !== 'undefined') {
             const ds = new DecompressionStream('gzip');
-            const decompressedStream = res.body.pipeThrough(ds);
-            const buf = await new Response(decompressedStream).arrayBuffer();
-            const enc = subEncoding && !/ascii|utf-?8/i.test(subEncoding) ? 'windows-1252' : (subEncoding || 'utf-8');
+            const decompressedStream = new Blob([bytes]).stream().pipeThrough(ds);
+            buf = await new Response(decompressedStream).arrayBuffer();
+        }
+
+        let rawText;
+        if (subEncoding && !/ascii|utf-?8/i.test(subEncoding)) {
             try {
-                rawText = new TextDecoder(enc).decode(buf);
+                rawText = new TextDecoder('windows-1252').decode(buf);
             } catch {
                 rawText = new TextDecoder('utf-8').decode(buf);
             }
         } else {
-            rawText = await res.text();
+            try {
+                rawText = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+            } catch {
+                rawText = new TextDecoder('windows-1252').decode(buf);
+            }
         }
 
         return parseVttCues(rawText);
@@ -1060,11 +1132,11 @@ export async function loadSubtitleAsVttUrl(subUrl) {
         if (!res.ok) return null;
         const text = await res.text();
 
-        // Conversion standard SRT vers WebVTT
-        const clean = text.replace(/^WEBVTT\s*/i, '').trim();
+        // Conversion standard SRT vers WebVTT (gère BOM, MM:SS,mmm et millisecondes 1-3 chiffres)
+        const clean = text.replace(/^\uFEFF/, '').replace(/^WEBVTT\s*/i, '').trim();
         const vtt = 'WEBVTT\n\n' + clean
             .replace(/\r\n|\r/g, '\n')
-            .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+            .replace(/((?:\d{1,2}:)?\d{1,2}:\d{2}),(\d{1,3})/g, '$1.$2');
 
         const blob = new Blob([vtt], { type: 'text/vtt' });
         return URL.createObjectURL(blob);

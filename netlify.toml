@@ -17,16 +17,6 @@
   VITE_FIREBASE_MEASUREMENT_ID = "G-FEPTB7QJRK"
   VITE_DEBRID_PROVIDER = "torbox"
 
-[[redirects]]
-  from = "/avatars/Netflix/*"
-  to = "/avatars/netflix/:splat"
-  status = 301
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-
 [[headers]]
   for = "/assets/*"
   [headers.values]

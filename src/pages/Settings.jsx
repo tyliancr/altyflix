@@ -47,8 +47,11 @@ const Settings = () => {
     const [autoplayTrailers, setAutoplayTrailers] = useState(() => currentProfile?.autoplayTrailers !== false);
     const [autoplayNext, setAutoplayNext] = useState(() => currentProfile?.autoplayNext !== false);
     const [subtitlesAlwaysOn, setSubtitlesAlwaysOn] = useState(() => {
-        const local = typeof localStorage !== 'undefined' ? localStorage.getItem('altyflix_subtitles_always_on') : null;
-        if (local !== null) return local === 'true';
+        try {
+            const key = currentProfile?.id ? `altyflix_subtitles_always_on_${currentProfile.id}` : 'altyflix_subtitles_always_on';
+            const local = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+            if (local !== null) return local === 'true';
+        } catch { /* ignore */ }
         return currentProfile?.subtitlesAlwaysOn !== false;
     });
     const [subtitlesSize, setSubtitlesSize] = useState(() => currentProfile?.subtitlesSize || 'medium');
@@ -86,8 +89,11 @@ const Settings = () => {
             setAutoplayTrailers(currentProfile.autoplayTrailers !== false);
             setAutoplayNext(currentProfile.autoplayNext !== false);
             setSubtitlesAlwaysOn(() => {
-                const local = typeof localStorage !== 'undefined' ? localStorage.getItem('altyflix_subtitles_always_on') : null;
-                if (local !== null) return local === 'true';
+                try {
+                    const key = `altyflix_subtitles_always_on_${currentProfile.id}`;
+                    const local = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+                    if (local !== null) return local === 'true';
+                } catch { /* ignore */ }
                 return currentProfile.subtitlesAlwaysOn !== false;
             });
             setSubtitlesSize(currentProfile.subtitlesSize || 'medium');
@@ -169,14 +175,19 @@ const Settings = () => {
     const handleProfileSave = async (e) => {
         e.preventDefault();
         if (!profileName.trim()) return;
+        const cleanPin = String(pinCode || '').replace(/\D/g, '');
+        if (cleanPin.length > 0 && cleanPin.length < 4) {
+            triggerToast('error', 'Le code PIN doit contenir exactement 4 chiffres (ou être laissé vide).');
+            return;
+        }
         setLoading(true);
         try {
             const langChanged = currentProfile.language !== selectedLanguage;
             const result = await updateProfile(currentProfile.id, {
-                name: profileName,
+                name: profileName.trim(),
                 avatar: selectedAvatar,
                 isKid,
-                pin: pinCode,
+                pin: cleanPin.length === 4 ? cleanPin : null,
                 language: selectedLanguage,
             });
             if (!result.success) throw new Error(result.error || 'Sauvegarde refusée.');
@@ -205,9 +216,11 @@ const Settings = () => {
                 videoQuality,
                 preferredAudio
             });
-            if (typeof localStorage !== 'undefined') {
-                localStorage.setItem('altyflix_subtitles_always_on', subtitlesAlwaysOn ? 'true' : 'false');
-            }
+            try {
+                if (typeof localStorage !== 'undefined' && currentProfile?.id) {
+                    localStorage.setItem(`altyflix_subtitles_always_on_${currentProfile.id}`, subtitlesAlwaysOn ? 'true' : 'false');
+                }
+            } catch { /* ignore */ }
             saveGatewayConfig({
                 provider: debridProvider,
                 token: debridToken,
@@ -296,7 +309,7 @@ const Settings = () => {
     ];
 
     return (
-        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-16 text-white md:px-[5%] md:pt-28">
+        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-[calc(env(safe-area-inset-top,0px)+4.75rem)] text-white md:px-[5%] md:pt-28">
             <Helmet>
                 <title>{t('settings.title')} - ALTYFLIX</title>
                 <meta name="robots" content="noindex" />
@@ -329,7 +342,12 @@ const Settings = () => {
                     <aside className="w-full flex-none lg:sticky lg:top-28 lg:w-64">
                         <div className="mb-5 flex items-center gap-3.5 rounded-3xl border border-white/[0.08] bg-white/[0.03] p-4">
                             <span className="block h-12 w-12 flex-none overflow-hidden rounded-[26%] bg-[#101016] ring-1 ring-white/10">
-                                <img src={selectedAvatar || currentProfile?.avatar} alt="" className="h-full w-full object-cover" />
+                                <img
+                                    src={selectedAvatar || currentProfile?.avatar || '/avatars/netflix/users-1.png'}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                    onError={(e) => { e.currentTarget.src = '/avatars/netflix/users-1.png'; }}
+                                />
                             </span>
                             <div className="min-w-0 flex-1">
                                 <p className="truncate text-[15px] font-semibold text-white">{profileName || currentProfile?.name}</p>

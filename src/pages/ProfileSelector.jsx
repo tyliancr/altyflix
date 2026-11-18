@@ -4,7 +4,7 @@
 // tiles rise in one after another, tilt toward the pointer with an outline
 // that draws itself, and the chosen avatar flies to the centre, gets ringed,
 // then the view zooms into it before the catalogue opens.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '../contexts/ProfileContext';
 import { DEFAULT_AVATARS } from '../config/constants';
@@ -315,6 +315,12 @@ const ProfileSelector = () => {
     const [isKid, setIsKid] = useState(false);
     const [pinCode, setPinCode] = useState('');
     const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState('');
+    const enterTimerRef = useRef(null);
+
+    useEffect(() => () => {
+        if (enterTimerRef.current) clearTimeout(enterTimerRef.current);
+    }, []);
 
     useEffect(() => {
         if (editingProfile) {
@@ -356,6 +362,7 @@ const ProfileSelector = () => {
 
     const handleSave = async () => {
         if (!profileName.trim() || saving) return;
+        setSaveError('');
         setSaving(true);
         const data = {
             name: profileName.trim(),
@@ -367,14 +374,19 @@ const ProfileSelector = () => {
             ? await updateProfile(editingProfile.id, data)
             : await createProfile(data);
         setSaving(false);
-        if (result?.success !== false) closeModal();
+        if (result?.success !== false) {
+            closeModal();
+        } else {
+            setSaveError(result?.error || 'Impossible de sauvegarder le profil.');
+        }
     };
 
     const enterProfile = (profile) => {
         if (transitioningProfile) return;
         playSound('netflix_intro');
         setTransitioningProfile(profile);
-        setTimeout(() => {
+        if (enterTimerRef.current) clearTimeout(enterTimerRef.current);
+        enterTimerRef.current = setTimeout(() => {
             switchProfile(profile);
             const returnUrl = localStorage.getItem('returnUrl');
             if (returnUrl) {
@@ -384,6 +396,17 @@ const ProfileSelector = () => {
                 navigate('/');
             }
         }, prefersReducedMotion() ? 0 : WELCOME_MS);
+    };
+
+    const handleDeleteRequest = (profile) => {
+        if (transitioningProfile) return;
+        if (profile.pin) {
+            setPendingProfile(profile);
+            setPinPurpose('delete');
+            setShowPinModal(true);
+        } else {
+            setProfileToDelete(profile);
+        }
     };
 
     const handleSelectProfile = (profile) => {
@@ -408,6 +431,8 @@ const ProfileSelector = () => {
         if (pinPurpose === 'manage') {
             setEditingProfile(profile);
             setShowModal(true);
+        } else if (pinPurpose === 'delete') {
+            setProfileToDelete(profile);
         } else {
             enterProfile(profile);
         }
@@ -490,7 +515,7 @@ const ProfileSelector = () => {
                                 isSelected={transitioningProfile?.id === profile.id}
                                 anySelected={leaving}
                                 onClick={() => handleSelectProfile(profile)}
-                                onDelete={() => setProfileToDelete(profile)}
+                                onDelete={() => handleDeleteRequest(profile)}
                             />
                         ))}
                         {canAdd && !manageMode && (
@@ -652,6 +677,11 @@ const ProfileSelector = () => {
                                 </motion.button>
 
                                 <div className="flex-1 space-y-6">
+                                    {saveError && (
+                                        <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/15 px-3.5 py-2.5 text-sm text-red-300">
+                                            {saveError}
+                                        </p>
+                                    )}
                                     <div>
                                         <label htmlFor="profile-name" className="mb-2 block text-sm text-white/60">Nom</label>
                                         <input

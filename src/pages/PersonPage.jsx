@@ -65,7 +65,7 @@ const PersonPage = () => {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-[#060608] px-[4%] pt-10 md:px-[5%] md:pt-32" aria-busy="true">
+            <div className="min-h-screen bg-[#060608] px-[4%] pt-[calc(env(safe-area-inset-top,0px)+6rem)] md:px-[5%] md:pt-32" aria-busy="true">
                 <div className="mx-auto flex max-w-6xl flex-col gap-8 md:flex-row md:gap-12">
                     <div className="skeleton mx-auto aspect-[2/3] w-44 flex-none !rounded-2xl md:mx-0 md:w-64" />
                     <div className="flex-1 space-y-4 pt-2">
@@ -97,7 +97,7 @@ const PersonPage = () => {
     ].filter(Boolean);
 
     return (
-        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-10 text-white md:px-[5%] md:pt-32">
+        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-[calc(env(safe-area-inset-top,0px)+6rem)] text-white md:px-[5%] md:pt-32">
             <Helmet>
                 <title>{person.name} - ALTYFLIX</title>
                 <meta name="description" content={bio.substring(0, 160) || `${t('person.discover')} ${person.name}`} />

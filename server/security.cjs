@@ -1,7 +1,7 @@
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(self), geolocation=(), payment=()',
   'Content-Security-Policy': "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'",
 };
@@ -86,4 +86,52 @@ function createRateLimiter(max = 120, windowMs = 60000) {
     return ++clients.get(key).count <= max;
   };
 }
-module.exports = { SECURITY_HEADERS, HttpError, positiveInteger, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter };
+const ALLOWED_SUBTITLE_HOSTS = [
+  'dl.opensubtitles.org',
+  'rest.opensubtitles.org',
+  'opensubtitles.org',
+  'opensubtitles-v3.strem.io',
+  'subs5.strem.io',
+  'strem.io'
+];
+
+function isAllowedSubtitleUrl(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return false;
+    const host = u.hostname.toLowerCase();
+    return ALLOWED_SUBTITLE_HOSTS.some(h => host === h || host.endsWith('.' + h));
+  } catch {
+    return false;
+  }
+}
+
+async function readBoundedBuffer(response, maxBytes = 2 * 1024 * 1024) {
+  const lenHeader = Number(response.headers?.get?.('content-length') || 0);
+  if (lenHeader > maxBytes) throw new HttpError(413, 'Fichier sous-titre trop volumineux.');
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.length > maxBytes) throw new HttpError(413, 'Fichier sous-titre trop volumineux.');
+    return buf;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try { await reader.cancel(); } catch {}
+        throw new HttpError(413, 'Fichier sous-titre trop volumineux.');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+  return Buffer.concat(chunks, total);
+}
+
+module.exports = { SECURITY_HEADERS, HttpError, positiveInteger, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter, isAllowedSubtitleUrl, readBoundedBuffer };

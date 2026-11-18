@@ -93,6 +93,8 @@ export class UnifiedStreamingEngine {
         this.lastBufferingStart = 0;
         this.lastSeekStart = 0;
         this.retryCount = 0;
+        this.mediaErrorRecoveryCount = 0;
+        this.pausedByOffline = false;
         this.maxRetries = 3;
         this.isDestroyed = false;
 
@@ -141,28 +143,47 @@ export class UnifiedStreamingEngine {
         this.currentEngineType = engineType;
         this.metrics.engine = engineType;
 
-        // Nettoyage de l'instance précédente
+        // Nettoyage de l'instance précédente (évite les fuites de listeners en cas de réutilisation)
+        this.detachVideoListeners();
         this.cleanupAdapters();
+        this.mediaErrorRecoveryCount = 0;
+        this.pausedByOffline = false;
 
         // Installation des listeners HTML5 génériques pour les métriques
         this.attachVideoListeners();
 
-        // Routage vers l'adaptateur spécialisé
-        switch (engineType) {
-            case ENGINE_TYPES.HLS:
-                await this.initHls(url, startPosition, preferredAudioLang);
-                break;
-            case ENGINE_TYPES.DASH:
-                await this.initDash(url, startPosition, preferredAudioLang);
-                break;
-            case ENGINE_TYPES.WEBTORRENT:
-                await this.initWebTorrent(url, startPosition);
-                break;
-            case ENGINE_TYPES.RANGE:
-            case ENGINE_TYPES.NATIVE_HTML5:
-            default:
-                await this.initRangeNative(url, startPosition);
-                break;
+        // Routage vers l'adaptateur spécialisé avec capture garantie des erreurs
+        try {
+            switch (engineType) {
+                case ENGINE_TYPES.HLS:
+                    await this.initHls(url, startPosition, preferredAudioLang);
+                    break;
+                case ENGINE_TYPES.DASH:
+                    await this.initDash(url, startPosition, preferredAudioLang);
+                    break;
+                case ENGINE_TYPES.WEBTORRENT:
+                    await this.initWebTorrent(url, startPosition);
+                    break;
+                case ENGINE_TYPES.RANGE:
+                case ENGINE_TYPES.NATIVE_HTML5:
+                default:
+                    await this.initRangeNative(url, startPosition);
+                    break;
+            }
+        } catch (err) {
+            if (!this.isDestroyed) {
+                this.callbacks.onError?.({
+                    message: err?.message || 'Erreur lors du chargement du flux vidéo.',
+                    details: err,
+                    fatal: true
+                });
+            }
+            return { engine: this.currentEngineType, error: err };
+        }
+
+        if (this.isDestroyed) {
+            this.cleanupAdapters();
+            return { engine: this.currentEngineType };
         }
 
         this.startMetricsPolling();
@@ -251,6 +272,7 @@ export class UnifiedStreamingEngine {
                 video.play().catch(() => {
                     // Autoplay bloqué par le navigateur : muter et relancer
                     video.muted = true;
+                    this.callbacks.onAutoplayMuted?.(true);
                     video.play().catch(() => {});
                 });
             });
@@ -292,8 +314,17 @@ export class UnifiedStreamingEngine {
                             }
                             break;
                         case Hls.ErrorTypes.MEDIA_ERROR:
-                            console.log('[UnifiedEngine:HLS] Récupération d\'erreur média (recoverMediaError)...');
-                            hls.recoverMediaError();
+                            this.mediaErrorRecoveryCount++;
+                            if (this.mediaErrorRecoveryCount <= 2) {
+                                console.log(`[UnifiedEngine:HLS] Récupération d'erreur média (${this.mediaErrorRecoveryCount}/2)...`);
+                                hls.recoverMediaError();
+                            } else {
+                                this.callbacks.onError({
+                                    message: 'Erreur média HLS irrécupérable.',
+                                    details: data.details,
+                                    fatal: true
+                                });
+                            }
                             break;
                         default:
                             this.callbacks.onError({
@@ -310,7 +341,13 @@ export class UnifiedStreamingEngine {
             // Safari iOS / macOS : lecture native Apple HLS
             this.currentEngineType = ENGINE_TYPES.HLS;
             video.src = url;
-            if (startPosition > 0) video.currentTime = startPosition;
+            if (startPosition > 0) {
+                video.addEventListener('loadedmetadata', () => {
+                    if (!this.isDestroyed && Number.isFinite(video.duration) && startPosition < video.duration - 10) {
+                        video.currentTime = startPosition;
+                    }
+                }, { once: true });
+            }
             video.play().catch(() => {});
         } else {
             throw new Error('Le format HLS n\'est pas supporté par ce navigateur.');
@@ -324,12 +361,17 @@ export class UnifiedStreamingEngine {
         const video = this.videoElement;
 
         const { default: shaka } = await import('shaka-player');
+        if (this.isDestroyed) return;
         if (!shaka.Player.isBrowserSupported()) {
             throw new Error('MPEG-DASH / Shaka Player n\'est pas supporté par ce navigateur.');
         }
 
         shaka.polyfill.installAll();
         const player = new shaka.Player(video);
+        if (this.isDestroyed) {
+            player.destroy().catch(() => {});
+            return;
+        }
         this.shakaInstance = player;
 
         // Configuration du buffer Shaka
@@ -361,6 +403,10 @@ export class UnifiedStreamingEngine {
         });
 
         await player.load(url);
+        if (this.isDestroyed) {
+            player.destroy().catch(() => {});
+            return;
+        }
 
         if (startPosition > 0) {
             video.currentTime = startPosition;
@@ -398,7 +444,7 @@ export class UnifiedStreamingEngine {
      * Moteur 3 : Direct MP4 / WebM avec HTTP Range Requests (206 Partial Content)
      * Télécharge uniquement les segments nécessaires via les requêtes d'intervalle d'octets.
      */
-    async initRangeNative(url) {
+    async initRangeNative(url, startPosition = 0) {
         const video = this.videoElement;
         if (!video) return;
 
@@ -412,12 +458,14 @@ export class UnifiedStreamingEngine {
             { id: 0, label: 'Source Directe (Range 206)', height: 0, bitrate: 0 }
         ]);
 
-        video.play().catch(() => {
-            // En cas de blocage d'autoplay strict du navigateur, mute et relance
-            video.muted = true;
-            this.callbacks.onAutoplayMuted?.(true);
-            video.play().catch(() => {});
-        });
+        // Appliquer la position de reprise avant lecture (évite d'écraser l'historique à 0s)
+        if (startPosition > 5) {
+            video.addEventListener('loadedmetadata', () => {
+                if (!this.isDestroyed && Number.isFinite(video.duration) && startPosition < video.duration - 15) {
+                    video.currentTime = startPosition;
+                }
+            }, { once: true });
+        }
     }
 
     /**
@@ -451,11 +499,16 @@ export class UnifiedStreamingEngine {
                 WebTorrent = window.WebTorrent;
             }
 
+            if (this.isDestroyed) return;
             if (!WebTorrent) {
                 throw new Error('WebTorrent n\'est pas disponible dans cet environnement.');
             }
 
             const client = new WebTorrent();
+            if (this.isDestroyed) {
+                try { client.destroy(); } catch { /* ignore */ }
+                return;
+            }
             this.torrentClient = client;
 
             client.add(torrentIdentifier, (torrent) => {
@@ -470,7 +523,11 @@ export class UnifiedStreamingEngine {
                 ) || torrent.files[0];
 
                 if (!file) {
-                    throw new Error('Aucun fichier vidéo trouvé dans ce torrent.');
+                    this.callbacks.onError?.({
+                        message: 'Aucun fichier vidéo trouvé dans ce torrent.',
+                        fatal: true
+                    });
+                    return;
                 }
 
                 // Polling régulier des statistiques P2P (pairs, vitesse, progression)
@@ -643,11 +700,12 @@ export class UnifiedStreamingEngine {
         this.metrics.isOnline = true;
         this.callbacks.onNetworkStatusChange({ online: true });
 
-        // Reprise automatique si le lecteur était suspendu
+        // Reprise automatique uniquement si la lecture avait été interrompue par la coupure réseau
         if (this.hlsInstance) {
             this.hlsInstance.startLoad();
         }
-        if (this.videoElement && this.videoElement.paused) {
+        if (this.pausedByOffline && this.videoElement && this.videoElement.paused) {
+            this.pausedByOffline = false;
             this.videoElement.play().catch(() => {});
         }
     }
@@ -657,6 +715,7 @@ export class UnifiedStreamingEngine {
      */
     handleOffline() {
         this.metrics.isOnline = false;
+        this.pausedByOffline = Boolean(this.videoElement && !this.videoElement.paused);
         this.callbacks.onNetworkStatusChange({ online: false });
     }
 
@@ -720,7 +779,7 @@ export class UnifiedStreamingEngine {
             this.shakaInstance = null;
         }
         if (this.torrentClient) {
-            this.torrentClient.destroy().catch(() => {});
+            try { this.torrentClient.destroy(); } catch { /* ignore */ }
             this.torrentClient = null;
         }
     }

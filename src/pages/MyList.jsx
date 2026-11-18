@@ -20,7 +20,7 @@ const MyList = () => {
     const filtered = myList.filter(item => filter === 'all' || (filter === 'tv') === isSeries(item));
 
     return (
-        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-10 md:px-[5%] md:pt-32">
+        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-[calc(env(safe-area-inset-top,0px)+6rem)] md:px-[5%] md:pt-32">
             <Helmet>
                 <title>Ma liste - ALTYFLIX</title>
                 <meta name="robots" content="noindex" />

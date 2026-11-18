@@ -67,10 +67,10 @@ const SmartImage = memo(({
         }
     }, [attempt, usingFallbackSrc, loaded]);
 
-    const baseSrc = usingFallbackSrc ? fallbackSrc : src;
+    const baseSrc = (!src || usingFallbackSrc) ? fallbackSrc : src;
     const activeSrc = !baseSrc ? '' : (attempt === 0 ? baseSrc : buildRetryUrl(baseSrc, attempt));
-    // Drop srcSet on retry so the browser fetches the downgraded/busted URL directly
-    const activeSrcSet = attempt === 0 && !usingFallbackSrc ? srcSet : undefined;
+    // Drop srcSet on retry or when falling back to fallbackSrc so browser loads the fallback directly
+    const activeSrcSet = attempt === 0 && !usingFallbackSrc && Boolean(src) ? srcSet : undefined;
 
     if (!activeSrc || failed) {
         return fallback;

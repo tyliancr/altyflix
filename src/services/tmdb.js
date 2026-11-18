@@ -93,7 +93,7 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
 
         Object.entries(params).forEach(([key, value]) => {
             if (value !== undefined && value !== null) {
-                url.searchParams.append(endpoint === '/search/multi' && key === 'query' ? 'q' : key, value);
+                url.searchParams.append(key, value);
             }
         });
 
@@ -121,6 +121,38 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
             }
         }
 
+        let fallbackTried = false;
+        const tryDirectFallback = async () => {
+            if (fallbackTried || options.signal?.aborted) return null;
+            fallbackTried = true;
+            const fbSig = combineSignals(options.signal, options.timeoutMs || REQUEST_TIMEOUT_MS);
+            try {
+                const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`);
+                fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
+                fallbackUrl.searchParams.append('language', userLanguage);
+                Object.entries(params).forEach(([key, value]) => {
+                    if (value !== undefined && value !== null) {
+                        fallbackUrl.searchParams.append(key, value);
+                    }
+                });
+                const fbRes = await fetch(fallbackUrl, { signal: fbSig.signal });
+                if (fbRes.ok) {
+                    const fbData = await fbRes.json();
+                    if (!options.skipCache && !options.signal?.aborted && cacheKey) {
+                        requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
+                        setSessionCache(cacheKey, fbData);
+                        pruneCache();
+                    }
+                    return fbData;
+                }
+            } catch {
+                // Ignore fallback failure
+            } finally {
+                fbSig.cleanup();
+            }
+            return null;
+        };
+
         const { signal, cleanup, didTimeout } = combineSignals(options.signal, options.timeoutMs || REQUEST_TIMEOUT_MS);
 
         let response;
@@ -131,6 +163,10 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
             body = await response.text();
         } catch (error) {
             cleanup();
+            if (error.name !== 'AbortError') {
+                const fbData = await tryDirectFallback();
+                if (fbData) return fbData;
+            }
             if (didTimeout()) {
                 const timeoutErr = new Error('TIMEOUT');
                 timeoutErr.code = 'TIMEOUT';
@@ -141,28 +177,10 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
         cleanup();
 
         if (!response.ok) {
-            // Toujours tenter le fallback direct TMDB si le proxy échoue (404, 500+, 429, etc.)
-            try {
-                const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`);
-                fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
-                fallbackUrl.searchParams.append('language', userLanguage);
-                Object.entries(params).forEach(([key, value]) => {
-                    if (value !== undefined && value !== null) {
-                        fallbackUrl.searchParams.append(key, value);
-                    }
-                });
-                const fbRes = await fetch(fallbackUrl);
-                if (fbRes.ok) {
-                    const fbData = await fbRes.json();
-                    if (!options.skipCache && !options.signal?.aborted) {
-                        requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
-                        setSessionCache(cacheKey, fbData);
-                        pruneCache();
-                    }
-                    return fbData;
-                }
-            } catch {
-                // Fall through to error throw
+            // Tenter un unique fallback direct TMDB si le proxy renvoie une erreur serveur (pas sur 404 attendu)
+            if (response.status !== 404) {
+                const fbData = await tryDirectFallback();
+                if (fbData) return fbData;
             }
 
             const status = response.status;
@@ -201,31 +219,6 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
 
         return data;
     } catch (error) {
-        if (error.name !== 'AbortError') {
-            try {
-                const fallbackUrl = new URL(`https://api.themoviedb.org/3${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`);
-                fallbackUrl.searchParams.append('api_key', 'a0819950449844817a0942ca79a4ccb0');
-                const userLanguage = storage.get('language', 'fr-FR');
-                fallbackUrl.searchParams.append('language', userLanguage);
-                Object.entries(params).forEach(([key, value]) => {
-                    if (value !== undefined && value !== null) {
-                        fallbackUrl.searchParams.append(key, value);
-                    }
-                });
-                const fbRes = await fetch(fallbackUrl);
-                if (fbRes.ok) {
-                    const fbData = await fbRes.json();
-                    if (!options.skipCache && cacheKey) {
-                        requestCache.set(cacheKey, { data: fbData, timestamp: Date.now() });
-                        setSessionCache(cacheKey, fbData);
-                        pruneCache();
-                    }
-                    return fbData;
-                }
-            } catch {
-                // Ignore fallback error
-            }
-        }
         if (error.name === 'AbortError' || error.code === 'TIMEOUT' || error.code === 'INVALID_JSON') {
             throw error;
         }

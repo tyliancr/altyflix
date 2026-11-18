@@ -138,7 +138,7 @@ const FAQItem = ({ q, a, index }) => {
 // ── Main Component ──────────────────────────────────────────────────────────
 const LoginPage = () => {
     const { t } = useTranslation();
-    const [lang, setLang] = useState(localStorage.getItem('language') || 'fr');
+    const [lang, setLang] = useState(() => String(storage.get('language', 'fr') || 'fr').slice(0, 2).toLowerCase());
 
     const faqItems = [
         { q: t('landing.faq1Q'), a: t('landing.faq1A') },
@@ -184,15 +184,17 @@ const LoginPage = () => {
     const [isLogin, setIsLogin] = useState(true);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [awaitingVerification, setAwaitingVerification] = useState(false);
 
     const handleLanguageChange = (e) => {
         const newLang = e.target.value;
+        const langMap = { fr: 'fr-FR', en: 'en-US', es: 'es-ES', de: 'de-DE', it: 'it-IT' };
         setLang(newLang);
-        localStorage.setItem('language', newLang);
+        storage.set('language', langMap[newLang] || 'fr-FR');
         window.location.reload();
     };
 
-    const { currentUser, loading: authLoading, login, register, loginWithGoogle, resendVerificationEmail } = useAuth();
+    const { currentUser, loading: authLoading, login, register, logout, loginWithGoogle, resendVerificationEmail } = useAuth();
     const navigate = useNavigate();
     const [resendSuccess, setResendSuccess] = useState('');
     const [resendCooldown, setResendCooldown] = useState(0);
@@ -257,8 +259,8 @@ const LoginPage = () => {
     };
 
     useEffect(() => {
-        if (currentUser && !authLoading && step !== 3) navigate('/profiles');
-    }, [currentUser, authLoading, navigate, step]);
+        if (currentUser && !authLoading && step !== 3 && !awaitingVerification) navigate('/profiles');
+    }, [currentUser, authLoading, navigate, step, awaitingVerification]);
 
     useEffect(() => {
         if (resendCooldown > 0) {
@@ -291,10 +293,12 @@ const LoginPage = () => {
                 if (result.success) navigate('/profiles');
                 else setError(translateAuthError(result.error));
             } else {
+                setAwaitingVerification(true);
                 const result = await register(email, password);
                 if (result.success) {
                     setStep(3); // Show verification screen
                 } else {
+                    setAwaitingVerification(false);
                     setError(translateAuthError(result.error));
                 }
             }
@@ -749,7 +753,12 @@ const LoginPage = () => {
 
                                     <button
                                         type="button"
-                                        onClick={() => { setStep(2); setIsLogin(true); }}
+                                        onClick={async () => {
+                                            setAwaitingVerification(false);
+                                            try { await logout?.(); } catch { /* ignore */ }
+                                            setStep(2);
+                                            setIsLogin(false);
+                                        }}
                                         className="flex-1 py-3 px-4 rounded-xl bg-transparent hover:bg-white/5 text-white/70 hover:text-white text-sm font-medium border border-white/10 transition-all"
                                     >
                                         Modifier l&apos;adresse

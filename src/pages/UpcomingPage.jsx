@@ -117,7 +117,9 @@ const UpcomingCard = ({ item, onReminder, isReminded }) => (
     </article>
 );
 
-const isRemindedIn = (reminders, item) => reminders.some(r => (typeof r === 'object' ? r.id === item.id : r === item.id));
+const isRemindedIn = (reminders, item) => reminders.some(r =>
+    typeof r === 'object' ? (r.id === item.id && (!r.type || r.type === item.type)) : r === item.id
+);
 
 const ReleaseGrid = ({ items, reminders, onReminder }) => (
     <PosterGrid>
@@ -141,14 +143,21 @@ const UpcomingPage = () => {
     });
 
     useEffect(() => {
+        let active = true;
         const fetchAll = async () => {
             try {
-                const [moviesData, newSeriesData, returningSeriesData, nowPlayingData] = await Promise.all([
+                const [moviesRes, newSeriesRes, returningSeriesRes, nowPlayingRes] = await Promise.allSettled([
                     getUpcomingMovies(),
                     getUpcomingSeries(),
                     getReturningSeries(),
                     getNowPlayingMovies()
                 ]);
+                if (!active) return;
+
+                const moviesData = moviesRes.status === 'fulfilled' ? moviesRes.value : { results: [] };
+                const newSeriesData = newSeriesRes.status === 'fulfilled' ? newSeriesRes.value : { results: [] };
+                const returningSeriesData = returningSeriesRes.status === 'fulfilled' ? returningSeriesRes.value : { results: [] };
+                const nowPlayingData = nowPlayingRes.status === 'fulfilled' ? nowPlayingRes.value : { results: [] };
 
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
@@ -183,16 +192,18 @@ const UpcomingPage = () => {
                         } catch { return null; }
                     })
                 );
+                if (!active) return;
                 const validReturning = returning.filter(Boolean);
 
                 const all = [...rawMovies, ...rawSeries, ...validReturning];
                 const seen = new Set();
                 const filtered = all.filter(item => {
-                    if (!item.date || seen.has(item.id)) return false;
+                    const key = `${item.type}-${item.id}`;
+                    if (!item.date || seen.has(key)) return false;
                     const d = new Date(item.date);
                     d.setHours(0, 0, 0, 0);
                     if (d < today) return false;
-                    seen.add(item.id);
+                    seen.add(key);
                     return true;
                 });
 
@@ -201,10 +212,11 @@ const UpcomingPage = () => {
             } catch (e) {
                 console.error('Error fetching upcoming:', e);
             } finally {
-                setLoading(false);
+                if (active) setLoading(false);
             }
         };
         fetchAll();
+        return () => { active = false; };
     }, []);
 
     const { movies, newSeries, returningSeries, heroItem } = useMemo(() => {
@@ -231,7 +243,7 @@ const UpcomingPage = () => {
             const videos = details?.videos?.results || [];
             const trailer = videos.find(v => v.site === 'YouTube' && v.type === 'Trailer') || videos.find(v => v.site === 'YouTube');
             if (trailer?.key) setTrailerKey(trailer.key);
-            else addToast('Aucune bande-annonce disponible pour ce titre.', 'info');
+            else addToast('Aucune bande-annonce disponible pour ce titre.', 'error');
         } catch {
             addToast('La bande-annonce n’a pas pu être chargée.', 'error');
         } finally {
@@ -242,10 +254,10 @@ const UpcomingPage = () => {
     const toggleReminder = (item) => {
         const exists = isRemindedIn(reminders, item);
         const next = exists
-            ? reminders.filter(r => (typeof r === 'object' ? r.id !== item.id : r !== item.id))
+            ? reminders.filter(r => (typeof r === 'object' ? !(r.id === item.id && (!r.type || r.type === item.type)) : r !== item.id))
             : [...reminders, { id: item.id, type: item.type }];
         setReminders(next);
-        localStorage.setItem('ALTYFLIX_reminders', JSON.stringify(next));
+        try { localStorage.setItem('ALTYFLIX_reminders', JSON.stringify(next)); } catch { /* ignore */ }
         window.dispatchEvent(new Event('ALTYFLIX_reminders_updated'));
         addToast(exists ? 'Rappel supprimé' : `Rappel activé pour ${item.title}`, exists ? 'info' : 'success');
     };
@@ -258,7 +270,7 @@ const UpcomingPage = () => {
             </Helmet>
 
             {loading ? (
-                <div className="px-[4%] pt-10 md:px-[5%] md:pt-32" aria-busy="true">
+                <div className="px-[4%] pt-[calc(env(safe-area-inset-top,0px)+6rem)] md:px-[5%] md:pt-32" aria-busy="true">
                     <div className="skeleton mb-10 h-12 w-72" />
                     <GridSkeleton count={14} />
                 </div>
@@ -283,7 +295,7 @@ const UpcomingPage = () => {
                         />
                     )}
 
-                    <div className="sticky top-0 z-30 border-b border-white/[0.06] bg-[#060608]/85 px-[4%] py-3 backdrop-blur-xl md:top-[76px] md:px-[5%]">
+                    <div className="sticky top-[calc(env(safe-area-inset-top,0px)+5.25rem)] z-30 border-b border-white/[0.06] bg-[#060608]/85 px-[4%] py-3 backdrop-blur-xl md:top-[76px] md:px-[5%]">
                         <SegmentedControl
                             label="Filtrer les sorties"
                             value={activeFilter}

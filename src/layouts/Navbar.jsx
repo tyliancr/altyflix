@@ -34,8 +34,9 @@ const Navbar = () => {
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
-    // Global keyboard shortcut for quick search (Ctrl+K, Cmd+K, /)
+    // Global keyboard shortcut for quick search (Ctrl+K, Cmd+K, /) — désactivé sur /settings
     useEffect(() => {
+        if (isSettings) return undefined;
         const handleKeyDown = (e) => {
             if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -50,7 +51,7 @@ const Navbar = () => {
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isSearchOpen]);
+    }, [isSearchOpen, isSettings]);
 
     const navLinks = [
         { name: t('nav.home'), path: '/' },
@@ -165,8 +166,10 @@ const Navbar = () => {
                                 )}
                             </AnimatePresence>
                             <button
+                                // Empêche le blur de l'input de fermer puis rouvrir aussitôt au clic
+                                onMouseDown={(e) => e.preventDefault()}
                                 // TV : la page Recherche (grand champ + résultats) au lieu du petit champ dépliant
-                                onClick={() => (IN_TV_APP ? navigate('/search') : setIsSearchOpen(!isSearchOpen))}
+                                onClick={() => (IN_TV_APP ? navigate('/search') : setIsSearchOpen(open => !open))}
                                 title="Rechercher (Ctrl + K)"
                                 aria-label="Recherche"
                                 className={`flex items-center gap-2 px-3 py-2 rounded-full transition-all duration-300 z-30 ${isSearchOpen ? 'text-white/40' : 'text-white/80 hover:text-white bg-white/[0.04] hover:bg-white/10 border border-white/10 hover:border-white/20 shadow-sm'}`}
@@ -231,21 +234,28 @@ const Navbar = () => {
                                             className="flex items-center gap-3 px-4 py-3 text-sm text-white/70 hover:text-white hover:bg-white/10 rounded-2xl transition-all group"
                                         >
                                             <div className="w-8 h-8 rounded-lg overflow-hidden border border-white/10 group-hover:border-white/30 transition-all">
-                                                <img src={currentProfile?.avatar} alt="" className="w-full h-full object-cover" />
+                                                <img
+                                                    src={currentProfile?.avatar || DEFAULT_AVATARS[0]}
+                                                    alt=""
+                                                    className="w-full h-full object-cover"
+                                                    onError={(e) => { e.currentTarget.src = DEFAULT_AVATARS[0]; }}
+                                                />
                                             </div>
                                             {t('nav.switchProfile')}
                                         </Link>
-                                        <Link
-                                            to="/settings"
-                                            onClick={() => setIsProfileMenuOpen(false)}
-                                            onMouseEnter={() => import('../pages/Settings')}
-                                            className="flex items-center gap-3 px-4 py-3 text-sm text-white/70 hover:text-white hover:bg-white/10 rounded-2xl transition-all group"
-                                        >
-                                            <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/40 group-hover:text-white group-hover:bg-white/10 transition-all">
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                            </div>
-                                            {t('nav.settings')}
-                                        </Link>
+                                        {!currentProfile?.isKid && (
+                                            <Link
+                                                to="/settings"
+                                                onClick={() => setIsProfileMenuOpen(false)}
+                                                onMouseEnter={() => import('../pages/Settings')}
+                                                className="flex items-center gap-3 px-4 py-3 text-sm text-white/70 hover:text-white hover:bg-white/10 rounded-2xl transition-all group"
+                                            >
+                                                <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/40 group-hover:text-white group-hover:bg-white/10 transition-all">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                                </div>
+                                                {t('nav.settings')}
+                                            </Link>
+                                        )}
                                     </div>
                                     <div className="h-px bg-white/5 my-3" />
                                     <div className="px-2">
@@ -349,9 +359,9 @@ const Navbar = () => {
                         </Link>
                     )}
                     <Link
-                        to="/settings"
+                        to={currentProfile?.isKid ? '/profiles' : '/settings'}
                         className="w-8 h-8 rounded-lg overflow-hidden border border-white/20 active:scale-90 transition-transform flex-shrink-0"
-                        aria-label="Mon compte"
+                        aria-label={currentProfile?.isKid ? 'Changer de profil' : 'Mon compte'}
                     >
                         <img
                             src={currentProfile?.avatar || DEFAULT_AVATARS[0]}

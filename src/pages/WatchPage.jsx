@@ -17,13 +17,16 @@ export default function WatchPage() {
 
     const isTv = id?.startsWith('tv-') || searchParams.has('s');
     const tmdbId = id ? id.replace(/^(movie|tv)-/, '') : '';
-    const initialSeason = Math.max(1, parseInt(searchParams.get('s'), 10) || 1);
-    const initialEpisode = Math.max(1, parseInt(searchParams.get('e'), 10) || 1);
+    const savedEntry = (watchHistory || []).find(h => String(h.contentId || h.id) === String(tmdbId));
+    const hasExplicitS = searchParams.has('s');
+    const hasExplicitE = searchParams.has('e');
+    const initialSeason = Math.max(1, parseInt(searchParams.get('s'), 10) || (!hasExplicitS && isTv && savedEntry?.season ? Number(savedEntry.season) : 1));
+    const initialEpisode = Math.max(1, parseInt(searchParams.get('e'), 10) || (!hasExplicitE && isTv && savedEntry?.episode ? Number(savedEntry.episode) : 1));
 
     const [content, setContent] = useState(() => ({
         id: tmdbId,
         contentId: tmdbId,
-        title: 'Lecture',
+        title: '',
         type: isTv ? 'tv' : 'movie',
         media_type: isTv ? 'tv' : 'movie'
     }));
@@ -31,6 +34,13 @@ export default function WatchPage() {
     useEffect(() => {
         if (!tmdbId) return;
         let active = true;
+        setContent({
+            id: tmdbId,
+            contentId: tmdbId,
+            title: '',
+            type: isTv ? 'tv' : 'movie',
+            media_type: isTv ? 'tv' : 'movie'
+        });
         const fetcher = isTv ? getSeriesDetails(tmdbId) : getMovieDetails(tmdbId);
         fetcher
             .then(data => {

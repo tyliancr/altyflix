@@ -46,7 +46,9 @@ const MovieCard = memo(({
 }) => {
     const navigate = useNavigate();
     const { play } = usePlayer();
-    const { addToMyList, removeFromMyList, currentProfile } = useProfile();
+    const { addToMyList, removeFromMyList, isInMyList, currentProfile } = useProfile();
+    const inList = Boolean(isInList || isInMyList?.(content));
+    const trailerIframeRef = useRef(null);
 
     const [trailerKey, setTrailerKey] = useState(null);
     const [trailerLoaded, setTrailerLoaded] = useState(false);
@@ -116,12 +118,12 @@ const MovieCard = memo(({
     const handleNavigate = useCallback(() => { navigate(`/${actualType}/${contentId}`); }, [navigate, actualType, contentId]);
     const handleToggleList = useCallback((e) => {
         e?.stopPropagation();
-        if (isInList) {
+        if (inList) {
             onRemoveFromList ? onRemoveFromList(contentId) : removeFromMyList(contentId);
         } else {
             onAddToList ? onAddToList(content) : addToMyList(content);
         }
-    }, [isInList, onRemoveFromList, onAddToList, contentId, content, removeFromMyList, addToMyList]);
+    }, [inList, onRemoveFromList, onAddToList, contentId, content, removeFromMyList, addToMyList]);
 
     // ── Fetch trailer + details only when expanded (with memory cache) ───
     useEffect(() => {
@@ -182,6 +184,7 @@ const MovieCard = memo(({
 
         const handleMsg = (event) => {
             if (!event.origin?.includes('youtube')) return;
+            if (trailerIframeRef.current && event.source !== trailerIframeRef.current.contentWindow) return;
             try {
                 const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
                 if (!data) return;
@@ -328,7 +331,8 @@ const MovieCard = memo(({
                             }}
                         >
                             <iframe
-                                src={`https://www.youtube-nocookie.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0&iv_load_policy=3&enablejsapi=1`}
+                                ref={trailerIframeRef}
+                                src={`https://www.youtube-nocookie.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0&iv_load_policy=3&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
                                 title="Trailer"
                                 className="absolute pointer-events-none"
                                 style={{ width: '150%', height: '150%', top: '-25%', left: '-25%' }}
@@ -375,9 +379,9 @@ const MovieCard = memo(({
                                         whileTap={{ scale: 0.9 }}
                                         onClick={handleToggleList}
                                         className="w-9 h-9 rounded-full bg-black/60 backdrop-blur-md border border-white/40 hover:border-white text-white flex items-center justify-center shadow-lg transition-all"
-                                        aria-label={isInList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}
+                                        aria-label={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}
                                     >
-                                        {isInList ? (
+                                        {inList ? (
                                             <svg className="w-4 h-4 text-[#46d369]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                                         ) : (
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>

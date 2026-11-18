@@ -10,14 +10,20 @@
  * 5. Protection SSRF stricte sur toutes les requêtes sortantes.
  */
 
-const { HttpError } = require('./security.cjs');
+const crypto = require('crypto');
+const { HttpError, positiveInteger, tmdbUrl, BoundedCache } = require('./security.cjs');
 
-// Caches mémoire haute performance (zéro stockage disque)
+// Caches mémoire haute performance (zéro stockage disque, taille strictement bornée)
 const streamResolveCache = new Map();
 const inFlightResolves = new Map();
 const RESOLVE_CACHE_TTL_MS = 120 * 1000; // 2 minutes
-const torboxMylistCache = new Map();
+const torboxMylistCache = new BoundedCache(100);
 const TORBOX_MYLIST_TTL_MS = 30 * 1000; // 30 secondes
+const ALLOWED_PROVIDERS = new Set(['torbox', 'realdebrid', 'alldebrid', 'debridlink', 'premiumize']);
+
+function sha256Short(str) {
+  return crypto.createHash('sha256').update(String(str || '')).digest('hex').slice(0, 24);
+}
 
 function getCachedResolve(key) {
   const entry = streamResolveCache.get(key);
@@ -52,13 +58,14 @@ const ALLOWED_POLL_HOSTS = [
 ];
 
 /**
- * Valide qu'une URL est sécurisée et autorisée (prévention SSRF)
+ * Valide qu'une URL est sécurisée et autorisée (prévention SSRF stricte : HTTPS uniquement, pas de port non standard ni credentials)
  */
 function isAllowedUrl(urlStr) {
   try {
     const u = new URL(urlStr);
-    if (!['http:', 'https:'].includes(u.protocol)) return false;
-    return ALLOWED_POLL_HOSTS.some(h => u.hostname === h || u.hostname.endsWith('.' + h));
+    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return false;
+    const host = u.hostname.toLowerCase();
+    return ALLOWED_POLL_HOSTS.some(h => host === h || host.endsWith('.' + h));
   } catch {
     return false;
   }
@@ -402,8 +409,15 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
 
     // Si redirection 301 / 302 / 307 / 308
     if (res.status >= 300 && res.status < 400 && location) {
-      if (isDownloadingUrl(location)) {
-        console.log(`[Altyflix Stream Poll] Flux en cours de téléchargement (location: ${location})`);
+      let resolvedLocation;
+      try {
+        resolvedLocation = new URL(location, streamUrl).toString();
+      } catch {
+        return { success: false, status: 'error', error: 'Redirection invalide.' };
+      }
+
+      if (isDownloadingUrl(resolvedLocation)) {
+        console.log(`[Altyflix Stream Poll] Flux en cours de téléchargement (${resolvedLocation.split('?')[0]})`);
         return {
           success: true,
           status: 'downloading',
@@ -412,13 +426,18 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
         };
       }
 
+      // Protection SSRF : revalider la cible de redirection avant toute requête sortante
+      if (!isAllowedUrl(resolvedLocation)) {
+        return { success: false, status: 'error', error: 'Hôte de redirection non autorisé.' };
+      }
+
       // Inspection de la cible finale pour détection AVI / Transcodage
       // Uniquement si le nom du fichier n'est pas déjà un conteneur moderne (.mp4/.mkv/.webm/.m4v)
-      let isAvi = /\.avi(\?|$)/i.test(location) || /\.avi$/i.test(knownFilename);
-      const isModernKnownContainer = /\.(mp4|mkv|webm|m4v|mov)(\?|$)/i.test(knownFilename || location);
+      let isAvi = /\.avi(\?|$)/i.test(resolvedLocation) || /\.avi$/i.test(knownFilename);
+      const isModernKnownContainer = /\.(mp4|mkv|webm|m4v|mov)(\?|$)/i.test(knownFilename || resolvedLocation);
       if (!isAvi && !isModernKnownContainer) {
         try {
-          const headTarget = await fetch(location, { method: 'HEAD', signal: AbortSignal.timeout(1500) });
+          const headTarget = await fetch(resolvedLocation, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(1500) });
           const cType = (headTarget.headers.get('content-type') || '').toLowerCase();
           const cDisp = (headTarget.headers.get('content-disposition') || '').toLowerCase();
           if (cType.includes('msvideo') || cType.includes('avi') || cDisp.includes('.avi')) {
@@ -427,8 +446,8 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
         } catch {}
       }
 
-      console.log(`[Altyflix Stream Poll] Flux prêt ! Redirection vers : ${location.split('?')[0]}${isAvi ? ' [Transcodage AVI->MP4 requis]' : ''}`);
-      const effectivePlaybackUrl = isAvi ? `/api/video-stream?url=${encodeURIComponent(location)}` : location;
+      console.log(`[Altyflix Stream Poll] Flux prêt ! Redirection vers : ${resolvedLocation.split('?')[0]}${isAvi ? ' [Transcodage AVI->MP4 requis]' : ''}`);
+      const effectivePlaybackUrl = isAvi ? `/api/video-stream?url=${encodeURIComponent(resolvedLocation)}` : resolvedLocation;
 
       return {
         success: true,
@@ -437,7 +456,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
         isAvi,
         isTranscoded: isAvi,
         playbackUrl: effectivePlaybackUrl,
-        directUrl: location
+        directUrl: resolvedLocation
       };
     }
 
@@ -492,9 +511,10 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
   if (!torboxToken || !title) return [];
   try {
     let torrents = null;
-    const cachedMylist = torboxMylistCache.get(torboxToken);
-    if (cachedMylist && Date.now() < cachedMylist.expiresAt) {
-      torrents = cachedMylist.data;
+    const mylistKey = sha256Short(torboxToken);
+    const cachedMylist = torboxMylistCache.get(mylistKey);
+    if (cachedMylist) {
+      torrents = cachedMylist;
     } else {
       const res = await fetch('https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true', {
         headers: { 'Authorization': `Bearer ${torboxToken}` },
@@ -503,7 +523,7 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
       if (!res.ok) return [];
       const json = await res.json();
       torrents = Array.isArray(json?.data) ? json.data : [];
-      torboxMylistCache.set(torboxToken, { data: torrents, expiresAt: Date.now() + TORBOX_MYLIST_TTL_MS });
+      torboxMylistCache.set(mylistKey, torrents, TORBOX_MYLIST_TTL_MS);
     }
     if (!torrents || torrents.length === 0) return [];
 
@@ -599,8 +619,14 @@ async function resolveStreamsServer({
   enableAudioRemux = false
 }) {
   const isTv = type === 'tv';
-  const provider = (userProvider && userProvider.trim()) || process.env.DEBRID_PROVIDER || 'torbox';
+  const rawProvider = ((userProvider && userProvider.trim()) || process.env.DEBRID_PROVIDER || 'torbox').toLowerCase();
+  const provider = ALLOWED_PROVIDERS.has(rawProvider) ? rawProvider : 'torbox';
   const token = (userToken && userToken.trim()) || process.env.DEBRID_TOKEN || process.env.TORBOX_TOKEN || '';
+  const safeId = positiveInteger(id) ? String(id) : '';
+  const safeSeason = positiveInteger(season, 10000) ? Number(season) : 1;
+  const safeEpisode = positiveInteger(episode, 10000) ? Number(episode) : 1;
+  season = safeSeason;
+  episode = safeEpisode;
 
   if (!token) {
     console.warn('[Altyflix Stream Resolver] Aucun jeton de débridage disponible côté serveur ou utilisateur.');
@@ -613,20 +639,18 @@ async function resolveStreamsServer({
     };
   }
 
-  // Résolution IMDb si absent (multi-tentatives pour couvrir 100% du catalogue)
-  let imdbId = initialImdbId;
+  // Résolution IMDb si absent (multi-tentatives sécurisées via tmdbUrl)
+  let imdbId = (typeof initialImdbId === 'string' && /^tt\d{5,10}$/.test(initialImdbId.trim())) ? initialImdbId.trim() : null;
   let cleanTitle = (title || '').trim();
   const tmdbKey = process.env.TMDB_API_KEY || 'a0819950449844817a0942ca79a4ccb0';
 
-  if ((!imdbId || !cleanTitle) && id) {
+  if ((!imdbId || !cleanTitle) && safeId) {
     try {
-      const detailUrl = isTv
-        ? `https://api.themoviedb.org/3/tv/${id}/external_ids?api_key=${tmdbKey}`
-        : `https://api.themoviedb.org/3/movie/${id}/external_ids?api_key=${tmdbKey}`;
+      const detailUrl = tmdbUrl(isTv ? `tv/${safeId}/external_ids` : `movie/${safeId}/external_ids`, {}, tmdbKey);
       const tmdbRes = await fetch(detailUrl, { signal: AbortSignal.timeout(5000) });
       if (tmdbRes.ok) {
         const tmdbData = await tmdbRes.json();
-        if (!imdbId) imdbId = tmdbData.imdb_id;
+        if (!imdbId && /^tt\d{5,10}$/.test(String(tmdbData.imdb_id || ''))) imdbId = tmdbData.imdb_id;
       }
     } catch (e) {
       console.warn('[Altyflix Stream Resolver] Échec de récupération de l\'identifiant IMDb direct :', e.message);
@@ -634,15 +658,14 @@ async function resolveStreamsServer({
   }
 
   // Fallback de recherche IMDb et titre si toujours manquant
-  if ((!imdbId || !cleanTitle) && id) {
+  if ((!imdbId || !cleanTitle) && safeId) {
     try {
-      const baseDetailUrl = isTv
-        ? `https://api.themoviedb.org/3/tv/${id}?api_key=${tmdbKey}&language=fr-FR`
-        : `https://api.themoviedb.org/3/movie/${id}?api_key=${tmdbKey}&language=fr-FR`;
+      const baseDetailUrl = tmdbUrl(isTv ? `tv/${safeId}` : `movie/${safeId}`, { language: 'fr-FR' }, tmdbKey);
       const baseRes = await fetch(baseDetailUrl, { signal: AbortSignal.timeout(4000) });
       if (baseRes.ok) {
         const baseData = await baseRes.json();
-        if (!imdbId) imdbId = baseData.imdb_id || baseData.external_ids?.imdb_id;
+        const candidateImdb = baseData.imdb_id || baseData.external_ids?.imdb_id;
+        if (!imdbId && /^tt\d{5,10}$/.test(String(candidateImdb || ''))) imdbId = candidateImdb;
         if (!cleanTitle) cleanTitle = baseData.title || baseData.name || baseData.original_title || baseData.original_name || '';
 
         // Fallback Cinemeta (couverture 100% TMDB via le catalogue Stremio)
@@ -653,8 +676,9 @@ async function resolveStreamsServer({
             const cRes = await fetch(cinemetaUrl, { signal: AbortSignal.timeout(4000) });
             if (cRes.ok) {
               const cData = await cRes.json();
-              if (Array.isArray(cData?.metas) && cData.metas.length > 0 && cData.metas[0].id) {
-                imdbId = cData.metas[0].id;
+              const cid = cData?.metas?.[0]?.id;
+              if (cid && /^tt\d{5,10}$/.test(cid)) {
+                imdbId = cid;
                 console.log(`[Altyflix Stream Resolver] IMDb ID identifié via Cinemeta : ${imdbId} pour "${searchTitle}"`);
               }
             }
@@ -669,22 +693,20 @@ async function resolveStreamsServer({
   // Recherche TMDB par titre si IMDb ID toujours manquant
   if (!imdbId && cleanTitle) {
     try {
-      const searchUrl = isTv
-        ? `https://api.themoviedb.org/3/search/tv?api_key=${tmdbKey}&query=${encodeURIComponent(cleanTitle)}&language=fr-FR`
-        : `https://api.themoviedb.org/3/search/movie?api_key=${tmdbKey}&query=${encodeURIComponent(cleanTitle)}&language=fr-FR`;
+      const searchUrl = tmdbUrl(isTv ? 'search/tv' : 'search/movie', { query: cleanTitle, language: 'fr-FR' }, tmdbKey);
       const sRes = await fetch(searchUrl, { signal: AbortSignal.timeout(3500) });
       if (sRes.ok) {
         const sData = await sRes.json();
         const topResult = sData.results?.[0];
-        if (topResult?.id) {
-          const extUrl = isTv
-            ? `https://api.themoviedb.org/3/tv/${topResult.id}/external_ids?api_key=${tmdbKey}`
-            : `https://api.themoviedb.org/3/movie/${topResult.id}/external_ids?api_key=${tmdbKey}`;
+        if (topResult?.id && positiveInteger(topResult.id)) {
+          const extUrl = tmdbUrl(isTv ? `tv/${topResult.id}/external_ids` : `movie/${topResult.id}/external_ids`, {}, tmdbKey);
           const extRes = await fetch(extUrl, { signal: AbortSignal.timeout(3000) });
           if (extRes.ok) {
             const extData = await extRes.json();
-            imdbId = extData.imdb_id;
-            console.log(`[Altyflix Stream Resolver] IMDb ID trouvé via recherche TMDB : ${imdbId} pour "${cleanTitle}"`);
+            if (/^tt\d{5,10}$/.test(String(extData.imdb_id || ''))) {
+              imdbId = extData.imdb_id;
+              console.log(`[Altyflix Stream Resolver] IMDb ID trouvé via recherche TMDB : ${imdbId} pour "${cleanTitle}"`);
+            }
           }
         }
       }
@@ -728,8 +750,9 @@ async function resolveStreamsServer({
   }
 
   const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
-  const activeFrenchioUrl = (userFrenchioUrl && userFrenchioUrl.trim()) || process.env.FRENCHIO_URL || '';
-  const cacheKey = `${provider}:${token.slice(-6)}:${streamKey}:${activeFrenchioUrl ? 'fr' : ''}`;
+  const rawFrenchioUrl = (userFrenchioUrl && userFrenchioUrl.trim()) || process.env.FRENCHIO_URL || '';
+  const activeFrenchioUrl = isAllowedUrl(rawFrenchioUrl) ? rawFrenchioUrl : '';
+  const cacheKey = `${provider}:${sha256Short(token)}:${streamKey}:${sha256Short(activeFrenchioUrl)}:${enableAudioRemux ? 'remux' : 'direct'}`;
 
   const cachedResult = getCachedResolve(cacheKey);
   if (cachedResult) {
@@ -826,14 +849,14 @@ async function resolveStreamsServer({
       }
     }
 
-    // Détection d'erreurs de clé
-    const errorStream = rawStreams.find(isTorrentioErrorStream);
+    // Détection d'erreurs de clé (sans confondre un clip downloading avec une erreur de clé)
+    const errorStream = rawStreams.find(s => isTorrentioErrorStream(s) && !isDownloadingUrl(s?.url));
     if (errorStream && rawStreams.length === 1) {
       return {
         success: false,
         reason: 'INVALID_DEBRID_TOKEN',
         status: 'error',
-        message: `${errorStream.title || 'Clé de débridage non reconnue'}. Vérifiez vos paramètres.`,
+        message: 'Clé de débridage non reconnue. Vérifiez vos paramètres.',
         imdbId,
         streams: []
       };

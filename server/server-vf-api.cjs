@@ -7,8 +7,8 @@ process.on('unhandledRejection', reason => {
 
 const streamApi = require('./stream-api.cjs');
 const { resolveNativeStream, getDemoVtt } = require('./nativeStreamingEngine.cjs');
-const { resolveStreamsServer, checkStreamStatus } = require('./stream-resolver.cjs');
-const { SECURITY_HEADERS, HttpError, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter } = require('./security.cjs');
+const { resolveStreamsServer, checkStreamStatus, isAllowedUrl } = require('./stream-resolver.cjs');
+const { SECURITY_HEADERS, HttpError, positiveInteger, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter, isAllowedSubtitleUrl, readBoundedBuffer } = require('./security.cjs');
 /**
  * ALTYFLIX Backend Server - Node.js (Built-in HTTP, Zero Dependances External)
  * Proxy sécurisé TMDB, API de lecture et hébergement statique SPA
@@ -28,6 +28,8 @@ const HAS_FFMPEG = (() => {
     return false;
   }
 })();
+const MAX_CONCURRENT_FFMPEG = 4;
+let activeFfmpegJobs = 0;
 
 const COMPRESSIBLE_EXTS = new Set(['.js', '.mjs', '.css', '.html', '.svg', '.json', '.webmanifest', '.txt', '.xml']);
 const staticGzipCache = new Map();
@@ -223,7 +225,7 @@ function serveStaticFile(req, res, pathname) {
       if (shouldCompress) headers['Content-Encoding'] = 'gzip';
       headers['Content-Length'] = body.length;
       res.writeHead(200, headers);
-      res.end(body);
+      res.end(req.method === 'HEAD' ? undefined : body);
     });
     return;
   }
@@ -232,9 +234,8 @@ function serveStaticFile(req, res, pathname) {
   const isAsset = ['.js', '.css', '.png', '.jpg', '.jpeg', '.webp', '.svg', '.json', '.ico', '.map'].includes(ext);
 
   if (isAsset) {
-    const contentType = MIME_TYPES[ext] || 'text/plain; charset=utf-8';
-    res.writeHead(404, { 'Content-Type': contentType });
-    return res.end(`File not found: ${pathname}`);
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('File not found');
   }
 
   // Fallback SPA vers dist/index.html (ou index.html si dev)
@@ -244,9 +245,10 @@ function serveStaticFile(req, res, pathname) {
     if (readErr) {
       return sendJSON(res, 404, { success: false, error: 'index.html introuvable' });
     }
-    const stat = fs.statSync(fallbackPath);
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(fallbackPath).mtimeMs; } catch { mtimeMs = Date.now(); }
     const acceptsGzip = /\bgzip\b/i.test(req.headers['accept-encoding'] || '');
-    const body = acceptsGzip ? getGzippedStatic(fallbackPath, stat.mtimeMs, data) : data;
+    const body = acceptsGzip ? getGzippedStatic(fallbackPath, mtimeMs, data) : data;
     const headers = {
       'Content-Type': MIME_TYPES['.html'],
       'Cache-Control': 'no-cache',
@@ -256,7 +258,7 @@ function serveStaticFile(req, res, pathname) {
     if (acceptsGzip) headers['Content-Encoding'] = 'gzip';
     headers['Content-Length'] = body.length;
     res.writeHead(200, headers);
-    res.end(body);
+    res.end(req.method === 'HEAD' ? undefined : body);
   });
 }
 
@@ -282,15 +284,21 @@ const server = http.createServer(async (req, res) => {
   const pathname = parsedUrl.pathname;
   const query = Object.fromEntries(parsedUrl.searchParams);
 
-  if (pathname.startsWith('/api/') && pathname !== '/api/video-stream' && pathname !== '/api/stream-poll' && !allowRequest(req.socket.remoteAddress || 'local')) {
+  if (req.method === 'POST' && pathname !== '/api/playback/progress') {
+    return sendJSON(res, 405, { error: 'Méthode non autorisée.' });
+  }
+
+  if (pathname.startsWith('/api/') && pathname !== '/api/video-stream' && !allowRequest(req.socket.remoteAddress || 'local')) {
     res.setHeader('Retry-After', '60');
     return sendJSON(res, 429, { error: 'Trop de requêtes. Réessayez dans une minute.' });
   }
 
-  // Stream Proxy Universel avec support HTTP 206 Range + remux audio AAC instantané (AC3/EAC3/DTS -> AAC sans ré-encodage vidéo)
+  // Stream Proxy Universel avec protection SSRF, support HTTP 206 Range et remux audio AAC sécurisé
   if (pathname === '/api/video-stream') {
     const targetUrl = query.url;
-    if (!targetUrl || !targetUrl.startsWith('http')) return sendJSON(res, 400, { error: 'URL invalide.' });
+    if (!targetUrl || !isAllowedUrl(targetUrl)) {
+      return sendJSON(res, 400, { error: 'URL vidéo non autorisée.' });
+    }
 
     const wantsAudioRemux = query.audio === 'aac';
 
@@ -305,16 +313,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     const spawnFfmpegRemux = (inputUrl, { copyVideo }) => {
-      res.writeHead(200, {
-        'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-        'Cache-Control': 'no-cache'
-      });
+      if (!HAS_FFMPEG) {
+        return sendJSON(res, 503, { error: 'Remux audio indisponible sur ce serveur.' });
+      }
+      if (activeFfmpegJobs >= MAX_CONCURRENT_FFMPEG) {
+        return sendJSON(res, 503, { error: 'Trop de flux en cours de conversion. Réessayez dans un instant.' });
+      }
+      if (!isAllowedUrl(inputUrl)) {
+        return sendJSON(res, 400, { error: 'Hôte vidéo non autorisé.' });
+      }
 
+      activeFfmpegJobs++;
       const { spawn } = require('child_process');
       const seekSec = Math.max(0, parseInt(query.t || query.start || '0', 10) || 0);
       const ffmpegArgs = [
+        '-protocol_whitelist', 'https,tls,tcp',
+        '-rw_timeout', '15000000',
         '-reconnect', '1',
         '-reconnect_delay_max', '3',
         '-probesize', '2000000',
@@ -328,7 +342,6 @@ const server = http.createServer(async (req, res) => {
 
       ffmpegArgs.push('-i', inputUrl);
       if (copyVideo) {
-        // Copie vidéo directe (zéro perte qualité, quasi 0% CPU) + conversion audio AC3/DTS -> AAC stéréo parfaitement synchronisée
         ffmpegArgs.push(
           '-map', '0:v:0',
           '-map', '0:a:0?',
@@ -364,19 +377,55 @@ const server = http.createServer(async (req, res) => {
         stdio: ['ignore', 'pipe', 'ignore']
       });
 
-      req.on('close', () => {
-        try { ffmpegProc.kill(); } catch {}
-      });
-      ffmpegProc.on('error', () => {
-        try { res.destroy(); } catch {}
-      });
-      ffmpegProc.stdout.on('error', () => {
-        try { res.destroy(); } catch {}
-      });
-      res.on('error', () => {
-        try { ffmpegProc.kill(); } catch {}
+      let cleaned = false;
+      let killTimer = null;
+      const cleanupProc = () => {
+        if (cleaned) return;
+        cleaned = true;
+        activeFfmpegJobs = Math.max(0, activeFfmpegJobs - 1);
+        try {
+          if (ffmpegProc.exitCode === null && !ffmpegProc.killed) {
+            ffmpegProc.kill('SIGTERM');
+            killTimer = setTimeout(() => {
+              try {
+                if (ffmpegProc.exitCode === null) ffmpegProc.kill('SIGKILL');
+              } catch {}
+            }, 3000);
+            killTimer.unref?.();
+          }
+        } catch {}
+      };
+
+      ffmpegProc.on('exit', () => {
+        if (killTimer) clearTimeout(killTimer);
+        if (!cleaned) {
+          cleaned = true;
+          activeFfmpegJobs = Math.max(0, activeFfmpegJobs - 1);
+        }
+        if (!res.headersSent) {
+          sendJSON(res, 502, { error: 'Échec de conversion du flux vidéo.' });
+        }
       });
 
+      req.on('close', cleanupProc);
+      res.on('close', cleanupProc);
+      res.on('error', cleanupProc);
+      ffmpegProc.on('error', () => {
+        cleanupProc();
+        if (!res.headersSent) sendJSON(res, 502, { error: 'Flux vidéo indisponible.' });
+        else try { res.destroy(); } catch {}
+      });
+      ffmpegProc.stdout.on('error', () => {
+        cleanupProc();
+        try { res.destroy(); } catch {}
+      });
+
+      res.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Cache-Control': 'no-cache'
+      });
       ffmpegProc.stdout.pipe(res);
     };
 
@@ -392,29 +441,48 @@ const server = http.createServer(async (req, res) => {
     }
 
     const abortCtrl = new AbortController();
-    req.on('close', () => {
-      try { abortCtrl.abort(); } catch {}
-    });
+    const abortUpstream = () => { try { abortCtrl.abort(); } catch {} };
+    req.on('close', abortUpstream);
+    res.on('close', abortUpstream);
 
     try {
-      const upstreamRes = await fetch(targetUrl, {
-        headers: upstreamHeaders,
-        signal: abortCtrl.signal
-      });
+      // Suivre manuellement les redirections en validant chaque saut (protection SSRF)
+      let currentUrl = targetUrl;
+      let upstreamRes = null;
+      for (let hop = 0; hop < 4; hop++) {
+        if (!isAllowedUrl(currentUrl)) {
+          return sendJSON(res, 403, { error: 'Hôte de redirection non autorisé.' });
+        }
+        upstreamRes = await fetch(currentUrl, {
+          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+          headers: upstreamHeaders,
+          redirect: 'manual',
+          signal: AbortSignal.any([abortCtrl.signal, AbortSignal.timeout(15000)])
+        });
+        if (upstreamRes.status >= 300 && upstreamRes.status < 400 && upstreamRes.headers.get('location')) {
+          try { await upstreamRes.body?.cancel(); } catch {}
+          currentUrl = new URL(upstreamRes.headers.get('location'), currentUrl).toString();
+          continue;
+        }
+        break;
+      }
+
+      if (!upstreamRes) return sendJSON(res, 502, { error: 'Flux vidéo indisponible.' });
 
       const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
       const contentDisp = (upstreamRes.headers.get('content-disposition') || '').toLowerCase();
-      const finalUrl = upstreamRes.url || targetUrl;
-      const isAvi = targetUrl.toLowerCase().includes('.avi') || 
-                    finalUrl.toLowerCase().includes('.avi') || 
-                    contentType.includes('msvideo') || 
+      const finalUrl = currentUrl;
+      const isAvi = targetUrl.toLowerCase().includes('.avi') ||
+                    finalUrl.toLowerCase().includes('.avi') ||
+                    contentType.includes('msvideo') ||
                     contentType.includes('avi') ||
                     contentDisp.includes('.avi');
 
       // Si le format est un AVI ancien non décodé par HTML5, conversion dynamique à la volée vers fMP4
-      if (isAvi) {
+      if (isAvi && req.method !== 'HEAD') {
         console.log(`[Video Stream Proxy] Transcodage dynamique à la volée du flux AVI vers MP4 HTML5...`);
-        try { abortCtrl.abort(); } catch {}
+        try { await upstreamRes.body?.cancel(); } catch {}
+        abortUpstream();
         spawnFfmpegRemux(finalUrl, { copyVideo: false });
         return;
       }
@@ -435,11 +503,18 @@ const server = http.createServer(async (req, res) => {
       }
 
       res.writeHead(upstreamRes.status, responseHeaders);
+      if (req.method === 'HEAD') {
+        try { await upstreamRes.body?.cancel(); } catch {}
+        return res.end();
+      }
       if (upstreamRes.body) {
         const { Readable } = require('stream');
         const stream = Readable.fromWeb(upstreamRes.body);
         stream.on('error', () => {
           try { res.destroy(); } catch {}
+        });
+        res.on('close', () => {
+          try { stream.destroy(); } catch {}
         });
         res.on('error', () => {
           try { stream.destroy(); } catch {}
@@ -451,32 +526,47 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       if (err.name === 'AbortError') return;
       if (!res.headersSent) {
-        return sendJSON(res, 502, { error: 'Erreur proxy vidéo: ' + err.message });
+        return sendJSON(res, 502, { error: 'Flux vidéo temporairement indisponible.' });
       }
       try { res.destroy(); } catch {}
     }
     return;
   }
 
-  // Service de proxy / conversion VTT pour les sous-titres
+  // Service de proxy / conversion VTT pour les sous-titres (protégé SSRF + anti Gzip Bomb)
   if (pathname === '/api/subtitles-vtt') {
     const targetUrl = query.url;
-    if (!targetUrl || !targetUrl.startsWith('http')) {
-      return sendJSON(res, 400, { error: 'URL invalide' });
+    if (!targetUrl || !isAllowedSubtitleUrl(targetUrl)) {
+      return sendJSON(res, 400, { error: 'URL de sous-titres non autorisée.' });
     }
     try {
-      const zlib = require('zlib');
-      const vttRes = await fetch(targetUrl, {
-        headers: { 'User-Agent': 'TemporaryUserAgent' },
-        signal: AbortSignal.timeout(8000)
-      });
-      if (!vttRes.ok) return sendJSON(res, vttRes.status, { error: 'Erreur sous-titre' });
-      const rawBuf = Buffer.from(await vttRes.arrayBuffer());
+      let currentUrl = targetUrl;
+      let vttRes = null;
+      for (let hop = 0; hop < 4; hop++) {
+        if (!isAllowedSubtitleUrl(currentUrl)) {
+          return sendJSON(res, 403, { error: 'Redirection sous-titres non autorisée.' });
+        }
+        vttRes = await fetch(currentUrl, {
+          headers: { 'User-Agent': 'TemporaryUserAgent' },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(8000)
+        });
+        if (vttRes.status >= 300 && vttRes.status < 400 && vttRes.headers.get('location')) {
+          try { await vttRes.body?.cancel(); } catch {}
+          currentUrl = new URL(vttRes.headers.get('location'), currentUrl).toString();
+          continue;
+        }
+        break;
+      }
+      if (!vttRes || !vttRes.ok) return sendJSON(res, vttRes?.status || 502, { error: 'Erreur sous-titre.' });
+      const rawBuf = await readBoundedBuffer(vttRes, 2 * 1024 * 1024);
       let text;
-      // Décompresser si fichier gzip (.gz ou magic bytes 0x1F 0x8B)
+      // Décompression asynchrone bornée à 5 Mo (anti Gzip Bomb)
       if (rawBuf.length >= 2 && rawBuf[0] === 0x1f && rawBuf[1] === 0x8b) {
         try {
-          text = zlib.gunzipSync(rawBuf).toString('utf8');
+          const gunzipAsync = require('util').promisify(zlib.gunzip);
+          const inflated = await gunzipAsync(rawBuf, { maxOutputLength: 5 * 1024 * 1024 });
+          text = inflated.toString('utf8');
         } catch {
           text = rawBuf.toString('utf8');
         }
@@ -484,6 +574,7 @@ const server = http.createServer(async (req, res) => {
         text = rawBuf.toString('utf8');
       }
 
+      text = text.replace(/^\uFEFF/, '');
       // Convertir SRT / VTT brut en WebVTT propre
       if (!text.trim().startsWith('WEBVTT')) {
         text = 'WEBVTT\n\n' + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
@@ -491,7 +582,7 @@ const server = http.createServer(async (req, res) => {
 
       // Nettoyer les mentions publicitaires / liens externes dans les sous-titres
       text = text
-        .replace(/.*(?:opensubtitles|osdb\.link|subtitles\.org|devenez membre vip|advertisement).*\n?/gi, '')
+        .replace(/.*(?:opensubtitles|osdb\.link|subtitles\.org|watch online movies|devenez membre vip|become vip|advertisement).*\n?/gi, '')
         .trim();
 
       res.writeHead(200, {
@@ -500,27 +591,32 @@ const server = http.createServer(async (req, res) => {
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Cache-Control': 'public, max-age=86400'
       });
-      return res.end(text);
+      return res.end(req.method === 'HEAD' ? undefined : text);
     } catch (err) {
-      return sendJSON(res, 502, { error: 'Échec sous-titres: ' + err.message });
+      return sendJSON(res, err instanceof HttpError ? err.status : 502, {
+        error: err instanceof HttpError ? err.message : 'Service de sous-titres indisponible.'
+      });
     }
   }
 
   // Service de sous-titres universel multi-sources (OpenSubtitles REST + OpenSubtitles v3)
   if (pathname === '/api/subtitles') {
     const { id, type = 'movie', season = 1, episode = 1 } = query;
+    const safeType = type === 'tv' ? 'tv' : 'movie';
+    const safeSeason = positiveInteger(season, 10000) ? Number(season) : 1;
+    const safeEpisode = positiveInteger(episode, 10000) ? Number(episode) : 1;
     try {
-      // 1. Obtenir l'IMDB ID depuis TMDB
+      // 1. Obtenir l'IMDB ID depuis TMDB (validé par tmdbUrl)
       let imdbId = null;
-      if (TMDB_API_KEY && id) {
+      if (TMDB_API_KEY && positiveInteger(id)) {
         try {
-          const extUrl = type === 'tv'
-            ? `https://api.themoviedb.org/3/tv/${id}/external_ids?api_key=${TMDB_API_KEY}`
-            : `https://api.themoviedb.org/3/movie/${id}/external_ids?api_key=${TMDB_API_KEY}`;
+          const extUrl = tmdbUrl(safeType === 'tv' ? `tv/${id}/external_ids` : `movie/${id}/external_ids`, {}, TMDB_API_KEY);
           const extRes = await fetch(extUrl, { signal: AbortSignal.timeout(3500) });
           if (extRes.ok) {
             const extData = await extRes.json();
-            imdbId = extData.imdb_id;
+            if (/^tt\d{5,10}$/.test(String(extData.imdb_id || ''))) {
+              imdbId = extData.imdb_id;
+            }
           }
         } catch {}
       }
@@ -531,8 +627,8 @@ const server = http.createServer(async (req, res) => {
       // 2. Recherche OpenSubtitles REST (La référence mondiale pour le français)
       if (cleanImdb) {
         try {
-          const osUrlFr = type === 'tv'
-            ? `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}/season-${season}/episode-${episode}`
+          const osUrlFr = safeType === 'tv'
+            ? `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}/season-${safeSeason}/episode-${safeEpisode}`
             : `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}`;
 
           const osRes = await fetch(osUrlFr, {
@@ -543,7 +639,7 @@ const server = http.createServer(async (req, res) => {
             const osData = await osRes.json();
             if (Array.isArray(osData)) {
               osData.slice(0, 3).forEach((s, idx) => {
-                if (s.SubDownloadLink) {
+                if (s.SubDownloadLink && isAllowedSubtitleUrl(s.SubDownloadLink)) {
                   formatted.push({
                     id: `fr-os-${idx}`,
                     label: idx === 0 ? 'Français' : `Français [${idx + 1}]`,
@@ -558,8 +654,8 @@ const server = http.createServer(async (req, res) => {
 
         // Anglais si besoin
         try {
-          const osUrlEn = type === 'tv'
-            ? `https://rest.opensubtitles.org/search/sublanguageid-eng/imdbid-${cleanImdb}/season-${season}/episode-${episode}`
+          const osUrlEn = safeType === 'tv'
+            ? `https://rest.opensubtitles.org/search/sublanguageid-eng/imdbid-${cleanImdb}/season-${safeSeason}/episode-${safeEpisode}`
             : `https://rest.opensubtitles.org/search/sublanguageid-eng/imdbid-${cleanImdb}`;
 
           const osResEn = await fetch(osUrlEn, {
@@ -570,7 +666,7 @@ const server = http.createServer(async (req, res) => {
             const osDataEn = await osResEn.json();
             if (Array.isArray(osDataEn)) {
               osDataEn.slice(0, 2).forEach((s, idx) => {
-                if (s.SubDownloadLink) {
+                if (s.SubDownloadLink && isAllowedSubtitleUrl(s.SubDownloadLink)) {
                   formatted.push({
                     id: `en-os-${idx}`,
                     label: idx === 0 ? 'English' : `English [${idx + 1}]`,
@@ -587,15 +683,15 @@ const server = http.createServer(async (req, res) => {
       // 3. Fallback Stremio OpenSubtitles v3 si pas encore de sous-titres
       if (formatted.length === 0 && imdbId) {
         try {
-          const stremPath = type === 'tv'
-            ? `https://opensubtitles-v3.strem.io/subtitles/series/${imdbId}:${season}:${episode}.json`
+          const stremPath = safeType === 'tv'
+            ? `https://opensubtitles-v3.strem.io/subtitles/series/${imdbId}:${safeSeason}:${safeEpisode}.json`
             : `https://opensubtitles-v3.strem.io/subtitles/movie/${imdbId}.json`;
           const stremRes = await fetch(stremPath, { signal: AbortSignal.timeout(3500) });
           if (stremRes.ok) {
             const data = await stremRes.json();
             const list = Array.isArray(data?.subtitles) ? data.subtitles : [];
             list.slice(0, 3).forEach((s, idx) => {
-              if (s.url) {
+              if (s.url && isAllowedSubtitleUrl(s.url)) {
                 formatted.push({
                   id: `strem-${idx}`,
                   label: s.lang === 'eng' ? (idx === 0 ? 'English' : `English [${idx + 1}]`) : (s.lang || 'Piste ' + (idx + 1)),
@@ -660,7 +756,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 500, {
         success: false,
         status: 'error',
-        error: 'Erreur lors de la résolution du flux : ' + err.message
+        error: 'Erreur interne lors de la résolution du flux.'
       });
     }
   }
@@ -674,13 +770,14 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const statusData = await checkStreamStatus(targetUrl);
-      return sendJSON(res, 200, statusData);
+      const httpStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
+      return sendJSON(res, httpStatus, statusData);
     } catch (err) {
       console.error('[Stream Poll Endpoint] Error:', err);
       return sendJSON(res, 500, {
         success: false,
         status: 'error',
-        error: 'Erreur lors de la vérification de l\'état : ' + err.message
+        error: 'Erreur lors de la vérification du flux.'
       });
     }
   }
@@ -746,22 +843,23 @@ const server = http.createServer(async (req, res) => {
   // Redirection automatique des anciennes URLs de lecture vers l'application native Altyflix
   if (pathname.startsWith('/player/')) {
     const segments = pathname.split('/').filter(Boolean); // ['player', 'movie'|'tv', id, s?, e?]
-    const pType = segments[1] || 'movie';
+    const pType = segments[1] === 'tv' ? 'tv' : 'movie';
     const pId = segments[2];
-    const pSeason = segments[3] || '1';
-    const pEpisode = segments[4] || '1';
+    const pSeason = positiveInteger(segments[3], 10000) ? String(Number(segments[3])) : '1';
+    const pEpisode = positiveInteger(segments[4], 10000) ? String(Number(segments[4])) : '1';
 
-    if (!pId) return sendJSON(res, 400, { error: 'ID TMDB requis.' });
+    if (!positiveInteger(pId)) return sendJSON(res, 400, { error: 'ID TMDB valide requis.' });
 
     const targetWatchUrl = `/watch/${pType}-${pId}${pType === 'tv' ? `?s=${pSeason}&e=${pEpisode}` : ''}`;
     res.writeHead(302, { Location: targetWatchUrl });
     return res.end();
   }
 
-  // Health Check
-  if (pathname === '/health') {
+  // Health Check (compatible Node + Netlify)
+  if (pathname === '/health' || pathname === '/api/health') {
     return sendJSON(res, 200, {
       status: 'ok',
+      runtime: 'node',
       timestamp: new Date().toISOString(),
       memoryUsage: process.memoryUsage().rss
     });
@@ -806,7 +904,7 @@ const server = http.createServer(async (req, res) => {
       };
       if (acceptsGzip && rawJson.length > 1024) headers['Content-Encoding'] = 'gzip';
       res.writeHead(200, headers);
-      return res.end(body);
+      return res.end(req.method === 'HEAD' ? undefined : body);
     } catch (err) {
       return sendJSON(res, err.status || 502, { success: false, error: err instanceof HttpError ? err.message : 'Service indisponible.' });
     }
@@ -854,6 +952,11 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJSON(res, error.status || 502, { success: false, error: error instanceof HttpError ? error.message : 'Service indisponible.' });
     }
+  }
+
+  // Toute route /api/* inconnue doit renvoyer 404 JSON (jamais index.html 200 OK)
+  if (pathname === '/api' || pathname.startsWith('/api/')) {
+    return sendJSON(res, 404, { success: false, error: 'Route API introuvable.' });
   }
 
   // Serveur web statique

@@ -123,25 +123,38 @@ const DetailPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [type, id]);
 
-    // Resume watch history
+    const resolvedContentId = content?.id ? String(content.id) : String(id).replace(/^(movie|tv)-/, '');
+
+    // Resume watch history (réinitialise resumeInfo lors d'un changement de titre sans écraser l'onglet saison choisi)
     useEffect(() => {
-        const item = watchHistory.find(h => String(h.contentId) === String(id));
+        const item = watchHistory.find(h => String(h.contentId || h.id) === resolvedContentId);
         if (item?.season && item?.episode) {
             setResumeInfo({ season: item.season, episode: item.episode });
+        } else {
+            setResumeInfo({ season: 1, episode: 1 });
+        }
+    }, [watchHistory, resolvedContentId]);
+
+    // Synchroniser la saison initiale uniquement lors du changement de titre
+    useEffect(() => {
+        const item = watchHistory.find(h => String(h.contentId || h.id) === resolvedContentId);
+        if (item?.season) {
             setSelectedSeason(item.season);
         }
-    }, [watchHistory, id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [resolvedContentId]);
 
-    // Load season episodes
+    // Load season episodes (utilise content.id numérique même si l'URL contient un IMDb ID tt...)
     useEffect(() => {
         let cancelled = false;
         setSeasonEpisodes([]);
         setEpisodesError(false);
         const loadEpisodes = async () => {
             if (!content || getContentType(content) !== 'tv') return;
+            const numericTvId = content.id || id;
             setEpisodesLoading(true);
             try {
-                const data = await getSeasonDetails(id, selectedSeason);
+                const data = await getSeasonDetails(numericTvId, selectedSeason);
                 if (!cancelled) setSeasonEpisodes(data?.episodes || []);
             } catch { if (!cancelled) setEpisodesError(true); }
             finally { if (!cancelled) setEpisodesLoading(false); }
@@ -150,12 +163,18 @@ const DetailPage = () => {
         return () => { cancelled = true; };
     }, [content, selectedSeason, id, location.pathname, retryEpisodes]);
 
-    // Load reviews
+    // Load reviews (protégé contre les courses async lors d'un changement rapide de fiche)
     useEffect(() => {
+        let cancelled = false;
+        setReviews([]);
+        setUserReview(null);
+        setReviewText('');
+        setReviewRating(0);
         const loadReviews = async () => {
             if (!content) return;
             const contentId = content.id || content.contentId;
             const fetchedReviews = await getReviewsByContent(contentId);
+            if (cancelled) return;
             setReviews(fetchedReviews);
 
             if (currentUser && currentProfile) {
@@ -166,6 +185,7 @@ const DetailPage = () => {
             }
         };
         loadReviews();
+        return () => { cancelled = true; };
     }, [content, currentProfile, currentUser]);
 
     const handleSubmitReview = async (e) => {
@@ -196,6 +216,8 @@ const DetailPage = () => {
             setReviewRating(0);
             setUserReview(null);
             setReviews(await getReviewsByContent(contentId));
+        } else {
+            addToast("Impossible de supprimer l'avis.", 'error');
         }
     };
 
@@ -254,7 +276,7 @@ const DetailPage = () => {
         ? content.recommendations.results
         : content.similar?.results || []).filter(i => i.poster_path).slice(0, 14);
 
-    const historyItem = watchHistory.find(h => String(h.contentId) === String(id));
+    const historyItem = watchHistory.find(h => String(h.contentId || h.id) === resolvedContentId);
     const watchProgress = historyItem?.progress || 0;
     const isWatched = watchProgress >= 90;
     const hasProgress = watchProgress > 5 && watchProgress < 90;
@@ -286,7 +308,7 @@ const DetailPage = () => {
         '@type': isTV ? 'TVSeries' : 'Movie',
         name: title,
         description: content.overview,
-        image: `https://image.tmdb.org/t/p/w780${content.poster_path}`,
+        image: content.poster_path ? `https://image.tmdb.org/t/p/w780${content.poster_path}` : undefined,
         datePublished: releaseDate,
         genre: content.genres?.map(g => g.name),
         aggregateRating: content.vote_average ? {
@@ -315,7 +337,7 @@ const DetailPage = () => {
                 <meta name="description" content={content.overview?.slice(0, 160)} />
                 <meta property="og:title" content={`${title} - ALTYFLIX`} />
                 <meta property="og:description" content={content.overview?.slice(0, 160)} />
-                <meta property="og:image" content={`https://image.tmdb.org/t/p/w1280${backdropPath}`} />
+                {backdropPath && <meta property="og:image" content={`https://image.tmdb.org/t/p/w1280${backdropPath}`} />}
                 <meta property="og:type" content={isTV ? 'video.tv_show' : 'video.movie'} />
                 <script type="application/ld+json">{JSON.stringify(structuredData)}</script>
             </Helmet>

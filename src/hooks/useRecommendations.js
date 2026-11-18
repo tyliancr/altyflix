@@ -42,13 +42,24 @@ const useRecommendations = () => {
             // Build taste profile from last 10 watched items (with myList fallback)
             const profile = await buildTasteProfile(history, list, 10);
 
-            // IDs to exclude: already in myList OR finished (progress >= 85%)
-            const excludeIds = new Set([
-                ...(list || []).map(i => i.id || i.contentId),
-                ...(history || [])
-                    .filter(i => i.progress >= 85)
-                    .map(i => i.contentId || i.id),
-            ]);
+            // IDs to exclude: already in myList OR finished (progress >= 85%), normalized to Number & String
+            const excludeIds = new Set();
+            for (const i of (list || [])) {
+                const rawId = i.id ?? i.contentId;
+                if (rawId != null) {
+                    excludeIds.add(Number(rawId));
+                    excludeIds.add(String(rawId));
+                }
+            }
+            for (const i of (history || [])) {
+                if (i.progress >= 85) {
+                    const rawId = i.contentId ?? i.id;
+                    if (rawId != null) {
+                        excludeIds.add(Number(rawId));
+                        excludeIds.add(String(rawId));
+                    }
+                }
+            }
 
             const { items, matchScores: scores } = await fetchRecommendations(profile, excludeIds, 24);
 
@@ -67,6 +78,15 @@ const useRecommendations = () => {
     useEffect(() => {
         activeRef.current = true;
 
+        // Ne pas charger de recommandations adultes non filtrées en mode Enfant
+        if (currentProfile?.isKid) {
+            setRecommendations([]);
+            setMatchScores(new Map());
+            setSeedTitle(null);
+            setLoading(false);
+            return () => { activeRef.current = false; };
+        }
+
         // Debounce so we don't fire on every single history update
         clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => {
@@ -80,7 +100,7 @@ const useRecommendations = () => {
             requestVersion.current++;
             clearTimeout(timerRef.current);
         };
-    }, [watchHistory, myList, currentProfile?.id, run]);
+    }, [watchHistory, myList, currentProfile?.id, currentProfile?.isKid, run]);
 
     return { recommendations, matchScores, seedTitle, loading };
 };

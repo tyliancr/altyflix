@@ -24,18 +24,26 @@ const CategoryPage = () => {
     const [loading, setLoading] = useState(true);
 
     const movieGenreId = parseInt(id, 10);
-    const genreName = GENRE_NAMES[movieGenreId] || 'Genre';
+    const isValidGenreId = Number.isInteger(movieGenreId) && movieGenreId > 0;
+    const isTvOnlyGenre = isValidGenreId && Object.values(TV_GENRES).includes(movieGenreId) && !Object.values(GENRES).includes(movieGenreId);
+    const genreName = (isValidGenreId && GENRE_NAMES[movieGenreId]) || 'Genre';
 
     useEffect(() => {
         let active = true;
-        setLoading(true);
         window.scrollTo(0, 0);
+        if (!isValidGenreId) {
+            setMovies([]);
+            setSeries([]);
+            setLoading(false);
+            return () => { active = false; };
+        }
+        setLoading(true);
 
         const tvGenreId = TV_EQUIVALENT[movieGenreId]
             ?? (Object.values(TV_GENRES).includes(movieGenreId) ? movieGenreId : null);
 
         Promise.allSettled([
-            getContentByGenre('movie', movieGenreId, 1),
+            isTvOnlyGenre ? Promise.resolve({ results: [] }) : getContentByGenre('movie', movieGenreId, 1),
             tvGenreId ? getContentByGenre('tv', tvGenreId, 1) : Promise.resolve({ results: [] }),
         ]).then(([moviesData, tvData]) => {
             if (!active) return;
@@ -44,10 +52,10 @@ const CategoryPage = () => {
             setLoading(false);
         });
         return () => { active = false; };
-    }, [movieGenreId]);
+    }, [movieGenreId, isValidGenreId, isTvOnlyGenre]);
 
     return (
-        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-10 md:px-[5%] md:pt-32">
+        <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-[calc(env(safe-area-inset-top,0px)+6rem)] md:px-[5%] md:pt-32">
             <Helmet>
                 <title>{genreName} - ALTYFLIX</title>
             </Helmet>

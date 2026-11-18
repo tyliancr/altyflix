@@ -86,6 +86,7 @@ export const ProfileProvider = ({ children }) => {
                 setCurrentProfile(null);
                 storage.remove('lastProfileId');
                 storage.remove('altyflix_cached_profiles');
+                storage.remove('altyflix_cached_active_profile');
             } else {
                 setProfiles(migratedProfiles);
                 storage.set('altyflix_cached_profiles', migratedProfiles);
@@ -198,7 +199,11 @@ export const ProfileProvider = ({ children }) => {
                 return next;
             });
             if (currentProfile?.id === profileId) {
-                setCurrentProfile(prev => ({ ...prev, ...updates }));
+                setCurrentProfile(prev => {
+                    const updated = { ...prev, ...updates };
+                    storage.set('altyflix_cached_active_profile', updated);
+                    return updated;
+                });
                 if (updates.language) {
                     const langMap = { 'fr': 'fr-FR', 'en': 'en-US', 'es': 'es-ES', 'de': 'de-DE', 'it': 'it-IT' };
                     storage.set('language', langMap[updates.language] || 'fr-FR');
@@ -223,6 +228,9 @@ export const ProfileProvider = ({ children }) => {
 
     // Delete profile
     const deleteProfile = useCallback(async (profileId) => {
+        if (!currentUser || !profiles.some(p => p.id === profileId && (!p.userId || p.userId === currentUser.uid))) {
+            return { success: false, error: 'Profil non autorisé.' };
+        }
         try {
             // Optimistic UI update
             setProfiles(prev => {
@@ -231,10 +239,11 @@ export const ProfileProvider = ({ children }) => {
                 return next;
             });
 
-            // Clear current profile if it's the one being deleted
+            // Clear current profile and cached active profile if it's the one being deleted
             if (currentProfile && currentProfile.id === profileId) {
                 setCurrentProfile(null);
                 storage.remove('lastProfileId');
+                storage.remove('altyflix_cached_active_profile');
             }
 
             const result = await deleteProfileDB(profileId);
@@ -248,7 +257,7 @@ export const ProfileProvider = ({ children }) => {
             console.error('Error deleting profile:', error);
             return { success: false, error: error.message };
         }
-    }, [currentProfile, loadProfiles]);
+    }, [currentProfile, currentUser, profiles, loadProfiles]);
 
     const switchProfile = useCallback((profile) => {
         if (!currentUser || (profile.userId && profile.userId !== currentUser.uid)) return;

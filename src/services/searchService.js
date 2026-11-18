@@ -1,4 +1,5 @@
 import { searchMulti, searchMovies, searchSeries, searchPeople } from './tmdb.js';
+import { storage } from '../utils/helpers.js';
 
 /**
  * Normalizes text for accent-insensitive, case-insensitive comparison
@@ -482,7 +483,8 @@ export const searchMedia = async ({
     throwIfAborted(signal);
 
     const sanitized = sanitizeForTMDB(raw);
-    const cacheKey = `${normalizeText(sanitized)}:${filter}:${page}:${isKid ? 'kid' : 'all'}`;
+    const activeLang = storage.get('language', 'fr-FR');
+    const cacheKey = `${activeLang}:${normalizeText(sanitized)}:${filter}:${page}:${isKid ? 'kid' : 'all'}`;
 
     if (searchCache.has(cacheKey)) {
         const { data, timestamp } = searchCache.get(cacheKey);

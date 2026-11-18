@@ -6,8 +6,8 @@ import { spawn } from 'node:child_process'
 
 const autoBackendPlugin = () => ({
   name: 'auto-backend',
-  configureServer() {
-    const req = http.get('http://localhost:3000/health', () => {});
+  configureServer(server) {
+    const req = http.get('http://localhost:3000/health', (res) => { res.resume(); });
     req.on('error', () => {
       console.log('⚡ Démarrage automatique du serveur API ALTYFLIX sur le port 3000...');
       const proc = spawn('node', ['server/server-vf-api.cjs'], {
@@ -17,7 +17,9 @@ const autoBackendPlugin = () => ({
         // PORT (set by some launchers) and listens where nothing looks for it.
         env: { ...process.env, PORT: '3000' },
       });
-      process.on('exit', () => proc.kill());
+      const stop = () => { try { proc.kill(); } catch { /* ignore */ } };
+      process.on('exit', stop);
+      server.httpServer?.on('close', stop);
     });
   }
 });
@@ -92,6 +94,7 @@ export default defineConfig({
       workbox: {
         globIgnores: ['**/hls-*.js'],
         globPatterns: ['**/*.{js,css,html,ico,svg}'],
+        navigateFallbackDenylist: [/^\/api\//, /^\/player\//],
         runtimeCaching: [
           {
             // Cache TMDB images for 30 days (including opaque no-cors img responses)

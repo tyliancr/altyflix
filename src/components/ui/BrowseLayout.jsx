@@ -29,7 +29,7 @@ const BrowseLayout = ({
             <title>{selectedGenre ? `${selectedGenre.name} · ${title}` : title} - ALTYFLIX</title>
         </Helmet>
 
-        <div className="pointer-events-none absolute inset-x-0 top-[max(1rem,env(safe-area-inset-top))] z-30 px-[4%] md:top-[88px] md:px-[5%]">
+        <div className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+5.75rem)] z-30 px-[4%] md:top-[88px] md:px-[5%]">
             <div className="pointer-events-auto flex w-fit flex-wrap items-center gap-x-5 gap-y-3">
                 <h1 className="font-display text-3xl font-bold tracking-tight text-white sm:text-4xl" style={{ textShadow: '0 2px 20px rgba(0,0,0,0.6)' }}>
                     {title}

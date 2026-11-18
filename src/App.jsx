@@ -110,7 +110,9 @@ const ProtectedRoute = ({ children }) => {
   if (!currentUser) {
     if (location.pathname !== '/login' && location.pathname !== '/') {
       const safePath = sanitizeReturnUrl(location.pathname + location.search, '');
-      if (safePath) localStorage.setItem('returnUrl', safePath);
+      if (safePath) {
+        try { localStorage.setItem('returnUrl', safePath); } catch { /* ignore */ }
+      }
     }
     return <Navigate to="/login" replace />;
   }
@@ -131,7 +133,9 @@ const ProfileRequiredRoute = ({ children }) => {
   if (!currentProfile && profiles.length > 0) {
     if (location.pathname !== '/profiles') {
       const safePath = sanitizeReturnUrl(location.pathname + location.search, '');
-      if (safePath) localStorage.setItem('returnUrl', safePath);
+      if (safePath) {
+        try { localStorage.setItem('returnUrl', safePath); } catch { /* ignore */ }
+      }
     }
     return <Navigate to="/profiles" replace />;
   }

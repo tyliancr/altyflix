@@ -31,10 +31,13 @@ export default function useGenreBrowse({ genres, loadShelves, fetchGenrePage, ge
     // Loaders are passed inline by pages; keep the latest without retriggering the effect.
     const loaders = useRef({ loadShelves, fetchGenrePage });
     loaders.current = { loadShelves, fetchGenrePage };
+    const genreVersionRef = useRef(0);
 
     useEffect(() => {
         let active = true;
+        genreVersionRef.current += 1;
         setLoading(true);
+        setLoadingMore(false);
         setFailed(false);
         setShelves([]);
         setGridItems([]);
@@ -70,15 +73,18 @@ export default function useGenreBrowse({ genres, loadShelves, fetchGenrePage, ge
 
     const loadMore = useCallback(async () => {
         if (!selectedGenre || loadingMore || page >= totalPages) return;
+        const version = genreVersionRef.current;
         setLoadingMore(true);
         try {
             const data = await loaders.current.fetchGenrePage(selectedGenre, page + 1);
+            if (version !== genreVersionRef.current) return;
             setGridItems(prev => uniqueById([...prev, ...(data.results || [])]));
-            setPage(page + 1);
+            setPage(prev => prev + 1);
         } catch (error) {
+            if (version !== genreVersionRef.current) return;
             console.error('Error loading more titles:', error);
         } finally {
-            setLoadingMore(false);
+            if (version === genreVersionRef.current) setLoadingMore(false);
         }
     }, [selectedGenre, loadingMore, page, totalPages]);
 

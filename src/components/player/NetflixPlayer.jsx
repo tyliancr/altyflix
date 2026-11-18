@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { getMovieDetails, getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
-import { resolvePlaybackStreams, pollStreamStatus, getGatewayConfig, saveGatewayConfig, fetchSubtitlesForContent, fetchSubtitleCues, DEFAULT_PROVIDER, DEFAULT_TOKEN } from '../../services/streamingGateway';
+import { resolvePlaybackStreams, pollStreamStatus, fetchSubtitlesForContent, fetchSubtitleCues } from '../../services/streamingGateway';
 import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon } from './PlayerPanels';
 import { formatClock } from './playerUtils';
 import { IN_TV_APP, moveFocusWithin } from '../../hooks/useTVNavigation';
@@ -105,11 +105,16 @@ export default function NetflixPlayer({
     const panelRef = useRef(panel);
     panelRef.current = panel;
     const { currentProfile, updateProfile } = useProfile?.() || {};
+    const subsPrefKey = currentProfile?.id ? `altyflix_subtitles_always_on_${currentProfile.id}` : 'altyflix_subtitles_always_on';
     const [subtitlesAlwaysOn, setSubtitlesAlwaysOn] = useState(() => {
-        const local = typeof localStorage !== 'undefined' ? localStorage.getItem('altyflix_subtitles_always_on') : null;
-        if (local !== null) return local === 'true';
+        try {
+            const local = typeof localStorage !== 'undefined' ? localStorage.getItem(subsPrefKey) : null;
+            if (local !== null) return local === 'true';
+        } catch { /* ignore */ }
         return currentProfile?.subtitlesAlwaysOn !== false;
     });
+    const subtitlesAlwaysOnRef = useRef(subtitlesAlwaysOn);
+    subtitlesAlwaysOnRef.current = subtitlesAlwaysOn;
 
     const [availableSubtitles, setAvailableSubtitles] = useState([]);
     const [selectedSubtitleId, setSelectedSubtitleId] = useState('off');
@@ -141,6 +146,18 @@ export default function NetflixPlayer({
     const loadedUrlRef = useRef(null);
     const [resolvedDurationSec, setResolvedDurationSec] = useState(0);
     const resolvedKeyRef = useRef('');
+    const resolveReqIdRef = useRef(0);
+    const resolveAbortRef = useRef(null);
+    const mountedRef = useRef(true);
+    const failedStreamIdsRef = useRef(new Set());
+    const availableStreamsRef = useRef(availableStreams);
+    availableStreamsRef.current = availableStreams;
+    const activeStreamRef = useRef(activeStream);
+    activeStreamRef.current = activeStream;
+    const isMutedRef = useRef(isMuted);
+    isMutedRef.current = isMuted;
+    const playbackRateRef = useRef(playbackRate);
+    playbackRateRef.current = playbackRate;
     const resolvedImdbIdRef = useRef('');
     const pollingAbortControllerRef = useRef(null);
     const transcodeOffsetRef = useRef(0);
@@ -204,18 +221,23 @@ export default function NetflixPlayer({
         }
     }, [id, isTv]);
 
-    // Nettoyage de toute surveillance / polling actif au démontage du composant
+    // Nettoyage de toute surveillance / polling / résolution actif au démontage du composant
     useEffect(() => {
+        mountedRef.current = true;
         return () => {
+            mountedRef.current = false;
             if (pollingAbortControllerRef.current) {
                 pollingAbortControllerRef.current.abort();
+            }
+            if (resolveAbortRef.current) {
+                resolveAbortRef.current.abort();
             }
         };
     }, []);
 
     // Démarre la surveillance en continu d'un flux en cours de débridage
     const startStreamPolling = useCallback((targetUrl) => {
-        if (!targetUrl) return;
+        if (!targetUrl || !mountedRef.current) return;
         if (pollingAbortControllerRef.current) {
             pollingAbortControllerRef.current.abort();
         }
@@ -228,34 +250,41 @@ export default function NetflixPlayer({
             streamUrl: targetUrl,
             signal: controller.signal,
             onProgress: (prog) => {
-                setDownloadProgress(prog);
+                if (mountedRef.current && !controller.signal.aborted) {
+                    setDownloadProgress(prog);
+                }
             }
         }).then(result => {
-            if (result.aborted) return;
+            if (!mountedRef.current || result.aborted || controller.signal.aborted) return;
             if (result.ready && result.playbackUrl) {
-                console.log('[Altyflix Player] ✅ Débridage terminé avec succès ! URL reçue :', result.playbackUrl);
+                console.log('[Altyflix Player] ✅ Débridage terminé avec succès !');
                 loadedUrlRef.current = null;
                 setActiveStream(prev => ({
                     ...(prev || {}),
                     url: result.playbackUrl,
+                    isAvi: Boolean(prev?.isAvi || result.isAvi),
+                    isTranscoded: Boolean(prev?.isTranscoded || result.isTranscoded),
                     isDownloading: false,
                     isCached: true
                 }));
                 setStreamState('playing');
+            } else if (result.error) {
+                setErrorMessage(result.error);
+                setStreamState('error');
             } else if (result.timeout) {
                 console.warn('[Altyflix Player] Timeout de débridage atteint.');
                 setErrorMessage('Le téléchargement vers le cloud haute vitesse prend plus de temps que prévu. Essayez une autre source ou réessayez.');
                 setStreamState('error');
             }
         }).catch(err => {
-            if (controller.signal.aborted) return;
+            if (!mountedRef.current || controller.signal.aborted) return;
             console.error('[Altyflix Player] Erreur de polling :', err);
             setErrorMessage('Erreur lors de la vérification de la source : ' + err.message);
             setStreamState('error');
         });
     }, []);
 
-    // Résolution automatique du flux streaming (uniquement sur changement de média/saison/épisode)
+    // Résolution automatique du flux streaming (protégée contre les courses d'épisodes et le démontage)
     const resolveStream = useCallback(async (force = false) => {
         if (!id) return;
         const streamKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}`;
@@ -264,12 +293,19 @@ export default function NetflixPlayer({
         if (pollingAbortControllerRef.current) {
             pollingAbortControllerRef.current.abort();
         }
+        if (resolveAbortRef.current) {
+            resolveAbortRef.current.abort();
+        }
+        const abortCtrl = new AbortController();
+        resolveAbortRef.current = abortCtrl;
+        const reqId = ++resolveReqIdRef.current;
+        failedStreamIdsRef.current.clear();
 
         setStreamState('resolving');
         setErrorMessage('');
 
-        const config = getGatewayConfig();
         const imdbId = contentRef.current?.external_ids?.imdb_id || contentRef.current?.imdb_id;
+        const cleanTitle = titleRef.current && titleRef.current !== 'Lecture' ? titleRef.current : '';
 
         try {
             const res = await resolvePlaybackStreams({
@@ -278,20 +314,21 @@ export default function NetflixPlayer({
                 type: isTv ? 'tv' : 'movie',
                 season,
                 episode,
-                title: titleRef.current
+                title: cleanTitle,
+                signal: abortCtrl.signal
             });
+
+            if (!mountedRef.current || reqId !== resolveReqIdRef.current || res?.aborted) return;
 
             if (res.success && res.activeStream) {
                 resolvedKeyRef.current = streamKey;
                 if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
                 setAvailableStreams(res.streams || []);
-                // Utiliser directement activeStream (déjà optimisé VF 1080p en cache + pré-résolu côté serveur)
                 const selectedStream = res.activeStream;
                 setActiveStream(selectedStream);
                 setHasTrueVf(Boolean(res.hasTrueVf));
                 setCurrentAudioLang(selectedStream.isFrench ? 'vf' : 'vo');
 
-                // Si le flux nécessite un débridage en cours, passer à l'état 'downloading' et surveiller
                 if (res.status === 'downloading' || selectedStream.isDownloading) {
                     console.log('[Altyflix Player] Flux non encore en cache, passage à l\'état downloading...');
                     setStreamState('downloading');
@@ -300,41 +337,12 @@ export default function NetflixPlayer({
                     console.log('[Altyflix Player] Flux prêt immédiatement (en cache), lancement direct !');
                     setStreamState('playing');
                 }
-            } else if (res.reason === 'NO_TOKEN' || !config.hasToken) {
-                // Fallback transparent : injecter le provider par défaut et réessayer
-                saveGatewayConfig({ provider: DEFAULT_PROVIDER, token: DEFAULT_TOKEN });
-                const retry = await resolvePlaybackStreams({
-                    id,
-                    imdbId,
-                    type: isTv ? 'tv' : 'movie',
-                    season,
-                    episode,
-                    title: titleRef.current
-                });
-                if (retry.success && retry.activeStream) {
-                    resolvedKeyRef.current = streamKey;
-                    if (retry.imdbId) resolvedImdbIdRef.current = retry.imdbId;
-                    setAvailableStreams(retry.streams || []);
-                    const selectedStream = retry.activeStream;
-                    setActiveStream(selectedStream);
-                    setHasTrueVf(Boolean(retry.hasTrueVf));
-                    setCurrentAudioLang(selectedStream.isFrench ? 'vf' : 'vo');
-
-                    if (retry.status === 'downloading' || selectedStream.isDownloading) {
-                        setStreamState('downloading');
-                        startStreamPolling(selectedStream.originalUrl || selectedStream.url);
-                    } else {
-                        setStreamState('playing');
-                    }
-                } else {
-                    setErrorMessage(retry.message || 'Connexion au serveur de streaming en cours...');
-                    setStreamState('error');
-                }
             } else {
                 setErrorMessage(res.message || 'Aucun flux direct disponible pour ce titre.');
                 setStreamState('error');
             }
         } catch (err) {
+            if (!mountedRef.current || reqId !== resolveReqIdRef.current || err?.name === 'AbortError') return;
             setErrorMessage(err.message || 'Erreur lors de la résolution du flux direct.');
             setStreamState('error');
         }
@@ -344,28 +352,34 @@ export default function NetflixPlayer({
         resolveStream();
     }, [resolveStream]);
 
-    // Bascule automatique vers le flux suivant en cas d'erreur de décodage ou de format (ex: MKV/AC3)
+    // Bascule automatique propre vers le flux suivant (hors updater React, avec suivi des flux déjà échoués)
     const handleStreamError = useCallback(() => {
-        setAvailableStreams(prevStreams => {
-            if (!prevStreams || prevStreams.length <= 1) {
-                setErrorMessage('Ce format vidéo ne peut pas être lu directement par votre navigateur.');
-                setStreamState('error');
-                return prevStreams;
-            }
-            const currentIdx = prevStreams.findIndex(s => s.url === activeStream?.url);
-            const nextIdx = currentIdx + 1;
-            if (nextIdx < prevStreams.length) {
-                const nextStream = prevStreams[nextIdx];
-                console.log(`[Altyflix Player] Bascule automatique vers le flux suivant : ${nextStream.quality} (${nextStream.languageLabel})`);
-                loadedUrlRef.current = null;
-                setActiveStream(nextStream);
-            } else {
-                setErrorMessage('Tous les flux vidéo directs disponibles pour ce titre ont été essayés.');
-                setStreamState('error');
-            }
-            return prevStreams;
-        });
-    }, [activeStream?.url]);
+        const list = availableStreamsRef.current || [];
+        const current = activeStreamRef.current;
+        if (current) {
+            failedStreamIdsRef.current.add(current.id || current.url);
+        }
+        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url));
+        if (!nextStream) {
+            setErrorMessage(list.length <= 1
+                ? 'Ce format vidéo ne peut pas être lu directement par votre navigateur.'
+                : 'Tous les flux vidéo directs disponibles pour ce titre ont été essayés.');
+            setStreamState('error');
+            return;
+        }
+        console.log(`[Altyflix Player] Bascule automatique vers le flux suivant : ${nextStream.quality} (${nextStream.languageLabel})`);
+        loadedUrlRef.current = null;
+        transcodeOffsetRef.current = 0;
+        setActiveStream(nextStream);
+        const isUnverifiedTorrentio = typeof nextStream.url === 'string' && nextStream.url.includes('torrentio.strem.fun/resolve/');
+        if (nextStream.isDownloading || isUnverifiedTorrentio) {
+            setStreamState('downloading');
+            startStreamPolling(nextStream.originalUrl || nextStream.url);
+        } else {
+            setStreamState('playing');
+            setIsBuffering(true);
+        }
+    }, [startStreamPolling]);
 
     // Durée réelle connue depuis TMDB (utilisée pour fiabiliser la timeline et le remux audio/AVI)
     const tmdbDuration = resolvedDurationSec ||
@@ -447,7 +461,7 @@ export default function NetflixPlayer({
             }
         }
 
-        const isTranscoded = Boolean(activeStream?.isTranscoded || streamUrl.includes('/api/video-stream'));
+        const isTranscoded = Boolean(activeStream?.isTranscoded);
         if (isTranscoded && startPos > 5) {
             transcodeOffsetRef.current = startPos;
         } else {
@@ -457,6 +471,10 @@ export default function NetflixPlayer({
         const effectiveLoadUrl = (isTranscoded && startPos > 5)
             ? `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}t=${startPos}`
             : streamUrl;
+
+        // Capture la fonction de sauvegarde liée à CET épisode pour que le cleanup ne corrompe jamais le suivant
+        const saveForThisEpisode = saveCurrentProgress;
+        let pendingResumeSeek = !isTranscoded && startPos > 5;
 
         engine.load({
             videoElement: video,
@@ -473,21 +491,25 @@ export default function NetflixPlayer({
                     handleStreamErrorRef.current?.();
                 }
             }
+        }).catch((err) => {
+            console.warn('[Altyflix Player] Échec chargement moteur :', err);
+            handleStreamErrorRef.current?.();
         });
 
         let hasInitialSaved = false;
         const onPlay = () => {
             setIsPlaying(true);
-            if (!hasInitialSaved) {
+            // Ne pas écraser une position de reprise à 0s avant que le seek initial soit appliqué
+            if (!hasInitialSaved && !pendingResumeSeek) {
                 hasInitialSaved = true;
-                saveCurrentProgressRef.current?.(true);
+                saveForThisEpisode(true);
             }
         };
         const onPause = () => {
             setIsPlaying(false);
             // En pause, plus rien ne charge : on retire l'indicateur (il pouvait rester bloqué)
             setIsBuffering(false);
-            saveCurrentProgressRef.current?.();
+            if (!pendingResumeSeek) saveForThisEpisode();
         };
 
         const onTimeUpdate = () => {
@@ -514,8 +536,8 @@ export default function NetflixPlayer({
 
             // Sauvegarde automatique toutes les 5 secondes
             const now = Date.now();
-            if (now - lastSaveRef.current > 5000) {
-                saveCurrentProgressRef.current?.();
+            if (!pendingResumeSeek && now - lastSaveRef.current > 5000) {
+                saveForThisEpisode();
             }
         };
 
@@ -528,12 +550,18 @@ export default function NetflixPlayer({
             if (dur > 0) setDuration(dur);
             setIsBuffering(false);
 
-            if (startPos > 5 && !isTranscoded && Number.isFinite(video.duration) && startPos < video.duration - 15) {
-                video.currentTime = startPos;
+            if (pendingResumeSeek) {
+                if (Number.isFinite(video.duration) && startPos < video.duration - 15) {
+                    video.currentTime = startPos;
+                }
+                pendingResumeSeek = false;
             }
-            // Tentative de lecture avec son natif
-            video.muted = false;
-            video.volume = volumeRef.current || 1;
+            // Conserver la vitesse de lecture et les préférences de volume/mute de l'utilisateur
+            video.playbackRate = playbackRateRef.current || 1;
+            const desiredMuted = Boolean(isMutedRef.current);
+            const desiredVolume = volumeRef.current ?? 1;
+            video.muted = desiredMuted;
+            video.volume = desiredVolume;
             video.play().catch(() => {
                 video.muted = true;
                 setIsAutoplayMuted(true);
@@ -548,14 +576,20 @@ export default function NetflixPlayer({
         };
 
         const onWaiting = () => setIsBuffering(true);
-        const onPlaying = () => setIsBuffering(false);
+        const onPlaying = () => {
+            setIsBuffering(false);
+            if (!hasInitialSaved && !pendingResumeSeek) {
+                hasInitialSaved = true;
+                saveForThisEpisode(true);
+            }
+        };
         const onVideoError = () => {
             console.warn('[Altyflix Player] Erreur de lecture vidéo native :', video.error);
             handleStreamErrorRef.current?.();
         };
 
         const onBeforeUnload = () => {
-            saveCurrentProgressRef.current?.();
+            if (!pendingResumeSeek) saveForThisEpisode();
         };
         window.addEventListener('beforeunload', onBeforeUnload);
 
@@ -567,11 +601,14 @@ export default function NetflixPlayer({
         video.addEventListener('waiting', onWaiting);
         video.addEventListener('playing', onPlaying);
         video.addEventListener('error', onVideoError);
-        const onSeeked = () => updateSubtitleLinesRef.current?.();
+        const onSeeked = () => {
+            pendingResumeSeek = false;
+            updateSubtitleLinesRef.current?.();
+        };
         video.addEventListener('seeked', onSeeked);
 
         return () => {
-            saveCurrentProgressRef.current?.();
+            if (!pendingResumeSeek) saveForThisEpisode();
             loadedUrlRef.current = null;
             window.removeEventListener('beforeunload', onBeforeUnload);
             video.removeEventListener('play', onPlay);
@@ -585,7 +622,7 @@ export default function NetflixPlayer({
             video.removeEventListener('seeked', onSeeked);
             engine.destroy();
         };
-    }, [activeStream?.url, activeStream?.isTranscoded, streamState, id, isTv, season, episode]);
+    }, [activeStream?.url, activeStream?.isTranscoded, streamState, id, isTv, season, episode, saveCurrentProgress]);
 
     // Fermeture du lecteur avec sauvegarde immédiate de l'exacte seconde
     const handleClose = useCallback(() => {
@@ -593,20 +630,36 @@ export default function NetflixPlayer({
         if (onClose) onClose();
     }, [onClose, saveCurrentProgress]);
 
-    // Passage à l'épisode suivant
-    const handleNextEpisode = useCallback(() => {
-        if (onNext) {
-            onNext();
-            return;
-        }
-        // Repartir de zéro : sinon l'épisode suivant reprendrait à la position de l'actuel
+    // Réinitialisation propre lors d'un changement d'épisode (sauvegarde l'ancien, purge flux & sous-titres)
+    const resetEpisodeState = useCallback(() => {
+        saveCurrentProgress();
         currentTimeRef.current = 0;
+        transcodeOffsetRef.current = 0;
+        loadedUrlRef.current = null;
+        cuesRef.current = [];
+        autoSubAppliedKeyRef.current = '';
         setCurrentTime(0);
         setDuration(0);
         setBuffered(0);
         setPanel(null);
+        setActiveStream(null);
+        setAvailableStreams([]);
+        setAvailableSubtitles([]);
+        setSelectedSubtitleId('off');
+        setCurrentSubtitleLines([]);
+        setStreamState('resolving');
+    }, [saveCurrentProgress]);
+
+    // Passage à l'épisode suivant
+    const handleNextEpisode = useCallback(() => {
+        if (onNext) {
+            saveCurrentProgress();
+            onNext();
+            return;
+        }
+        resetEpisodeState();
         setEpisode(ep => ep + 1);
-    }, [onNext]);
+    }, [onNext, saveCurrentProgress, resetEpisodeState]);
 
     // Affiche les contrôles puis les masque après quelques secondes de lecture (style Netflix).
     // Ils restent affichés tant qu'un panneau est ouvert ou que la vidéo est en pause.
@@ -664,8 +717,8 @@ export default function NetflixPlayer({
         const video = videoRef.current;
         if (!video) return;
 
-        // Réactivation immédiate du son au premier geste de l'utilisateur
-        if (video.muted) {
+        // Réactivation automatique uniquement si le navigateur avait coupé le son à l'autoplay
+        if (isAutoplayMuted && video.muted) {
             video.muted = false;
             video.volume = volume || 1;
             setIsAutoplayMuted(false);
@@ -685,7 +738,7 @@ export default function NetflixPlayer({
 
         if (centerTimeoutRef.current) clearTimeout(centerTimeoutRef.current);
         centerTimeoutRef.current = setTimeout(() => setCenterAction(null), 600);
-    }, [handleMouseMove, volume]);
+    }, [handleMouseMove, volume, isAutoplayMuted]);
 
     // Déplacement direct et précis dans la vidéo (compatible HTTP 206 et transcodage à la volée)
     const seekToTime = useCallback((targetSec) => {
@@ -695,13 +748,21 @@ export default function NetflixPlayer({
         const effDur = (duration > 0 ? duration : (tmdbDuration || Infinity));
         const target = Math.max(0, Math.min(effDur, targetSec));
 
-        const isTranscoded = Boolean(activeStream?.isTranscoded || activeStream?.url?.includes('/api/video-stream'));
+        const isTranscoded = Boolean(activeStream?.isTranscoded);
 
         if (isTranscoded) {
-            const base = (activeStream?.url || '').replace(/([&?])t=\d+/, '');
-            const sep = base.includes('?') ? '&' : '?';
             const seekSec = Math.floor(target);
-            const seekUrl = `${base}${sep}t=${seekSec}`;
+            let seekUrl = activeStream?.url || '';
+            try {
+                const parsed = new URL(seekUrl, window.location.origin);
+                parsed.searchParams.set('t', String(seekSec));
+                seekUrl = parsed.origin === window.location.origin
+                    ? `${parsed.pathname}${parsed.search}`
+                    : parsed.toString();
+            } catch {
+                const base = seekUrl.replace(/([&?])t=\d+/, '');
+                seekUrl = `${base}${base.includes('?') ? '&' : '?'}t=${seekSec}`;
+            }
 
             transcodeOffsetRef.current = seekSec;
             setCurrentTime(target);
@@ -739,7 +800,7 @@ export default function NetflixPlayer({
             return;
         }
         if (e.pointerType === 'mouse') {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || e.detail >= 2) return;
             togglePlay();
             return;
         }
@@ -827,7 +888,7 @@ export default function NetflixPlayer({
                 video.webkitExitFullscreen();
             }
             if (window.screen?.orientation?.unlock) {
-                window.screen.orientation.unlock().catch(() => {});
+                try { window.screen.orientation.unlock(); } catch { /* ignore */ }
             }
             setIsFullscreen(false);
         } else {
@@ -849,7 +910,6 @@ export default function NetflixPlayer({
             if (window.screen?.orientation?.lock) {
                 window.screen.orientation.lock('landscape').catch(() => {});
             }
-            setIsFullscreen(true);
         }
     }, []);
 
@@ -875,14 +935,10 @@ export default function NetflixPlayer({
             pollingAbortControllerRef.current.abort();
             pollingAbortControllerRef.current = null;
         }
-        // Couper immédiatement la lecture précédente pour qu'aucun son/image ne reste en arrière-plan
+        // Mettre simplement en pause (le cleanup du useEffect détache onVideoError avant engine.destroy())
         const video = videoRef.current;
         if (video) {
-            try {
-                video.pause();
-                video.removeAttribute('src');
-                video.load();
-            } catch { /* ignore */ }
+            try { video.pause(); } catch { /* ignore */ }
         }
         loadedUrlRef.current = null;
         transcodeOffsetRef.current = 0;
@@ -926,7 +982,7 @@ export default function NetflixPlayer({
             if (adSpamPattern.test(rawText)) return;
             const parts = rawText.split('\n');
             parts.forEach(p => {
-                const cleaned = p.replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').trim();
+                const cleaned = p.replace(/\{[^}]+\}/g, '').trim();
                 if (cleaned && !lines.includes(cleaned)) {
                     lines.push(cleaned);
                 }
@@ -1003,13 +1059,13 @@ export default function NetflixPlayer({
     const toggleSubtitlesAlwaysOn = useCallback(() => {
         setSubtitlesAlwaysOn(prev => {
             const next = !prev;
-            try { localStorage.setItem('altyflix_subtitles_always_on', next ? 'true' : 'false'); } catch { /* stockage indisponible */ }
+            try { localStorage.setItem(subsPrefKey, next ? 'true' : 'false'); } catch { /* stockage indisponible */ }
             if (currentProfile?.id && updateProfile) {
                 updateProfile(currentProfile.id, { subtitlesAlwaysOn: next });
             }
             return next;
         });
-    }, [currentProfile?.id, updateProfile]);
+    }, [currentProfile?.id, updateProfile, subsPrefKey]);
 
     // Chargement automatique des sous-titres disponibles
     useEffect(() => {
@@ -1033,18 +1089,18 @@ export default function NetflixPlayer({
             // Auto-sélection des sous-titres : activés par défaut selon la préférence utilisateur (VF comme VO)
             if (autoSubAppliedKeyRef.current !== currentMediaKey) {
                 autoSubAppliedKeyRef.current = currentMediaKey;
-                if (subtitlesAlwaysOn && subs.length > 0) {
+                if (subtitlesAlwaysOnRef.current && subs.length > 0) {
                     const frSub = subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
                     const targetSub = frSub || subs[0];
                     if (targetSub) {
-                        handleSelectSubtitle(targetSub.id, subs, false);
+                        handleSelectSubtitle(targetSub.id, subs);
                     }
                 }
             }
         }).catch(() => {});
 
         return () => { active = false; };
-    }, [id, isTv, season, episode, subtitlesAlwaysOn, handleSelectSubtitle]);
+    }, [id, isTv, season, episode, handleSelectSubtitle]);
 
     // Sélection de la langue audio (VF vs VO)
     const handleSelectAudioLang = (lang) => {
@@ -1097,8 +1153,15 @@ export default function NetflixPlayer({
 
             if (BACK.includes(key)) {
                 e.preventDefault();
-                if (key === 'Escape' && document.fullscreenElement) {
-                    document.exitFullscreen().catch(() => {});
+                const inFs = Boolean(
+                    document.fullscreenElement ||
+                    document.webkitFullscreenElement ||
+                    videoRef.current?.webkitDisplayingFullscreen
+                );
+                if (key === 'Escape' && inFs) {
+                    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+                    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                    else if (videoRef.current?.webkitExitFullscreen) videoRef.current.webkitExitFullscreen();
                     setIsFullscreen(false);
                 } else {
                     handleClose();
@@ -1196,17 +1259,14 @@ export default function NetflixPlayer({
         return () => video.removeEventListener('ended', onEnded);
     }, [isTv, nextEpAvailable, handleNextEpisode]);
 
-    // Changement d'épisode : on repart de zéro
+    // Changement d'épisode : sauvegarde l'ancien puis repart proprement de zéro
     const goToEpisode = useCallback((s, e) => {
         setPanel(null);
         if (s === season && e === episode) return;
-        currentTimeRef.current = 0;
-        setCurrentTime(0);
-        setDuration(0);
-        setBuffered(0);
+        resetEpisodeState();
         setSeason(s);
         setEpisode(e);
-    }, [season, episode]);
+    }, [season, episode, resetEpisodeState]);
 
     // Contrôles masqués : aucun bouton invisible ne garde le focus de la télécommande
     useEffect(() => {

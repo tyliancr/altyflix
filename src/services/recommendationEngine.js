@@ -271,12 +271,13 @@ export const fetchRecommendations = async (tasteProfile, excludeIds = new Set(),
             }));
 
             if (allItems.length > 0) {
-                // Deduplicate and filter out excluded
+                // Deduplicate (by type+id) and filter out excluded
                 const seen = new Set();
                 const deduped = [];
                 for (const item of allItems) {
-                    if (seen.has(item.id) || excludeIds.has(item.id)) continue;
-                    seen.add(item.id);
+                    const key = `${item.media_type}_${item.id}`;
+                    if (seen.has(key) || excludeIds.has(item.id) || excludeIds.has(String(item.id))) continue;
+                    seen.add(key);
                     deduped.push(item);
                 }
 
@@ -351,12 +352,13 @@ export const fetchRecommendations = async (tasteProfile, excludeIds = new Set(),
             ...(popularSeries?.results || []).map(i => ({ ...i, media_type: 'tv' }))
         ];
 
-        // Deduplicate and filter out excluded
+        // Deduplicate (by type+id) and filter out excluded
         const seen = new Set();
         const deduped = [];
         for (const item of allItems) {
-            if (seen.has(item.id) || excludeIds.has(item.id)) continue;
-            seen.add(item.id);
+            const key = `${item.media_type}_${item.id}`;
+            if (seen.has(key) || excludeIds.has(item.id) || excludeIds.has(String(item.id))) continue;
+            seen.add(key);
             deduped.push(item);
         }
 

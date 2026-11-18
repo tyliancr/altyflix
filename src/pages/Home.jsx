@@ -96,9 +96,9 @@ const Home = () => {
                     if (!active) return;
                     const topKidsContent = kidsMovies.results?.slice(0, 5) || [];
                     const kidsCats = [
-                        { title: 'Dessins Animés Populaires', content: kidsSeries.results || [] },
-                        { title: 'Films pour toute la famille', content: kidsMovies.results || [] },
-                        { title: 'Aventures Magiques', content: allKidsMovies.results || [] },
+                        { title: 'Dessins Animés Populaires', content: kidsSeries.results || [], isTV: true },
+                        { title: 'Films pour toute la famille', content: kidsMovies.results || [], isTV: false },
+                        { title: 'Aventures Magiques', content: allKidsMovies.results || [], isTV: false },
                     ];
                     setHeroContent(topKidsContent);
                     setCategories(kidsCats);
@@ -195,11 +195,11 @@ const Home = () => {
                         const baseCategories = [
                             { title: t('home.trending'), content: trendingData.results || [], ranked: true },
                             { title: t('home.newReleases'), content: newReleasesList },
-                            { title: t('home.seriesTrending'), content: popularSeriesData.results || [] },
-                            { title: t('home.seriesAction'), content: actionSeriesData.results || [] },
-                            { title: t('home.seriesSciFi'), content: sciFiSeriesData.results || [] },
-                            { title: t('home.seriesAnimation'), content: animationSeriesData.results || [] },
-                            { title: t('home.seriesAiring'), content: onTheAirData.results || [] },
+                            { title: t('home.seriesTrending'), content: popularSeriesData.results || [], isTV: true },
+                            { title: t('home.seriesAction'), content: actionSeriesData.results || [], isTV: true },
+                            { title: t('home.seriesSciFi'), content: sciFiSeriesData.results || [], isTV: true },
+                            { title: t('home.seriesAnimation'), content: animationSeriesData.results || [], isTV: true },
+                            { title: t('home.seriesAiring'), content: onTheAirData.results || [], isTV: true },
                             { title: t('home.moviesPlaying'), content: nowPlayingData.results || [] },
                             { title: t('home.moviesPopular'), content: popularMoviesData.results || [] },
                             { title: t('home.moviesAction'), content: actionMoviesData.results || [] },
@@ -278,8 +278,8 @@ const Home = () => {
                 )}
                 <ResumeRow history={watchHistory} title={t('home.resume')} />
 
-                {/* Recommandé pour vous */}
-                {recommendedContent.length > 0 && (
+                {/* Recommandé pour vous (masqué en mode Enfant pour éviter toute fuite de contenu adulte) */}
+                {!kids && recommendedContent.length > 0 && (
                     <motion.div
                         initial={{ opacity: 0, y: 14 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -312,7 +312,7 @@ const Home = () => {
                             title={category.title}
                             items={category.content}
                             ranked={Boolean(category.ranked)}
-                            isTV={category.title.toLowerCase().includes('série')}
+                            isTV={Boolean(category.isTV)}
                         />
                     </motion.div>
                 ))}

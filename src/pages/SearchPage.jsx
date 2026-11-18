@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { getTrending, getContentByGenre } from '../services/tmdb.js';
+import { getTrending, getKidsMovies, getContentByGenre } from '../services/tmdb.js';
 import { searchMedia } from '../services/searchService.js';
 import { useProfile } from '../contexts/ProfileContext';
 import { Helmet } from 'react-helmet-async';
@@ -221,17 +221,21 @@ const SearchPage = () => {
         return () => clearInterval(timer);
     }, [placeholderList.length]);
 
-    // Load trending on mount
+    // Load trending on mount (filtré Enfant si profil Enfant actif)
     useEffect(() => {
+        let active = true;
         (async () => {
             try {
-                const data = await getTrending('all', 'week');
-                setTrending(data.results?.slice(0, 12) || []);
+                const data = currentProfile?.isKid
+                    ? await getKidsMovies(1)
+                    : await getTrending('all', 'week');
+                if (active) setTrending(data.results?.slice(0, 12) || []);
             } catch (_) { /* no-op */ }
         })();
         // Auto-focus input
-        setTimeout(() => inputRef.current?.focus(), 300);
-    }, []);
+        const focusTimer = setTimeout(() => inputRef.current?.focus(), 300);
+        return () => { active = false; clearTimeout(focusTimer); };
+    }, [currentProfile?.isKid]);
 
     // Snappy debounce search (200ms)
     useEffect(() => {

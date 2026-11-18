@@ -335,40 +335,46 @@ const server = http.createServer(async (req, res) => {
         '-analyzeduration', '2000000'
       ];
 
-      // -noaccurate_seek + -ss AVANT -i = seek HTTP Range instantané au keyframe exact pour vidéo ET audio (0 ms de décalage son/image)
+      // -noaccurate_seek + -ss + -copyts -start_at_zero AVANT -i :
+      // préserve exactement les timestamps d'origine vidéo ET audio au keyframe (sans couper l'audio pré-seek
+      // ni créer de trou de 1,8 s à 8 s dans le fMP4 qui décale le son sur Brave/Chromium).
       if (seekSec > 0) {
         ffmpegArgs.push('-noaccurate_seek', '-ss', String(seekSec));
       }
+      ffmpegArgs.push('-copyts', '-start_at_zero');
 
       ffmpegArgs.push('-i', inputUrl);
       if (copyVideo) {
         ffmpegArgs.push(
           '-map', '0:v:0',
           '-map', '0:a:0?',
+          '-map_chapters', '-1',
           '-c:v', 'copy',
           '-c:a', 'aac',
           '-ac', '2',
           '-b:a', '192k',
-          '-af', 'aresample=async=1:min_hard_comp=0.100:first_pts=0',
-          '-avoid_negative_ts', 'make_zero',
+          '-af', 'aresample=async=1',
           '-max_muxing_queue_size', '1024'
         );
       } else {
         ffmpegArgs.push(
+          '-map', '0:v:0',
+          '-map', '0:a:0?',
+          '-map_chapters', '-1',
           '-c:v', 'libx264',
           '-preset', 'ultrafast',
           '-tune', 'zerolatency',
+          '-g', '50',
           '-c:a', 'aac',
           '-ac', '2',
           '-b:a', '160k',
-          '-af', 'aresample=async=1:first_pts=0',
-          '-avoid_negative_ts', 'make_zero',
+          '-af', 'aresample=async=1',
           '-max_muxing_queue_size', '1024'
         );
       }
 
       ffmpegArgs.push(
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets',
         '-f', 'mp4',
         'pipe:1'
       );

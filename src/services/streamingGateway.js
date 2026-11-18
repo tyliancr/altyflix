@@ -459,13 +459,19 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
                 });
             }
         } else if (hasTrueVf) {
-            // Si le premier n'était pas VF mais qu'une VF existe dans ce palier, on l'ajoute en tête
+            // Si le premier n'était pas VF mais qu'une VF existe dans ce palier, on l'ajoute
+            // Uniquement en tête si elle est déjà en cache (ou si les deux sont non-cachées)
             const altVf = tiers['1080p'].find(s => s.isFrench);
             if (altVf) {
-                curated.unshift({
+                const vfItem = {
                     ...altVf,
                     qualityLabel: '1080p FHD · VF'
-                });
+                };
+                if (altVf.isCached || !best1080p.isCached) {
+                    curated.unshift(vfItem);
+                } else {
+                    curated.push(vfItem);
+                }
             }
         }
     }
@@ -514,18 +520,18 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
         return s;
     });
     
-    // Sélection par défaut : flux en cache avec audio garanti en priorité absolue !
+    // Sélection par défaut : flux en cache et non en téléchargement avec audio garanti en priorité absolue !
     let defaultActive = null;
     if (anyCached) {
         defaultActive =
-            finalStreams.find(s => s.isCached && s.isFrench && !s.hasBadAudio && s.tierKey === '1080p') ||
-            finalStreams.find(s => s.isCached && s.isFrench && !s.hasBadAudio) ||
-            finalStreams.find(s => s.isCached && !s.hasBadAudio && s.tierKey === '1080p') ||
-            finalStreams.find(s => s.isCached && !s.hasBadAudio) ||
-            finalStreams.find(s => s.isCached && s.isFrench && s.tierKey === '1080p') ||
-            finalStreams.find(s => s.isCached && s.isFrench) ||
-            finalStreams.find(s => s.isCached && s.tierKey === '1080p') ||
-            finalStreams.find(s => s.isCached);
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && !s.hasBadAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && !s.hasBadAudio) ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && !s.hasBadAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && !s.hasBadAudio) ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench) ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && !s.isDownloading);
     }
     if (!defaultActive) {
         defaultActive =

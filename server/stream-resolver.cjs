@@ -475,14 +475,14 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     selectedList.push(s);
   }
 
-  // Tri propre pour l'interface : 4K -> 1080p -> 720p -> 480p, puis VF avant VO, puis En cache avant En attente
+  // Tri propre pour l'interface : Flux en cache D'ABORD (priorité absolue), puis 4K -> 1080p -> 720p -> 480p, puis VF avant VO
   const tierOrder = { '4k': 0, '1080p': 1, '720p': 2, '480p': 3 };
   selectedList.sort((a, b) => {
+    if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
     const ta = tierOrder[a.tierKey] ?? 9;
     const tb = tierOrder[b.tierKey] ?? 9;
     if (ta !== tb) return ta - tb;
     if (a.isFrench !== b.isFrench) return a.isFrench ? -1 : 1;
-    if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
     return b.score - a.score;
   });
 
@@ -1208,7 +1208,7 @@ async function resolveStreamsServer({
       })
     );
 
-    const readyStreams = verifiedList.filter(s => s.verifiedReady);
+    const readyStreams = verifiedList.filter(s => s.verifiedReady || (s.isCached && !s.isDownloading));
     let initialStatus = 'ready';
     let active = null;
     let finalStreams = verifiedList;
@@ -1263,9 +1263,10 @@ async function resolveStreamsServer({
       };
 
       active = pickBestReady(eligibleReady);
-      // Préserver les flux prêts en tête, complétés par les alternatives vérifiées pour le fallback automatique
-      const remainingFallbacks = verifiedList.filter(s => !eligibleReady.some(r => (r.id && r.id === s.id) || (r.url && r.url === s.url)));
-      finalStreams = [...eligibleReady, ...remainingFallbacks];
+      // Préserver TOUS les flux prêts en tête (classés par palier puis langue), suivis des alternatives en téléchargement
+      const readyFallbacks = verifiedList.filter(s => s.verifiedReady || (s.isCached && !s.isDownloading));
+      const unreadyFallbacks = verifiedList.filter(s => !readyFallbacks.some(r => (r.id && r.id === s.id) || (r.url && r.url === s.url)));
+      finalStreams = [...readyFallbacks, ...unreadyFallbacks];
       initialStatus = 'ready';
     } else {
       // Aucune source en cache : on lance le débridage proprement avec l'écran de chargement

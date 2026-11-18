@@ -417,3 +417,34 @@ test('Debrid Stream Resolver: Élimination des CAM/TS et sélection des meilleur
   ], 'torbox');
   assert.equal(curatedVff.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/vff/inc.mp4', 'La release VFF / TrueFrench BluRay doit être sélectionnée en priorité absolue');
 });
+
+test('Debrid Stream Resolver: Règle d\'or Netflix - lecture instantanée sans blocage (flux en cache prioritaire sur VF en téléchargement)', () => {
+  // Cas critique réel (FROM S01E01) :
+  // Le torrent VF 1080p n'est pas encore terminé sur TorBox (isDownloading=true)
+  // Le torrent VO 1080p est déjà présent dans le cache (isCached=true)
+  // Le resolver et le lecteur DOIVENT impérativement choisir la source en cache prête
+  // pour que la lecture démarre en < 1 seconde au lieu de bloquer l'utilisateur sur un spinner !
+  const streams = [
+    {
+      name: '[TB download] Torrentio\n1080p',
+      title: 'FROM.S01E01.FRENCH.1080p.WEB.AAC\n👤 15 💾 2.3 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/dl/from_vf.mp4'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'FROM.S01E01.1080p.WEB.x264-GLHF\n👤 40 💾 2.1 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/cached/from_vo.mp4'
+    },
+    {
+      name: '[TB download] Torrentio\n4k',
+      title: 'FROM.S01E01.2160p.WEB.x265\n👤 5 💾 8.0 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/dl/from_4k.mp4'
+    }
+  ];
+
+  const curated = curateStreams(streams, 'torbox', { contentType: 'tv', preferredLang: 'vf' });
+  assert.equal(curated.activeStream.isCached, true, 'Le flux actif DOIT être celui en cache');
+  assert.equal(curated.activeStream.isDownloading, false, 'Le flux actif ne doit PAS être en cours de téléchargement');
+  assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/cached/from_vo.mp4');
+  assert.equal(curated.streams[0].isCached, true, 'Le premier choix dans les options du lecteur DOIT être le flux prêt');
+});

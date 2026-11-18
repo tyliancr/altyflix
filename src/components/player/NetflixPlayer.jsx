@@ -177,6 +177,7 @@ export default function NetflixPlayer({
     const autoSubAppliedKeyRef = useRef('');
     const availableSubtitlesRef = useRef([]);
     availableSubtitlesRef.current = availableSubtitles;
+    const handleSelectSubtitleRef = useRef(null);
     const cuesRef = useRef([]);
     const [currentSubtitleLines, setCurrentSubtitleLines] = useState([]);
     const userPickedSubRef = useRef(false);
@@ -381,14 +382,34 @@ export default function NetflixPlayer({
                 const streams = res.streams || [];
                 setAvailableStreams(streams);
 
-                // Son garanti sans aucun message : si l'appareil ne supporte pas l'AC3 et que
-                // le flux par défaut a un audio non supporté, basculer directement dès le départ.
+                // 1. Identifier tous les flux réellement prêts (en cache et non en téléchargement)
+                const readyStreams = streams.filter(s => (s.isCached || s.verifiedReady) && !s.isDownloading);
+
                 let selectedStream = res.activeStream;
+
+                // 2. RÈGLE D'OR NETFLIX : Si le flux actif est en cours de téléchargement alors qu'un flux prêt existe,
+                // bascule IMMÉDIATE sur le flux prêt pour garantir un démarrage de lecture instantané (< 1s) !
+                if (selectedStream.isDownloading || !selectedStream.isCached) {
+                    if (readyStreams.length > 0) {
+                        const bestReady = readyStreams.find(s => s.isFrench && s.tierKey === '1080p')
+                                       || readyStreams.find(s => s.isFrench)
+                                       || readyStreams.find(s => s.tierKey === '1080p')
+                                       || readyStreams.find(s => s.tierKey === '4k')
+                                       || readyStreams[0];
+                        if (bestReady) {
+                            console.log('[Altyflix Player] Flux par défaut en téléchargement -> Bascule instantanée sur le flux prêt :', bestReady.qualityLabel);
+                            selectedStream = bestReady;
+                        }
+                    }
+                }
+
+                // 3. Son garanti sur Chrome/Edge : Ne basculer QUE sur un flux PRÊT (jamais sur un flux en téléchargement !)
                 if (!isAc3Supported && selectedStream.hasUnsupportedAudio) {
-                    const safe = streams.find(s => !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(selectedStream.isFrench))
-                              || streams.find(s => !s.hasUnsupportedAudio);
-                    if (safe) {
-                        selectedStream = safe;
+                    const safeReady = readyStreams.find(s => !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(selectedStream.isFrench))
+                                   || readyStreams.find(s => !s.hasUnsupportedAudio);
+                    if (safeReady) {
+                        console.log('[Altyflix Player] Optimisation audio Chrome : flux avec son garanti sélectionné :', safeReady.qualityLabel);
+                        selectedStream = safeReady;
                     }
                 }
 
@@ -396,8 +417,18 @@ export default function NetflixPlayer({
                 setHasTrueVf(Boolean(res.hasTrueVf));
                 setCurrentAudioLang(selectedStream.isFrench ? 'vf' : 'vo');
 
-                if (res.status === 'downloading' || selectedStream.isDownloading) {
-                    console.log('[Altyflix Player] Flux non encore en cache, passage à l\'état downloading...');
+                // 4. Si le flux actif retenu est en VO (ex: la VF est encore en cours de téléchargement),
+                // activer AUTOMATIQUEMENT les sous-titres français pour une expérience Netflix immédiate !
+                if (!selectedStream.isFrench) {
+                    const subs = availableSubtitlesRef.current || [];
+                    const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr');
+                    if (frSub && (!selectedSubtitleIdRef.current || selectedSubtitleIdRef.current === 'off')) {
+                        handleSelectSubtitleRef.current?.(frSub.id, subs);
+                    }
+                }
+
+                if (selectedStream.isDownloading && !selectedStream.isCached) {
+                    console.log('[Altyflix Player] Aucun flux en cache disponible, passage à l\'état downloading...');
                     setStreamState('downloading');
                     startStreamPolling(selectedStream.originalUrl || selectedStream.url);
                 } else {
@@ -426,7 +457,8 @@ export default function NetflixPlayer({
         if (current) {
             failedStreamIdsRef.current.add(current.id || current.url);
         }
-        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url));
+        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading)
+                        || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url));
         if (!nextStream) {
             setErrorMessage(list.length <= 1
                 ? 'Ce format vidéo ne peut pas être lu directement par votre navigateur.'
@@ -439,6 +471,13 @@ export default function NetflixPlayer({
         transcodeOffsetRef.current = 0;
         setActiveStream(nextStream);
         setCurrentAudioLang(nextStream.isFrench ? 'vf' : 'vo');
+        if (!nextStream.isFrench) {
+            const subs = availableSubtitlesRef.current || [];
+            const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr');
+            if (frSub && (!selectedSubtitleIdRef.current || selectedSubtitleIdRef.current === 'off')) {
+                handleSelectSubtitleRef.current?.(frSub.id, subs);
+            }
+        }
         if (nextStream.isDownloading && !nextStream.isCached) {
             setStreamState('downloading');
             startStreamPolling(nextStream.originalUrl || nextStream.url);
@@ -1037,10 +1076,12 @@ export default function NetflixPlayer({
         if (!st) return;
         setPanel(null);
         if (st.id === activeStream?.id && st.url === activeStream?.url) {
-            if (streamState === 'error' || streamState === 'resolving') {
-                setStreamState('playing');
-                loadedUrlRef.current = null;
-                setIsBuffering(true);
+            if (streamState === 'error' || streamState === 'resolving' || streamState === 'downloading') {
+                if (st.isCached && !st.isDownloading) {
+                    setStreamState('playing');
+                    loadedUrlRef.current = null;
+                    setIsBuffering(true);
+                }
             }
             return;
         }
@@ -1062,6 +1103,14 @@ export default function NetflixPlayer({
         }
         setActiveStream(st);
         setCurrentAudioLang(st.isFrench ? 'vf' : 'vo');
+
+        if (!st.isFrench) {
+            const subs = availableSubtitlesRef.current || [];
+            const frSub = subs.find(s => s.lang === 'fr' && !s.forced) || subs.find(s => s.lang === 'fr');
+            if (frSub && (!selectedSubtitleId || selectedSubtitleId === 'off')) {
+                handleSelectSubtitle(frSub.id, subs);
+            }
+        }
 
         if (st.isDownloading && !st.isCached) {
             setStreamState('downloading');
@@ -1171,6 +1220,7 @@ export default function NetflixPlayer({
             }
         }
     }, []);
+    handleSelectSubtitleRef.current = handleSelectSubtitle;
 
     useEffect(() => () => {
         if (subAbortRef.current) {
@@ -1285,6 +1335,10 @@ export default function NetflixPlayer({
                 handleSelectSubtitle(forcedFr ? forcedFr.id : 'off', subs);
             }
             const vfStream =
+                (availableStreams || []).find(s => s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && !s.hasUnsupportedAudio) ||
+                (availableStreams || []).find(s => s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading) ||
                 (availableStreams || []).find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                 (availableStreams || []).find(s => s.isFrench && !s.hasUnsupportedAudio) ||
                 (availableStreams || []).find(s => s.isFrench && s.tierKey === '1080p') ||
@@ -1295,6 +1349,10 @@ export default function NetflixPlayer({
             }
         } else {
             const voStream =
+                (availableStreams || []).find(s => !s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => !s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && !s.hasUnsupportedAudio) ||
+                (availableStreams || []).find(s => !s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && s.tierKey === '1080p') ||
+                (availableStreams || []).find(s => !s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading) ||
                 (availableStreams || []).find(s => !s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                 (availableStreams || []).find(s => !s.isFrench && !s.hasUnsupportedAudio) ||
                 (availableStreams || []).find(s => !s.isFrench && s.tierKey === '1080p') ||
@@ -1910,6 +1968,19 @@ export default function NetflixPlayer({
                     {streamState === 'downloading' && downloadProgress.elapsedSec >= 12 && (
                         <p className="mt-3 text-sm text-white/50">Préparation de la vidéo, encore quelques instants…</p>
                     )}
+                    {(() => {
+                        const readyAlt = availableStreams.find(s => (s.isCached || s.verifiedReady) && !s.isDownloading);
+                        if (!readyAlt || streamState !== 'downloading') return null;
+                        return (
+                            <button
+                                type="button"
+                                onClick={() => handleSelectStream(readyAlt)}
+                                className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-sm font-bold text-black shadow-lg hover:bg-white/90 active:scale-95 transition-all cursor-pointer"
+                            >
+                                <span>▶ Regarder immédiatement ({readyAlt.qualityLabel || getShortQualityBadge(readyAlt)})</span>
+                            </button>
+                        );
+                    })()}
                     {availableStreams.length > 1 && (
                         <div className="mt-6 flex max-w-md flex-wrap items-center justify-center gap-2">
                             <span className="w-full text-xs text-white/40">Sources disponibles :</span>
@@ -1917,6 +1988,7 @@ export default function NetflixPlayer({
                                 .slice(0, 5)
                                 .map(st => {
                                     const isCurrent = (st.id && st.id === activeStream?.id) || (st.url && st.url === activeStream?.url);
+                                    const isReady = (st.isCached || st.verifiedReady) && !st.isDownloading;
                                     return (
                                         <button
                                             key={st.id || st.url}
@@ -1925,11 +1997,13 @@ export default function NetflixPlayer({
                                             className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer ${
                                                 isCurrent
                                                     ? 'bg-white text-black shadow-sm'
+                                                    : isReady
+                                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 hover:text-white'
                                                     : 'bg-white/15 text-white/85 hover:bg-white/25 hover:text-white'
                                             }`}
                                         >
                                             {getShortQualityBadge(st)}
-                                            {st.isCached ? ' · Prêt' : ''}
+                                            {isReady ? ' · Prêt' : ''}
                                         </button>
                                     );
                                 })}
@@ -1956,17 +2030,24 @@ export default function NetflixPlayer({
                             <span className="w-full text-xs text-white/50">Essayer une autre source :</span>
                             {availableStreams
                                 .slice(0, 5)
-                                .map(st => (
-                                    <button
-                                        key={st.id || st.url}
-                                        type="button"
-                                        onClick={() => handleSelectStream(st)}
-                                        className="liquid-glass-pill rounded-full px-4 py-1.5 text-xs font-semibold text-white/85 hover:text-white cursor-pointer"
-                                    >
-                                        {getShortQualityBadge(st)}
-                                        {st.isCached ? ' · Prêt' : ''}
-                                    </button>
-                                ))}
+                                .map(st => {
+                                    const isReady = (st.isCached || st.verifiedReady) && !st.isDownloading;
+                                    return (
+                                        <button
+                                            key={st.id || st.url}
+                                            type="button"
+                                            onClick={() => handleSelectStream(st)}
+                                            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer ${
+                                                isReady
+                                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 hover:text-white'
+                                                    : 'liquid-glass-pill text-white/85 hover:text-white'
+                                            }`}
+                                        >
+                                            {getShortQualityBadge(st)}
+                                            {isReady ? ' · Prêt' : ''}
+                                        </button>
+                                    );
+                                })}
                         </div>
                     )}
                     <div className="mt-6 flex flex-wrap justify-center gap-3">

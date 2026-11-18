@@ -10,7 +10,7 @@ const { resolveNativeStream, getDemoVtt } = require('./nativeStreamingEngine.cjs
 const { SECURITY_HEADERS, HttpError, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter } = require('./security.cjs');
 /**
  * ALTYFLIX Backend Server - Node.js (Built-in HTTP, Zero Dependances External)
- * Serveur API VF (Vidzy N°1), Proxy Sécurisé TMDB et Hébergement Statique SPA
+ * Proxy sécurisé TMDB, API de lecture et hébergement statique SPA
  */
 
 const http = require('http');
@@ -208,10 +208,6 @@ function serveStaticFile(req, res, pathname) {
   });
 }
 
-function isVidzyUrl(hostname) {
-  return hostname && (hostname.includes('vidzy.org') || hostname.includes('vidzy.cc') || hostname.includes('vidzy.net'));
-}
-
 const server = http.createServer(async (req, res) => {
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(key, value);
   if (!['GET', 'HEAD', 'POST', 'OPTIONS'].includes(req.method)) {
@@ -234,115 +230,9 @@ const server = http.createServer(async (req, res) => {
   const pathname = parsedUrl.pathname;
   const query = Object.fromEntries(parsedUrl.searchParams);
 
-  if (pathname.startsWith('/api/') && pathname !== '/api/proxy-hls' && pathname !== '/api/video-stream' && !allowRequest(req.socket.remoteAddress || 'local')) {
+  if (pathname.startsWith('/api/') && pathname !== '/api/video-stream' && !allowRequest(req.socket.remoteAddress || 'local')) {
     res.setHeader('Retry-After', '60');
     return sendJSON(res, 429, { error: 'Trop de requêtes. Réessayez dans une minute.' });
-  }
-
-  // Proxy HLS sécurisé - injecte le token gk dans les segments Vidzy
-  if (pathname === '/api/proxy-hls') {
-    const targetUrl = query.url;
-    const referer = query.referer || 'https://vidzy.org/';
-    const gk = query.gk || null; // token gate Vidzy optionnel
-
-    if (!targetUrl || !targetUrl.startsWith('https://')) {
-      return sendJSON(res, 400, { error: 'URL cible invalide.' });
-    }
-
-    // Sécurité : restreindre les domaines autorisés
-    let targetHostname;
-    try {
-      targetHostname = new URL(targetUrl).hostname;
-    } catch {
-      return sendJSON(res, 400, { error: 'URL malformée.' });
-    }
-    const ALLOWED_PROXY_DOMAINS = [
-      'vidzy.org', 'vidzy.cc', 'vidzy.net',
-      'v1.vidzy.org', 'v2.vidzy.org', 'v3.vidzy.org', 'v4.vidzy.org',
-      'v5.vidzy.org', 'v6.vidzy.org', 'v7.vidzy.org', 'v8.vidzy.org',
-      'u1.vidzy.org', 'u2.vidzy.org', 'u3.vidzy.org', 'u4.vidzy.org',
-      'u5.vidzy.org', 'u6.vidzy.org', 'u7.vidzy.org', 'u8.vidzy.org',
-      'u9.vidzy.org', 'u10.vidzy.org', 'u11.vidzy.org', 'u12.vidzy.org',
-      'u13.vidzy.org', 'u14.vidzy.org', 'u15.vidzy.org', 'u16.vidzy.org',
-      'v1.vidzy.cc', 'v2.vidzy.cc', 'v3.vidzy.cc', 'v4.vidzy.cc',
-      'v5.vidzy.cc', 'v6.vidzy.cc',
-      'test-streams.mux.dev'
-    ];
-    if (!ALLOWED_PROXY_DOMAINS.some(d => targetHostname === d || targetHostname.endsWith('.' + d))) {
-      return sendJSON(res, 403, { error: 'Domaine proxy non autorisé.' });
-    }
-
-    try {
-      const upstreamRes = await fetch(targetUrl, {
-        headers: {
-          'Referer': referer,
-          'Origin': 'https://vidzy.org'
-          // PAS de User-Agent → évite le poisoning Vidzy
-        },
-        signal: AbortSignal.timeout(15000)
-      });
-
-      if (!upstreamRes.ok) {
-        return sendJSON(res, upstreamRes.status, { error: 'Échec de récupération en amont: ' + upstreamRes.status });
-      }
-
-      const contentType = upstreamRes.headers.get('content-type') || '';
-      const isPlaylist = targetUrl.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('application/vnd.apple.mpegurl');
-
-      if (isPlaylist) {
-        const text = await upstreamRes.text();
-        const targetObj = new URL(targetUrl);
-        const lines = text.split(/\r?\n/);
-        const rewritten = lines.map(line => {
-          const trimmed = line.trim();
-          if (!trimmed) return line;
-          if (trimmed.startsWith('#')) {
-            // Réécrire les URI dans les tags EXT-X-MEDIA et EXT-X-KEY
-            return trimmed.replace(/URI=["']([^"']+)["']/g, (m, u) => {
-              const resolved = new URL(u, targetUrl);
-              if (!resolved.search && targetObj.search) resolved.search = targetObj.search;
-              // Injecter gk si segment Vidzy et gk présent
-              if (gk && isVidzyUrl(resolved.hostname) && !resolved.searchParams.has('gk')) {
-                resolved.searchParams.set('gk', gk);
-              }
-              return `URI="/api/proxy-hls?url=${encodeURIComponent(resolved.href)}&referer=${encodeURIComponent(referer)}${gk ? '&gk=' + encodeURIComponent(gk) : ''}"`;
-            });
-          }
-          // Ligne de segment ou sous-playlist
-          const resolved = new URL(trimmed, targetUrl);
-          if (!resolved.search && targetObj.search) resolved.search = targetObj.search;
-          // Injecter gk sur les segments Vidzy
-          if (gk && isVidzyUrl(resolved.hostname) && !resolved.searchParams.has('gk')) {
-            resolved.searchParams.set('gk', gk);
-          }
-          return `/api/proxy-hls?url=${encodeURIComponent(resolved.href)}&referer=${encodeURIComponent(referer)}${gk ? '&gk=' + encodeURIComponent(gk) : ''}`;
-        }).join('\n');
-
-        res.writeHead(200, {
-          'Content-Type': 'application/vnd.apple.mpegurl',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Cache-Control': 'no-cache'
-        });
-        return res.end(rewritten);
-      } else {
-        // Segment binaire (.ts, .aac, etc.)
-        const headers = {
-          'Content-Type': contentType || 'video/MP2T',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Cache-Control': 'public, max-age=3600'
-        };
-        const len = upstreamRes.headers.get('content-length');
-        if (len) headers['Content-Length'] = len;
-        res.writeHead(upstreamRes.status, headers);
-        const buffer = Buffer.from(await upstreamRes.arrayBuffer());
-        return res.end(buffer);
-      }
-    } catch (err) {
-      console.error('[proxy-hls] Error:', err.message);
-      return sendJSON(res, 502, { error: 'Erreur proxy de flux: ' + err.message });
-    }
   }
 
   // Stream Proxy Universel avec support HTTP 206 Range (Lecture native 100% Altyflix)
@@ -705,7 +595,6 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // 3. Streams API (Vidzy #1 + sandbox sécurisée)
   if (pathname === '/api/documentaries/arte') {
     try {
       const limit = arteLimit(query.limit);
@@ -753,5 +642,5 @@ const server = http.createServer(async (req, res) => {
 
 module.exports = server;
 if (require.main === module) server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 ALTYFLIX (Site Web & API Proxy TMDB/Vidzy #1) démarré sur le port ${PORT} ! (http://localhost:${PORT})`);
+  console.log(`🚀 ALTYFLIX (site web et API) démarré sur le port ${PORT} ! (http://localhost:${PORT})`);
 });

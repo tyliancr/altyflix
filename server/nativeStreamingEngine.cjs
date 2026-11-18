@@ -2,7 +2,7 @@
  * ALTYFLIX NATIVE STREAMING ENGINE
  * Moteur de lecture vidéo 100% natif Altyflix (HLS & DASH).
  *
- * Zéro iframe, zéro dépendance à des lecteurs tiers (VidLink, Videasy, etc.).
+ * Zéro iframe, zéro lecteur tiers intégré.
  * Utilise des sources de streaming de démonstration autorisées et libres de droits (CC-BY).
  * Conforme HLS (RFC 8216) et ISO/IEC MPEG-DASH.
  */

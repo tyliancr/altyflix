@@ -10,7 +10,7 @@ Application web de catalogue de films et séries : comptes Firebase, profils (av
 | Comptes et données | Firebase Auth, Firestore (règles dans `firestore.rules`) |
 | Serveur | Node.js (HTTP natif) : proxy TMDB sécurisé, résolution des sources de lecture |
 | API vidéo (optionnelle) | Express, `api/` : URL signées, progression |
-| Hébergement | Interface sur Netlify, serveur sur Render |
+| Hébergement | 100% Serverless sur Netlify |
 
 ## Prérequis
 
@@ -107,7 +107,7 @@ public/         images, avatars, icônes
 
 ## Publier
 
-Suivez le [guide de déploiement](docs/LIRE-AVANT-DEPLOIEMENT.md). Netlify compile l'interface (`dist/`) et relaie `/api/*` vers le serveur Render (voir `netlify.toml`). Vérifiez dans Firebase Auth que le domaine du site fait partie des domaines autorisés.
+Suivez le [guide de déploiement](docs/LIRE-AVANT-DEPLOIEMENT.md). Netlify compile l'interface (`dist/`) et exécute directement les fonctions API Serverless (`netlify/functions/api.mjs`). Aucun serveur externe (Render ou autre) n'est nécessaire. Vérifiez dans Firebase Auth que le domaine du site fait partie des domaines autorisés.
 
 ## Documentation
 

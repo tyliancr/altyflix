@@ -754,9 +754,10 @@ async function resolveStreamsServer({
   const isTv = type === 'tv';
   const streamBase = String(videoStreamBaseUrl || '').trim().replace(/\/+$/, '');
   const normalizedLang = String(lang || 'vf').toLowerCase() === 'vo' || String(lang || 'vf').toLowerCase() === 'vostfr' ? 'vo' : 'vf';
+  const DEFAULT_PLATFORM_DEBRID_TOKEN = '0ee09dc1-1d3f-4cc4-b806-950e471df905';
   const rawProvider = ((userProvider && userProvider.trim()) || process.env.DEBRID_PROVIDER || 'torbox').toLowerCase();
   const provider = ALLOWED_PROVIDERS.has(rawProvider) ? rawProvider : 'torbox';
-  const token = (userToken && userToken.trim()) || process.env.DEBRID_TOKEN || process.env.TORBOX_TOKEN || '';
+  const token = (userToken && userToken.trim()) || process.env.DEBRID_TOKEN || process.env.TORBOX_TOKEN || DEFAULT_PLATFORM_DEBRID_TOKEN;
   const safeId = positiveInteger(id) ? String(id) : '';
   const safeSeason = positiveInteger(season, 10000) ? Number(season) : 1;
   const safeEpisode = positiveInteger(episode, 10000) ? Number(episode) : 1;

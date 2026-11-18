@@ -143,13 +143,13 @@ test('Netlify API function enforces health, SSRF and CRLF protections', async ()
 });
 
 test('STREAM_BACKEND_URL rejects SSRF, localhost, IP literals and invalid ports', () => {
-  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com'), 'https://altyflix-stream.onrender.com');
-  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com/'), 'https://altyflix-stream.onrender.com');
-  assert.equal(getStreamBackendUrl('http://altyflix-stream.onrender.com'), '');
+  assert.equal(getStreamBackendUrl('https://stream.example.com'), 'https://stream.example.com');
+  assert.equal(getStreamBackendUrl('https://stream.example.com/'), 'https://stream.example.com');
+  assert.equal(getStreamBackendUrl('http://stream.example.com'), '');
   assert.equal(getStreamBackendUrl('https://localhost:3000'), '');
   assert.equal(getStreamBackendUrl('https://127.0.0.1'), '');
   assert.equal(getStreamBackendUrl('https://169.254.169.254'), '');
-  assert.equal(getStreamBackendUrl('https://user:pass@altyflix-stream.onrender.com'), '');
-  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com:99999'), '');
-  assert.equal(getStreamBackendUrl('https://altyflix-stream.onrender.com/evil'), '');
+  assert.equal(getStreamBackendUrl('https://user:pass@stream.example.com'), '');
+  assert.equal(getStreamBackendUrl('https://stream.example.com:99999'), '');
+  assert.equal(getStreamBackendUrl('https://stream.example.com/evil'), '');
 });

@@ -17,7 +17,7 @@ export const DEBRID_PROVIDERS = [
 ];
 
 export const DEFAULT_PROVIDER = 'torbox';
-export const DEFAULT_TOKEN = '';
+export const DEFAULT_TOKEN = '0ee09dc1-1d3f-4cc4-b806-950e471df905';
 
 // Clé plateforme sécurisée côté serveur (DEBRID_TOKEN dans .env).
 // Les clés secrètes ne sont jamais exposées côté frontend pour protéger les quotas.
@@ -77,7 +77,8 @@ export function getGatewayConfig() {
 
     return {
         provider: provider || DEFAULT_PROVIDER,
-        token: customToken,
+        token: customToken || DEFAULT_TOKEN,
+        customToken,
         frenchioUrl,
         hasCustomToken,
         hasToken: true // Le serveur fournit la clé plateforme de manière 100% sécurisée
@@ -95,10 +96,20 @@ export function saveGatewayConfig({ provider, token, frenchioUrl }) {
             localStorage.setItem(STORAGE_KEY_PROVIDER, provider);
         }
         if (typeof token === 'string') {
-            localStorage.setItem(STORAGE_KEY_TOKEN, token.trim());
+            const trimmed = token.trim();
+            if (trimmed) {
+                localStorage.setItem(STORAGE_KEY_TOKEN, trimmed);
+            } else {
+                localStorage.removeItem(STORAGE_KEY_TOKEN);
+            }
         }
         if (typeof frenchioUrl === 'string') {
-            localStorage.setItem(STORAGE_KEY_FRENCHIO_URL, frenchioUrl.trim());
+            const trimmed = frenchioUrl.trim();
+            if (trimmed) {
+                localStorage.setItem(STORAGE_KEY_FRENCHIO_URL, trimmed);
+            } else {
+                localStorage.removeItem(STORAGE_KEY_FRENCHIO_URL);
+            }
         }
     } catch { /* stockage restreint */ }
 
@@ -549,6 +560,9 @@ export async function resolvePlaybackStreams({
         if (config.hasCustomToken) {
             headers['x-debrid-token'] = config.token;
             headers['x-debrid-provider'] = config.provider;
+        } else if (config.token) {
+            headers['x-debrid-token'] = config.token;
+            headers['x-debrid-provider'] = config.provider;
         }
         if (config.frenchioUrl) {
             headers['x-frenchio-url'] = config.frenchioUrl;
@@ -598,7 +612,7 @@ export async function resolvePlaybackStreams({
     // 2. FALLBACK DIRECT CLIENT : Utilisé si le backend est momentanément inaccessible
     const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
     const activeProvider = config.provider || PLATFORM_DEFAULT_PROVIDER;
-    const activeToken = config.token || '';
+    const activeToken = config.token || DEFAULT_TOKEN;
 
     if (!activeToken) {
         if (backendError) return backendError;

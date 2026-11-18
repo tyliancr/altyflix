@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Card, SectionHeader, SubmitBtn, Row, Toggle } from './SettingsUI';
+import { Card, SectionHeader, SubmitBtn, Row, Toggle, Field } from './SettingsUI';
 import { SUBTITLE_SIZE_MAP, SUBTITLE_COLOR_MAP } from './SettingsConstants';
 import Icon from '../ui/Icons';
 import { SegmentedControl } from '../ui/Primitives';
@@ -20,6 +20,12 @@ export default function PreferencesTab({
     setSubtitlesSize,
     subtitlesColor,
     setSubtitlesColor,
+    debridProvider,
+    setDebridProvider,
+    debridToken,
+    setDebridToken,
+    frenchioUrl,
+    setFrenchioUrl,
     loading,
     t
 }) {
@@ -130,6 +136,52 @@ export default function PreferencesTab({
                         <span className="absolute left-3 top-3 rounded-md border border-white/15 bg-black/60 px-1.5 py-1 text-[9px] font-bold uppercase leading-none tracking-[0.12em] text-white/70 backdrop-blur-md">
                             {t('settings.subtitlePreviewTitle')}
                         </span>
+                    </div>
+                </div>
+            </Card>
+
+            <Card>
+                <SectionHeader
+                    icon={<Icon name="globe" />}
+                    title="Sources Debrid & Streaming"
+                    subtitle="Connectez votre débrideur (Torbox, Real-Debrid) pour la lecture 4K/1080p instantanée."
+                />
+                <div className="space-y-5 p-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div>
+                            <label className="block text-xs font-semibold text-white/70 mb-2">Fournisseur</label>
+                            <select
+                                value={debridProvider || 'torbox'}
+                                onChange={e => setDebridProvider(e.target.value)}
+                                className="field-select h-14 w-full text-sm"
+                            >
+                                <option value="torbox">Torbox (Recommandé)</option>
+                                <option value="realdebrid">Real-Debrid</option>
+                                <option value="alldebrid">AllDebrid</option>
+                                <option value="debridlink">Debrid-Link</option>
+                                <option value="premiumize">Premiumize.me</option>
+                            </select>
+                        </div>
+                        <div className="sm:col-span-2">
+                            <Field
+                                label="Clé API Debrid (Torbox / Real-Debrid)"
+                                type="password"
+                                autoComplete="new-password"
+                                value={debridToken || ''}
+                                onChange={e => setDebridToken(e.target.value)}
+                                hint="Votre clé personnelle Torbox (torbox.app/settings) ou Real-Debrid. Si laissé vide, la clé Premium intégrée est active par défaut."
+                            />
+                        </div>
+                    </div>
+
+                    <div className="border-t border-white/[0.07] pt-5">
+                        <Field
+                            label="URL Addon Frenchio (Optionnel)"
+                            type="text"
+                            value={frenchioUrl || ''}
+                            onChange={e => setFrenchioUrl(e.target.value)}
+                            hint="URL Stremio d'installation de Frenchio (ElfHosted ou instance privée)."
+                        />
                     </div>
                 </div>
             </Card>

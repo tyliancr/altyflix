@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getMovieDetails, getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
 import { resolvePlaybackStreams, pollStreamStatus, fetchSubtitlesForContent, fetchSubtitleCues } from '../../services/streamingGateway';
@@ -97,6 +98,7 @@ export default function NetflixPlayer({
     const [isFullscreen, setIsFullscreen] = useState(false);
 
     // Overlays & Menus
+    const navigate = useNavigate();
     const [controlsVisible, setControlsVisible] = useState(true);
     const controlsVisibleRef = useRef(controlsVisible);
     controlsVisibleRef.current = controlsVisible;
@@ -1854,7 +1856,7 @@ export default function NetflixPlayer({
                     </button>
                     <h2 className="text-xl font-bold md:text-2xl">Lecture impossible</h2>
                     <p className="mt-2 max-w-md text-sm text-white/60">{errorMessage || 'Ce titre ne peut pas être lu pour le moment.'}</p>
-                    <div className="mt-6 flex gap-3">
+                    <div className="mt-6 flex flex-wrap justify-center gap-3">
                         <button
                             type="button"
                             onClick={() => resolveStream(true)}
@@ -1862,6 +1864,15 @@ export default function NetflixPlayer({
                         >
                             Réessayer
                         </button>
+                        {Boolean(errorMessage && /débridage|debrid|token|clé/i.test(errorMessage)) && (
+                            <button
+                                type="button"
+                                onClick={() => { handleClose(); navigate('/settings'); }}
+                                className="rounded bg-[#E50914] px-6 py-2.5 text-sm font-bold text-white hover:bg-[#b80710]"
+                            >
+                                Configurer Debrid
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={handleClose}

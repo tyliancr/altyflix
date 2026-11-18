@@ -1254,6 +1254,8 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, {
       status: 'ok',
       runtime: 'node',
+      ffmpeg: HAS_FFMPEG,
+      ffprobe: HAS_FFPROBE,
       timestamp: new Date().toISOString(),
       memoryUsage: process.memoryUsage().rss
     });

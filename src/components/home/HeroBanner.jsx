@@ -190,18 +190,28 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                     transition={{ duration: 1.1, ease: 'easeInOut' }}
                 >
                     {movie.backdrop_path && (
-                        <SmartImage
-                            src={backdrop(movie.backdrop_path, 'w1280')}
-                            srcSet={`${backdrop(movie.backdrop_path, 'w780')} 780w, ${backdrop(movie.backdrop_path, 'w1280')} 1280w`}
-                            sizes="100vw"
-                            fallbackSrc={backdrop(movie.backdrop_path, 'w780')}
-                            alt=""
-                            className="w-full h-full object-cover object-[center_20%]"
-                            loading="eager"
-                            fetchPriority="high"
-                            decoding="async"
-                            fade={false}
-                        />
+                        <>
+                            {/* Base rapide w780 (~45 Ko, affichage immédiat) */}
+                            <SmartImage
+                                src={backdrop(movie.backdrop_path, 'w780')}
+                                alt=""
+                                className="absolute inset-0 w-full h-full object-cover object-[center_20%]"
+                                loading="eager"
+                                fetchPriority="high"
+                                decoding="async"
+                                fade={false}
+                            />
+                            {/* Couche 4K originale (se superpose en fondu dès qu'elle est prête) */}
+                            <SmartImage
+                                src={backdrop(movie.backdrop_path, 'original')}
+                                fallbackSrc={backdrop(movie.backdrop_path, 'w1280')}
+                                alt=""
+                                className="absolute inset-0 w-full h-full object-cover object-[center_20%]"
+                                loading="eager"
+                                decoding="async"
+                                fade={true}
+                            />
+                        </>
                     )}
                 </motion.div>
             </AnimatePresence>

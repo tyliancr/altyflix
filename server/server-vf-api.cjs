@@ -321,15 +321,14 @@ const server = http.createServer(async (req, res) => {
         '-analyzeduration', '2000000'
       ];
 
-      // -ss AVANT -i = seek HTTP Range instantané (< 0.5s au lieu de relire depuis 0:00)
+      // -noaccurate_seek + -ss AVANT -i = seek HTTP Range instantané au keyframe exact pour vidéo ET audio (0 ms de décalage son/image)
       if (seekSec > 0) {
-        ffmpegArgs.push('-ss', String(seekSec));
+        ffmpegArgs.push('-noaccurate_seek', '-ss', String(seekSec));
       }
 
       ffmpegArgs.push('-i', inputUrl);
       if (copyVideo) {
-        // Copie vidéo directe (zéro perte qualité, quasi 0% CPU) + conversion audio AC3/DTS -> AAC stéréo
-        // -avoid_negative_ts make_zero remet les timestamps à 0 après un seek pour que Chrome/Brave lise sans jamais couper
+        // Copie vidéo directe (zéro perte qualité, quasi 0% CPU) + conversion audio AC3/DTS -> AAC stéréo parfaitement synchronisée
         ffmpegArgs.push(
           '-map', '0:v:0',
           '-map', '0:a:0?',
@@ -337,9 +336,8 @@ const server = http.createServer(async (req, res) => {
           '-c:a', 'aac',
           '-ac', '2',
           '-b:a', '192k',
+          '-af', 'aresample=async=1:min_hard_comp=0.100:first_pts=0',
           '-avoid_negative_ts', 'make_zero',
-          '-muxpreload', '0',
-          '-muxdelay', '0',
           '-max_muxing_queue_size', '1024'
         );
       } else {
@@ -350,6 +348,7 @@ const server = http.createServer(async (req, res) => {
           '-c:a', 'aac',
           '-ac', '2',
           '-b:a', '160k',
+          '-af', 'aresample=async=1:first_pts=0',
           '-avoid_negative_ts', 'make_zero',
           '-max_muxing_queue_size', '1024'
         );

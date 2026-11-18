@@ -944,10 +944,11 @@ async function resolveStreamsServer({
     let finalStreams = verifiedList;
 
     if (readyStreams.length > 0) {
-      // Préférer VF + audio web compatible (AAC/MP3/Opus) + 1080p, sinon meilleure source prête
+      // Préférer VF + audio natif d'abord ; si le remux AAC FFmpeg est actif, préférer VF avant VO !
       const pickBestReady = (list) =>
         list.find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
         list.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
+        (enableAudioRemux ? (list.find(s => s.isFrench && s.tierKey === '1080p') || list.find(s => s.isFrench)) : null) ||
         list.find(s => !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
         list.find(s => !s.hasUnsupportedAudio) ||
         list.find(s => s.isFrench && s.tierKey === '1080p') ||

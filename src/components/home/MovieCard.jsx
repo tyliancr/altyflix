@@ -78,7 +78,7 @@ const MovieCard = memo(({
 
     const posterSrcSet = useMemo(() => {
         if (!content.poster_path) return undefined;
-        return `${getPosterUrl(content.poster_path, 'w185')} 185w, ${getPosterUrl(content.poster_path, 'w342')} 342w`;
+        return `${getPosterUrl(content.poster_path, 'w185')} 185w, ${getPosterUrl(content.poster_path, 'w342')} 342w, ${getPosterUrl(content.poster_path, 'w500')} 500w`;
     }, [content.poster_path]);
 
     const backdropSrcSet = useMemo(() => {

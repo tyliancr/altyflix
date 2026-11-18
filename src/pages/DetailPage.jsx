@@ -324,24 +324,32 @@ const DetailPage = () => {
             <header className="relative flex min-h-[78vh] flex-col justify-end overflow-hidden pt-32 md:min-h-[86vh]">
                 <div className="absolute inset-0">
                     {backdropPath && (
-                        <motion.img
-                            initial={{ opacity: 0, scale: 1.04 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            transition={{ duration: 1.2, ease: 'easeOut' }}
-                            src={getBackdropUrl(backdropPath, 'w1280')}
-                            srcSet={content.backdrop_path ? `${getBackdropUrl(backdropPath, 'w780')} 780w, ${getBackdropUrl(backdropPath, 'w1280')} 1280w` : undefined}
-                            sizes="100vw"
-                            alt=""
-                            className="h-full w-full object-cover object-[center_20%]"
-                            decoding="async"
-                            onError={(e) => {
-                                if (!e.currentTarget.dataset.retried) {
-                                    e.currentTarget.dataset.retried = '1';
-                                    e.currentTarget.removeAttribute('srcset');
-                                    e.currentTarget.src = getBackdropUrl(backdropPath, 'w780');
-                                }
-                            }}
-                        />
+                        <>
+                            <img
+                                src={getBackdropUrl(backdropPath, 'w780')}
+                                alt=""
+                                className="absolute inset-0 h-full w-full object-cover object-[center_20%]"
+                                decoding="async"
+                            />
+                            <motion.img
+                                initial={{ opacity: 0, scale: 1.03 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                transition={{ duration: 0.9, ease: 'easeOut' }}
+                                src={getBackdropUrl(backdropPath, 'original')}
+                                srcSet={content.backdrop_path ? `${getBackdropUrl(backdropPath, 'w1280')} 1280w, ${getBackdropUrl(backdropPath, 'original')} 2560w` : undefined}
+                                sizes="100vw"
+                                alt=""
+                                className="absolute inset-0 h-full w-full object-cover object-[center_20%]"
+                                decoding="async"
+                                onError={(e) => {
+                                    if (!e.currentTarget.dataset.retried) {
+                                        e.currentTarget.dataset.retried = '1';
+                                        e.currentTarget.removeAttribute('srcset');
+                                        e.currentTarget.src = getBackdropUrl(backdropPath, 'w1280');
+                                    }
+                                }}
+                            />
+                        </>
                     )}
                     <div className="absolute inset-y-0 left-0 w-full bg-gradient-to-r from-[#060608]/95 via-[#060608]/60 to-transparent sm:w-[72%]" />
                     <div className="absolute inset-x-0 bottom-0 h-[60%] bg-gradient-to-t from-[#060608] via-[#060608]/75 to-transparent" />

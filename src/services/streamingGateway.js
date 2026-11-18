@@ -252,6 +252,11 @@ function parseStreamDetails(stream) {
     // Codecs propriétaires incompatibles Chrome (audio 100% muet en HTML5)
     const hasBadAudio = Boolean(hasUnsupportedAudioCodec && !hasExplicitWebAudio);
     const isPureFrench = /\b(truefrench|vff)\b/i.test(fullText);
+    const isHighQualitySource = /\b(?:bluray|bdrip|brrip|web-?dl|web-?rip|hdtv)\b/i.test(fullText);
+    const isCamOrLowQuality = /\b(?:cam|camrip|hdcam|telesync|ts|hdts|telecine|tc|scr|screener|dvdscr|r5|workprint|wp)\b/i.test(fullText);
+    const isMulti = /\bmulti\b/i.test(fullText);
+    const isProper = /\b(?:proper|repack|rerip)\b/i.test(fullText);
+    const isTrustedGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|yts|yify|vxt|galaxytv|tgx|qxr|tigole|utr|joy|psa|bone|minx|flux|ntb)\b/i.test(fullText);
 
     // Extraction de la taille du fichier (ex: 2.1 GB)
     const sizeMatch = titleText.match(/💾\s*([\d.]+\s*[KMGT]B)/i);
@@ -281,6 +286,11 @@ function parseStreamDetails(stream) {
         isH264,
         isH265,
         isPureFrench,
+        isHighQualitySource,
+        isCamOrLowQuality,
+        isMulti,
+        isProper,
+        isTrustedGroup,
         isMp4,
         isAvi,
         hasDdp,
@@ -323,6 +333,11 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
                 isH264: details.isH264,
                 isH265: details.isH265,
                 isPureFrench: details.isPureFrench,
+                isHighQualitySource: details.isHighQualitySource,
+                isCamOrLowQuality: details.isCamOrLowQuality,
+                isMulti: details.isMulti,
+                isProper: details.isProper,
+                isTrustedGroup: details.isTrustedGroup,
                 isMp4: details.isMp4,
                 isAvi: details.isAvi,
                 languageLabel: details.languageLabel,
@@ -347,7 +362,10 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
     const scoreStream = (st) => {
         let score = 0;
 
-        // 0. PRIORITÉ ABSOLUE AU STREAM EN CACHE PRÊT INSTANTANÉMENT
+        // 0. ÉLIMINATION RIGOUREUSE DES COPIES DE BASSE QUALITÉ (CAM, Telesync, Screener)
+        if (st.isCamOrLowQuality) score -= 600000;
+
+        // 1. PRIORITÉ ABSOLUE AU STREAM EN CACHE PRÊT INSTANTANÉMENT
         if (st.isCached) {
             score += 100000;
         }
@@ -355,7 +373,7 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
             score -= 500000;
         }
 
-        // 1. Son 100% garanti dans le navigateur (AAC / MP3 / Opus) : CRITIQUE pour ne jamais avoir de vidéo muette
+        // 2. Son 100% garanti dans le navigateur (AAC / MP3 / Opus) : CRITIQUE pour ne jamais avoir de vidéo muette
         if (st.isWebAudioSafe) {
             score += 45000;
         }
@@ -364,34 +382,41 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
             score -= 85000;
         }
 
-        // 2. Codec vidéo : H.264 ultra compatible web (+12000) vs H.265/HEVC (-15000)
+        // 3. Codec vidéo : H.264 ultra compatible web (+12000) vs H.265/HEVC (-15000)
         if (st.isH264) score += 12000;
         if (st.isH265) score -= 15000;
 
-        // 3. VF prioritaire au lancement (+15000) sinon VOSTFR (+500)
+        // 4. VF prioritaire au lancement (+15000) sinon VOSTFR (+500)
         if (st.isFrench) score += 15000;
         else if (st.isVostfr) score += 500;
 
-        // 4. Vraie VF pure (TRUEFRENCH / VFF) plutôt que MULTI (où la piste 1 est souvent l'anglais)
-        if (st.isPureFrench) score += 5000;
+        // 5. Source d'origine certifiée : BluRay / BDRip / WEB-DL garantissent une image propre
+        if (st.isHighQualitySource) score += 18000;
 
-        // 5. Format MP4 universel vs AVI éliminé
+        // 6. Doublage français de référence : VFF / TRUEFRENCH
+        if (st.isPureFrench) score += 20000;
+        if (st.isFrench && !st.isMulti) score += 6000;
+        if (st.isProper) score += 5000;
+        if (st.isTrustedGroup) score += 8000;
+
+        // 7. Format MP4 universel vs AVI éliminé
         if (st.isMp4) score += 3000;
         if (st.isAvi) score -= 250000;
 
-        // 5. Taille optimale pour la fluidité (évite les lags)
+        // 8. Taille optimale pour la fluidité (évite les lags)
         const gb = st.sizeBytes / (1024 * 1024 * 1024);
         if (st.tierKey === '1080p') {
-            if (gb >= 0.7 && gb <= 4.5) score += 400; // taille parfaite pour 1080p
-            else if (gb > 18) score -= 1500; // fichier trop lourd pour du streaming direct
+            if (gb >= 1.2 && gb <= 4.5) score += 800;
+            else if (gb >= 0.7 && gb < 1.2) score += 300;
+            else if (gb > 18) score -= 1500;
         } else if (st.tierKey === '4k') {
-            if (gb >= 3 && gb <= 14) score += 400; // taille 4K web parfaite
-            else if (gb > 25) score -= 2000; // remux géant de 80GB qui fait crasher/ramer
+            if (gb >= 4 && gb <= 14) score += 800;
+            else if (gb > 25) score -= 2000;
         } else if (st.tierKey === '720p') {
             if (gb >= 0.4 && gb <= 2.0) score += 300;
         }
 
-        // 6. Santé du torrent (seeders)
+        // 9. Santé du torrent (seeders)
         score += Math.min(100, Math.round(st.seeds / 2));
         return score;
     };

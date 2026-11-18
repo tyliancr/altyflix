@@ -385,3 +385,35 @@ test('Debrid Stream Resolver: Audio universel (AAC/MP3/Opus) prioritaire sur AC3
   assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/aac/movie.mp4');
   assert.equal(curated.activeStream.hasUnsupportedAudio, false);
 });
+
+test('Debrid Stream Resolver: Élimination des CAM/TS et sélection des meilleurs torrents (VFF, BluRay/WEB-DL, AAC)', () => {
+  // 1. Une release CAM ou TeleSync même avec 500 seeds doit être écartée au profit d'un WEB-DL propre
+  const curated = curateStreams([
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Dune.Part.Two.2024.FRENCH.1080p.HDCAM.x264.AAC\n👤 500 💾 2.2 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/cam/dune.mp4'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Dune.Part.Two.2024.FRENCH.1080p.WEB-DL.H264.AAC-FW\n👤 30 💾 3.2 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/webdl/dune.mp4'
+    }
+  ], 'torbox');
+  assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/webdl/dune.mp4', 'Le WEB-DL propre doit battre le CAM');
+
+  // 2. Entre une version standard et une version VFF (Vraie Version Française certifiée), la VFF l'emporte
+  const curatedVff = curateStreams([
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Inception.2010.FRENCH.1080p.WEB.x264.AAC\n👤 20 💾 2.5 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/vf/inc.mp4'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Inception.2010.TRUEFRENCH.VFF.1080p.BluRay.x264.AAC-EXTREME\n👤 25 💾 3.1 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/vff/inc.mp4'
+    }
+  ], 'torbox');
+  assert.equal(curatedVff.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/vff/inc.mp4', 'La release VFF / TrueFrench BluRay doit être sélectionnée en priorité absolue');
+});

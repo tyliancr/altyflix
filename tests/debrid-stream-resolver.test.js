@@ -358,3 +358,30 @@ test('Debrid Stream Resolver: Détection H.264/H.265 et priorisation H.264 pour 
   assert.equal(curated.activeStream.isH264, true);
   assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/h264/gladiator.mp4');
 });
+
+test('Debrid Stream Resolver: Audio universel (AAC/MP3/Opus) prioritaire sur AC3 silencieux et support multi-audio AAC+AC3', () => {
+  // 1. Un release MULTi contenant AC3 ET AAC ne doit PAS être marqué en audio non supporté
+  const multiAudioStream = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Inception.2010.MULTI.1080p.BluRay.x264.AC3.AAC.mkv\n👤 10 💾 2.8 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/multi/inception.mkv'
+  });
+  assert.equal(multiAudioStream.isWebAudioSafe, true, 'Le flux avec AAC doit être considéré comme audio compatible web');
+  assert.equal(multiAudioStream.hasUnsupportedAudio, false, 'Le flux contenant AAC ne doit pas être pénalisé comme AC3 pur');
+
+  // 2. Sur Netlify (enableAudioRemux = false), un flux avec audio garanti doit être choisi en priorité
+  const curated = curateStreams([
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Movie.2023.FRENCH.1080p.BluRay.x264.AC3-EVO.mkv\n👤 20 💾 2.4 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/ac3/movie.mkv'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Movie.2023.FRENCH.1080p.WEB.H264.AAC-VXT.mp4\n👤 15 💾 2.1 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/aac/movie.mp4'
+    }
+  ], 'torbox', { enableAudioRemux: false });
+  assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/aac/movie.mp4');
+  assert.equal(curated.activeStream.hasUnsupportedAudio, false);
+});

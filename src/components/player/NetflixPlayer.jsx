@@ -123,9 +123,10 @@ export default function NetflixPlayer({
     const [currentAudioLang, setCurrentAudioLang] = useState('vf');
     const [centerAction, setCenterAction] = useState(null); // 'play' | 'pause' | null
     const [isAutoplayMuted, setIsAutoplayMuted] = useState(false);
-    const [dismissAudioWarning, setDismissAudioWarning] = useState(false);
     const isAc3Supported = useMemo(() => canBrowserDecodeAc3(), []);
-    const isSilentAudioRisk = Boolean(activeStream?.hasUnsupportedAudio && !isAc3Supported && !dismissAudioWarning && streamState === 'playing');
+    // Pistes Dolby AC3/E-AC3/DTS que l'appareil ne sait pas décoder : on bascule tout seul
+    // (une seule fois par épisode) sur une source au son compatible, sans aucun message.
+    const audioFallbackDoneRef = useRef('');
     const [hasTrueVf, setHasTrueVf] = useState(false);
     const [rippleEffect, setRippleEffect] = useState(null); // { side: 'left' | 'right', delta: -10 | 10 }
     const lastTapRef = useRef({ time: 0, x: 0 });
@@ -376,8 +377,20 @@ export default function NetflixPlayer({
             if (res.success && res.activeStream) {
                 resolvedKeyRef.current = streamKey;
                 if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
-                setAvailableStreams(res.streams || []);
-                const selectedStream = res.activeStream;
+                const streams = res.streams || [];
+                setAvailableStreams(streams);
+
+                // Son garanti sans aucun message : si l'appareil ne supporte pas l'AC3 et que
+                // le flux par défaut a un audio non supporté, basculer directement dès le départ.
+                let selectedStream = res.activeStream;
+                if (!isAc3Supported && selectedStream.hasUnsupportedAudio) {
+                    const safe = streams.find(s => !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(selectedStream.isFrench))
+                              || streams.find(s => !s.hasUnsupportedAudio);
+                    if (safe) {
+                        selectedStream = safe;
+                    }
+                }
+
                 setActiveStream(selectedStream);
                 setHasTrueVf(Boolean(res.hasTrueVf));
                 setCurrentAudioLang(selectedStream.isFrench ? 'vf' : 'vo');
@@ -399,7 +412,7 @@ export default function NetflixPlayer({
             setErrorMessage(err.message || 'Erreur lors de la résolution du flux direct.');
             setStreamState('error');
         }
-    }, [id, isTv, season, episode, startStreamPolling]);
+    }, [id, isTv, season, episode, isAc3Supported, startStreamPolling]);
 
     useEffect(() => {
         resolveStream();
@@ -1032,7 +1045,6 @@ export default function NetflixPlayer({
         if (Boolean(st.isFrench) !== Boolean(activeStream?.isFrench)) {
             userPickedSubRef.current = false;
         }
-        setDismissAudioWarning(false);
         setActiveStream(st);
         setCurrentAudioLang(st.isFrench ? 'vf' : 'vo');
 
@@ -1435,6 +1447,20 @@ export default function NetflixPlayer({
         setEpisode(e);
     }, [season, episode, resetEpisodeState]);
 
+    // Son Dolby non décodable ici : bascule silencieuse vers une source au son compatible
+    // (même langue de préférence). Une seule fois par épisode, pour respecter un choix manuel ensuite.
+    const handleSelectStreamRef = useRef(handleSelectStream);
+    handleSelectStreamRef.current = handleSelectStream;
+    useEffect(() => {
+        if (streamState !== 'playing' || isAc3Supported || !activeStream?.hasUnsupportedAudio) return;
+        const key = `${id}-${season}-${episode}`;
+        if (audioFallbackDoneRef.current === key) return;
+        audioFallbackDoneRef.current = key;
+        const safe = (availableStreams || []).find(s => !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream.isFrench))
+            || (availableStreams || []).find(s => !s.hasUnsupportedAudio);
+        if (safe) handleSelectStreamRef.current(safe);
+    }, [streamState, isAc3Supported, activeStream, availableStreams, id, season, episode]);
+
     // Contrôles masqués : aucun bouton invisible ne garde le focus de la télécommande
     useEffect(() => {
         if (controlsVisible) return;
@@ -1785,55 +1811,6 @@ export default function NetflixPlayer({
                         >
                             <NetflixPlayIcon className="h-4 w-4" />
                             Épisode suivant
-                        </button>
-                    )}
-
-                    {/* Alerte audio Dolby AC3 silencieux dans le navigateur */}
-                    {isSilentAudioRisk && (
-                        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 flex max-w-[92vw] items-center gap-3 rounded-full bg-black/90 backdrop-blur-md px-4 py-2 border border-amber-500/50 text-xs shadow-2xl text-white">
-                            <span className="text-amber-400 font-bold whitespace-nowrap">🔊 Audio Dolby AC3</span>
-                            <span className="text-white/80 hidden sm:inline">Cette piste peut être muette sur ce navigateur.</span>
-                            {availableStreams.some(s => !s.hasUnsupportedAudio) && (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        const safeStream = availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
-                                                           availableStreams.find(s => !s.hasUnsupportedAudio);
-                                        if (safeStream) handleSelectStream(safeStream);
-                                    }}
-                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1 rounded-full transition-all cursor-pointer whitespace-nowrap shadow"
-                                >
-                                    Passer en Son Garanti (AAC)
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => setDismissAudioWarning(true)}
-                                className="text-white/60 hover:text-white px-1.5 py-0.5 cursor-pointer text-sm"
-                                aria-label="Fermer l'avertissement"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                    )}
-
-                    {/* Bouton d'activation du son si autoplay bloqué par le navigateur */}
-                    {isAutoplayMuted && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                const video = videoRef.current;
-                                if (video) {
-                                    video.muted = false;
-                                    video.volume = volume || 1;
-                                }
-                                setIsAutoplayMuted(false);
-                                setIsMuted(false);
-                            }}
-                            className="absolute bottom-28 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2.5 rounded-full bg-[#e50914] px-5 py-2.5 text-sm font-bold text-white shadow-2xl hover:bg-[#b80710] transition-all cursor-pointer animate-pulse"
-                        >
-                            <NetflixVolumeHighIcon className="h-5 w-5" />
-                            Activer le son (son coupé au lancement)
                         </button>
                     )}
 

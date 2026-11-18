@@ -474,18 +474,28 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
         return s;
     });
     
-    // Sélection par défaut : flux en cache en priorité absolue !
+    // Sélection par défaut : flux en cache avec audio garanti en priorité absolue !
     let defaultActive = null;
     if (anyCached) {
-        defaultActive = finalStreams.find(s => s.isCached && s.isFrench && s.tierKey === '1080p') ||
-                        finalStreams.find(s => s.isCached && s.isFrench) ||
-                        finalStreams.find(s => s.isCached && s.tierKey === '1080p') ||
-                        finalStreams.find(s => s.isCached);
+        defaultActive =
+            finalStreams.find(s => s.isCached && s.isFrench && !s.hasBadAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && s.isFrench && !s.hasBadAudio) ||
+            finalStreams.find(s => s.isCached && !s.hasBadAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && !s.hasBadAudio) ||
+            finalStreams.find(s => s.isCached && s.isFrench && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && s.isFrench) ||
+            finalStreams.find(s => s.isCached && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached);
     }
     if (!defaultActive) {
-        defaultActive = (hasTrueVf
-            ? (finalStreams.find(s => s.isFrench && s.tierKey === '1080p') || finalStreams.find(s => s.isFrench))
-            : null) || finalStreams.find(s => s.tierKey === '1080p') || finalStreams[0];
+        defaultActive =
+            finalStreams.find(s => s.isFrench && !s.hasBadAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isFrench && !s.hasBadAudio) ||
+            finalStreams.find(s => !s.hasBadAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => !s.hasBadAudio) ||
+            (hasTrueVf ? (finalStreams.find(s => s.isFrench && s.tierKey === '1080p') || finalStreams.find(s => s.isFrench)) : null) ||
+            finalStreams.find(s => s.tierKey === '1080p') ||
+            finalStreams[0];
     }
 
     if (defaultActive && defaultActive.isAvi && !defaultActive.url.startsWith('/api/video-stream')) {

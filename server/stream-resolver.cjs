@@ -195,19 +195,24 @@ function parseStreamDetails(stream) {
     metaLines.includes('multi subs')
   );
 
+  const isMp4 = /\.mp4(?:\?|$)/i.test(stream?.url || '') || /\.mp4(?:$|\?|\s|["')\]])/i.test(filename);
+  const isAvi = /\.avi(?:\?|$)/i.test(stream?.url || '') || /\.avi(?:$|\?|\s|["')\]])/i.test(filename) || /\b(?:xvid|divx)\b/i.test(fullText);
+
   // Détection audio : codecs compatibles navigateur (AAC / MP3 / Opus / FLAC) vs codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD / Atmos)
   const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasMp3 = /\bmp3\b/i.test(fullText);
   const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
-  const hasUnsupportedAudio = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
-  const isWebAudioSafe = (hasAac || hasMp3 || hasOpus || hasFlac || /yts|yify|rapta|pir8/i.test(fullText)) && !hasUnsupportedAudio;
+  const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx)\b/i.test(fullText);
+  const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
+
+  // Son garanti dans le navigateur : AAC / MP3 / Opus / FLAC ou conteneur MP4 web sans codec Dolby exclusif
+  const isWebAudioSafe = Boolean(hasAac || hasMp3 || hasOpus || hasFlac || isWebAudioGroup || (isMp4 && !hasUnsupportedAudioCodec));
+  // Un flux a un son non supporté SEULEMENT s'il a un codec propriétaire (AC3/DTS) ET aucun codec compatible web
+  const hasUnsupportedAudio = Boolean(hasUnsupportedAudioCodec && !isWebAudioSafe);
 
   const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
   const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
-
-  const isMp4 = /\.mp4(?:\?|$)/i.test(stream?.url || '') || /\.mp4(?:$|\?|\s|["')\]])/i.test(filename);
-  const isAvi = /\.avi(?:\?|$)/i.test(stream?.url || '') || /\.avi(?:$|\?|\s|["')\]])/i.test(filename) || /\b(?:xvid|divx)\b/i.test(fullText);
 
   // Taille & seeds
   const sizeMatch = rawTitle.match(/💾\s*([\d.]+\s*[KMGT]B)/i);
@@ -355,20 +360,25 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
       scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
       scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
       scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s)) ||
+      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '1080p') ||
+      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '4k') ||
+      scored.find(s => s.isCached && audioPlayable(s)) ||
       scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '1080p') ||
       scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '4k') ||
       scored.find(s => s.isCached && matchesPrefLang(s)) ||
-      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '1080p') ||
-      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '4k') ||
       scored.find(s => s.isCached && s.tierKey === '1080p') ||
       scored.find(s => s.isCached && s.tierKey === '4k') ||
       scored.find(s => s.isCached);
     defaultActive = cachedPreferred || scored[0];
   } else {
-    // Si aucun n'est en cache, on prend le meilleur disponible (langue préférée + 1080p/4K prioritaire)
+    // Si aucun n'est en cache, on prend le meilleur disponible (langue préférée + audio garanti prioritaire)
     defaultActive =
       scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
       scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
+      scored.find(s => matchesPrefLang(s) && audioPlayable(s)) ||
+      scored.find(s => audioPlayable(s) && s.tierKey === '1080p') ||
+      scored.find(s => audioPlayable(s) && s.tierKey === '4k') ||
+      scored.find(s => audioPlayable(s)) ||
       scored.find(s => matchesPrefLang(s) && s.tierKey === '1080p') ||
       scored.find(s => matchesPrefLang(s) && s.tierKey === '4k') ||
       scored.find(s => matchesPrefLang(s)) ||

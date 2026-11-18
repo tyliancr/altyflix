@@ -129,10 +129,9 @@ export default async function handler(req) {
   const pathname = parsedUrl.pathname.replace(/^\/\.netlify\/functions\/api/, '/api');
   const query = Object.fromEntries(parsedUrl.searchParams);
 
-  const DEFAULT_PLATFORM_DEBRID_TOKEN = '0ee09dc1-1d3f-4cc4-b806-950e471df905';
   const TMDB_API_KEY = getEnv('TMDB_API_KEY', 'a0819950449844817a0942ca79a4ccb0');
   const SERVER_DEBRID_PROVIDER = getEnv('DEBRID_PROVIDER', 'torbox');
-  const SERVER_DEBRID_TOKEN = getEnv('DEBRID_TOKEN') || getEnv('TORBOX_TOKEN') || DEFAULT_PLATFORM_DEBRID_TOKEN;
+  const SERVER_DEBRID_TOKEN = getEnv('DEBRID_TOKEN') || getEnv('TORBOX_TOKEN') || '';
 
   // 1. Info & Health
   if (pathname === '/api' || pathname === '/api/' || pathname === '/api/health') {

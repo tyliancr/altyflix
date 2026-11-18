@@ -17,7 +17,7 @@ export const DEBRID_PROVIDERS = [
 ];
 
 export const DEFAULT_PROVIDER = 'torbox';
-export const DEFAULT_TOKEN = '0ee09dc1-1d3f-4cc4-b806-950e471df905';
+export const DEFAULT_TOKEN = '';
 
 // Clé plateforme sécurisée côté serveur (DEBRID_TOKEN dans .env).
 // Les clés secrètes ne sont jamais exposées côté frontend pour protéger les quotas.
@@ -77,7 +77,7 @@ export function getGatewayConfig() {
 
     return {
         provider: provider || DEFAULT_PROVIDER,
-        token: customToken || DEFAULT_TOKEN,
+        token: customToken,
         customToken,
         frenchioUrl,
         hasCustomToken,
@@ -560,9 +560,6 @@ export async function resolvePlaybackStreams({
         if (config.hasCustomToken) {
             headers['x-debrid-token'] = config.token;
             headers['x-debrid-provider'] = config.provider;
-        } else if (config.token) {
-            headers['x-debrid-token'] = config.token;
-            headers['x-debrid-provider'] = config.provider;
         }
         if (config.frenchioUrl) {
             headers['x-frenchio-url'] = config.frenchioUrl;
@@ -612,7 +609,7 @@ export async function resolvePlaybackStreams({
     // 2. FALLBACK DIRECT CLIENT : Utilisé si le backend est momentanément inaccessible
     const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
     const activeProvider = config.provider || PLATFORM_DEFAULT_PROVIDER;
-    const activeToken = config.token || DEFAULT_TOKEN;
+    const activeToken = config.token || '';
 
     if (!activeToken) {
         if (backendError) return backendError;

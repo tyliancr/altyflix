@@ -757,17 +757,35 @@ const server = http.createServer(async (req, res) => {
           if (stremRes.ok) {
             const data = await stremRes.json();
             const list = Array.isArray(data?.subtitles) ? data.subtitles : [];
-            list.slice(0, 3).forEach((s, idx) => {
+            let frAdded = 0;
+            let enAdded = 0;
+            for (const s of list) {
+              const rawLang = String(s.lang || '').toLowerCase();
+              const isFr = rawLang === 'fre' || rawLang === 'fra' || rawLang === 'fr';
+              const isEn = rawLang === 'eng' || rawLang === 'en';
+              if (!isFr && !isEn) continue;
+              if (isFr && frAdded >= 3) continue;
+              if (isEn && enAdded >= 2) continue;
               const safeSubUrl = normalizeAllowedSubtitleUrl(s.url);
-              if (safeSubUrl) {
+              if (!safeSubUrl) continue;
+              if (isFr) {
+                frAdded++;
                 formatted.push({
-                  id: `strem-${idx}`,
-                  label: s.lang === 'eng' ? (idx === 0 ? 'English' : `English [${idx + 1}]`) : (s.lang || 'Piste ' + (idx + 1)),
-                  lang: s.lang || 'en',
+                  id: `strem-fr-${frAdded}`,
+                  label: frAdded === 1 ? 'Français' : `Français (Option ${frAdded})`,
+                  lang: 'fr',
+                  url: `/api/subtitles-vtt?url=${encodeURIComponent(safeSubUrl)}`
+                });
+              } else {
+                enAdded++;
+                formatted.push({
+                  id: `strem-en-${enAdded}`,
+                  label: enAdded === 1 ? 'Anglais' : `Anglais (Option ${enAdded})`,
+                  lang: 'en',
                   url: `/api/subtitles-vtt?url=${encodeURIComponent(safeSubUrl)}`
                 });
               }
-            });
+            }
           }
         } catch {}
       }

@@ -1078,7 +1078,7 @@ export default function NetflixPlayer({
             let cues = [];
             let chosen = sub;
             for (const cand of candidates) {
-                cues = await fetchSubtitleCues(cand.url, cand.encoding);
+                cues = await fetchSubtitleCues(cand.url, cand.encoding, cand.fallbackUrl);
                 if (reqId !== activeSubRequestIdRef.current || !videoRef.current) return;
                 if (cues.length > 0) { chosen = cand; break; }
             }

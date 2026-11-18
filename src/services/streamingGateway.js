@@ -920,8 +920,116 @@ export async function testGatewayToken({ provider, token }) {
     }
 }
 
+const OS_SPLIT_RE = /\b(?:cd|disc|disk|part)[\s._-]?[123]\b/i;
+const OS_GENERIC_TOKENS = new Set(['french', 'truefrench', 'vff', 'vfq', 'vostfr', 'multi', '1080p', '720p', '2160p', '480p', 'x264', 'h264', 'x265', 'h265', 'hevc', 'xvid', 'divx', 'ac3', 'eac3', 'dts', 'aac', 'mp3', 'mkv', 'mp4', 'avi', 'srt', 'bluray', 'bdrip', 'brrip', 'dvdrip', 'webrip', 'webdl']);
+
+function buildClientSubtitleHint(s) {
+    const raw = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`.toLowerCase();
+    const parts = [];
+    if (/\bextended\b/.test(raw)) parts.push('Extended');
+    else if (/\bunrated\b/.test(raw)) parts.push('Unrated');
+    else if (/\bdirector/.test(raw)) parts.push('Director');
+    if (/\b(?:blu-?ray|bdrip|brrip)\b/.test(raw)) parts.push('BluRay');
+    else if (/\bweb-?(?:dl|rip)\b/.test(raw)) parts.push('WEB');
+    else if (/\bdvd(?:rip)?\b/.test(raw)) parts.push('DVDRip');
+    const fpsNum = parseFloat(s.MovieFPS);
+    if (Number.isFinite(fpsNum) && fpsNum >= 23 && fpsNum <= 30) {
+        parts.push(Math.abs(fpsNum - 25) < 0.2 ? '25fps' : (Math.abs(fpsNum - 23.976) < 0.2 ? '23.976' : `${fpsNum.toFixed(0)}fps`));
+    }
+    if (String(s.SubHearingImpaired) === '1') parts.push('SDH');
+    return parts.slice(0, 2).join(' · ');
+}
+
+function rankOpenSubtitlesClient(osList, { filename = '', limit = 4 } = {}) {
+    if (!Array.isArray(osList)) return [];
+    const fnLower = String(filename || '').toLowerCase();
+    const fnTokens = fnLower
+        ? fnLower.replace(/[^a-z0-9]+/g, ' ').split(' ').filter(t => t.length >= 4 && !OS_GENERIC_TOKENS.has(t))
+        : [];
+    const fnExtended = /\bextended\b/.test(fnLower);
+    const fnUnrated = /\bunrated\b/.test(fnLower);
+    const fnDirector = /\bdirector/.test(fnLower);
+    const fnDoubleEp = /\bs\d+e\d+(?:and|[-._]?e)\d+\b/i.test(fnLower);
+    const fnIsDvdPal = /\b(?:dvdrip|pal|dvd)\b/.test(fnLower) && !/\b(?:bluray|bdrip|brrip|web-?dl|ntsc)\b/.test(fnLower);
+    const fnIsHd24 = /\b(?:bluray|bdrip|brrip|web-?dl|webrip|1080p|2160p|4k)\b/.test(fnLower) && !/\b(?:dvdrip|pal)\b/.test(fnLower);
+
+    const candidates = osList.filter(s => {
+        if (!s?.SubDownloadLink || !/^https:\/\/[a-z0-9.-]*opensubtitles\.org\//i.test(s.SubDownloadLink)) return false;
+        const fmt = String(s.SubFormat || 'srt').toLowerCase();
+        if (fmt && fmt !== 'srt' && fmt !== 'vtt') return false;
+        const nameStr = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`;
+        if (OS_SPLIT_RE.test(nameStr)) return false;
+        return true;
+    });
+
+    const scored = candidates.map(s => {
+        const raw = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`.toLowerCase();
+        let score = 0;
+        const downloads = Math.max(0, parseInt(s.SubDownloadsCnt || '0', 10) || 0);
+        score += Math.min(1500, Math.log10(downloads + 1) * 400);
+        score += (parseFloat(s.SubRating) || 0) * 40;
+        if (String(s.SubHearingImpaired) === '1') score -= 450;
+        if (String(s.SubBad) && Number(s.SubBad) > 0) score -= 2000;
+        if (String(s.SubForeignPartsOnly) === '1') score -= 4000;
+
+        const subExtended = /\bextended\b/.test(raw);
+        const subUnrated = /\bunrated\b/.test(raw);
+        const subDirector = /\bdirector/.test(raw);
+        if (fnLower) {
+            if (fnExtended && subExtended) score += 8000;
+            else if (fnExtended !== subExtended) score -= 5000;
+            if (fnUnrated && subUnrated) score += 6000;
+            else if (fnUnrated !== subUnrated) score -= 3500;
+            if (fnDirector && subDirector) score += 6000;
+            else if (fnDirector !== subDirector) score -= 3500;
+        } else if (subExtended || subUnrated || subDirector) {
+            score -= 600;
+        }
+
+        const subDoubleEp = /\b(?:s\d+e\d+(?:and|[-._]?e)\d+|e01[-._&+]?02|part\s*1\s*(?:&|and)\s*2)\b/i.test(raw);
+        if (fnDoubleEp && subDoubleEp) score += 5000;
+        else if (fnDoubleEp !== subDoubleEp) score -= 1200;
+
+        if (fnLower) {
+            const subIsBluray = /\b(?:blu-?ray|bdrip|brrip)\b/.test(raw);
+            const subIsWeb = /\bweb-?(?:dl|rip)\b/.test(raw);
+            const subIsDvd = /\bdvd(?:rip)?\b/.test(raw);
+            if (/\b(?:blu-?ray|bdrip|brrip)\b/.test(fnLower) && subIsBluray) score += 3500;
+            if (/\bweb-?(?:dl|rip)\b/.test(fnLower) && subIsWeb) score += 3500;
+            if (/\bdvd(?:rip)?\b/.test(fnLower) && subIsDvd) score += 3500;
+            if (/\b(?:blu-?ray|bdrip|brrip|web-?(?:dl|rip))\b/.test(fnLower) && subIsDvd && !subIsBluray && !subIsWeb) score -= 1800;
+
+            const fps = parseFloat(s.MovieFPS);
+            if (Number.isFinite(fps) && fps >= 23 && fps <= 30) {
+                if (fnIsDvdPal) score += Math.abs(fps - 25) < 0.2 ? 3200 : -1500;
+                else if (fnIsHd24) score += Math.abs(fps - 23.976) < 0.25 ? 2400 : (Math.abs(fps - 25) < 0.2 ? -2200 : 0);
+            }
+
+            let tokenMatches = 0;
+            for (const tok of fnTokens) {
+                if (raw.includes(tok)) tokenMatches++;
+            }
+            score += Math.min(6000, tokenMatches * 1400);
+        }
+
+        return { item: s, score, hint: buildClientSubtitleHint(s) };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const seen = new Set();
+    const out = [];
+    for (const entry of scored) {
+        const key = `${entry.item.IDSubtitleFile || ''}|${entry.item.SubDownloadLink}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(entry);
+        if (out.length >= limit) break;
+    }
+    return out;
+}
+
 /**
- * Recherche les sous-titres disponibles pour un film ou un épisode (Multi-sources : OpenSubtitles v3 + OpenSubtitles REST)
+ * Recherche les sous-titres disponibles pour un film ou un épisode (OpenSubtitles direct en priorité absolue)
  */
 export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type = 'movie', season = 1, episode = 1, filename = '' }) {
     let imdbId = initialImdbId;
@@ -940,32 +1048,40 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
     }
 
     const cleanImdbId = String(imdbId).toLowerCase();
+    const numericImdb = cleanImdbId.replace(/^tt/, '');
     const isTv = type === 'tv';
     const stremKey = isTv ? `${cleanImdbId}:${season}:${episode}` : `${cleanImdbId}`;
 
-    // 1. Source 1 : Stremio OpenSubtitles v3 (fallback si une langue manque côté backend)
-    const stremPromise = (async () => {
-        const s = createTimeoutSignal(6000);
+    // 1. Source PRINCIPALE : OpenSubtitles REST directement depuis le navigateur (CORS natif, contourne les blocages IP AWS/Netlify)
+    const fetchDirectOpenSubtitles = async (osLang, timeoutMs) => {
+        const s = createTimeoutSignal(timeoutMs);
         try {
-            const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${stremKey}.json`;
-            const res = await fetch(endpoint, {
-                headers: { 'Accept': 'application/json' },
+            const osUrl = isTv
+                ? `https://rest.opensubtitles.org/search/sublanguageid-${osLang}/imdbid-${numericImdb}/season-${season || 1}/episode-${episode || 1}`
+                : `https://rest.opensubtitles.org/search/sublanguageid-${osLang}/imdbid-${numericImdb}`;
+            const res = await fetch(osUrl, {
+                headers: { 'X-User-Agent': 'TemporaryUserAgent' },
                 signal: s.signal
             });
             if (!res.ok) return [];
             const data = await res.json();
-            return Array.isArray(data?.subtitles) ? data.subtitles : [];
+            return Array.isArray(data) ? data : [];
         } catch {
             return [];
         } finally {
             s.cleanup();
         }
-    })();
+    };
 
-    // 2. Source 2 : Backend /api/subtitles (OpenSubtitles REST classés par release/FPS, décodage CP1252/UTF-8, anti-pub)
+    const directOsPromise = Promise.all([
+        fetchDirectOpenSubtitles('fre', 5500),
+        fetchDirectOpenSubtitles('eng', 4500)
+    ]);
+
+    // 2. Source de secours : Backend /api/subtitles (OpenSubtitles côté serveur si le navigateur est bloqué)
     const backendSubsPromise = (async () => {
         if (!id && !cleanImdbId) return [];
-        const s = createTimeoutSignal(6000);
+        const s = createTimeoutSignal(5500);
         try {
             const q = new URLSearchParams({
                 type: isTv ? 'tv' : 'movie',
@@ -989,19 +1105,52 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
     })();
 
     try {
-        const [stremSubs, backendSubs] = await Promise.all([stremPromise, backendSubsPromise]);
+        const [[directFrRaw, directEnRaw], backendSubs] = await Promise.all([directOsPromise, backendSubsPromise]);
 
         const normalized = [];
         const seenUrls = new Set();
         let frCount = 0;
         let enCount = 0;
-        let esCount = 0;
 
-        // A. Sous-titres via backend (/api/subtitles-vtt : encodage UTF-8 propre, pubs supprimées, classés par release)
+        // A. OpenSubtitles direct (priorité absolue : fonctionne sur Netlify ET en local avec classement par release/FPS)
+        for (const { item: s, hint } of rankOpenSubtitlesClient(directFrRaw, { filename, limit: 4 })) {
+            if (frCount >= 4 || seenUrls.has(s.SubDownloadLink)) continue;
+            frCount++;
+            seenUrls.add(s.SubDownloadLink);
+            normalized.push({
+                id: `os-fr-${frCount}`,
+                lang: 'fr',
+                label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
+                hint,
+                fps: parseFloat(s.MovieFPS) || null,
+                url: s.SubDownloadLink,
+                fallbackUrl: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`,
+                encoding: s.SubEncoding || 'utf-8'
+            });
+        }
+        for (const { item: s, hint } of rankOpenSubtitlesClient(directEnRaw, { filename, limit: 3 })) {
+            if (enCount >= 3 || seenUrls.has(s.SubDownloadLink)) continue;
+            enCount++;
+            seenUrls.add(s.SubDownloadLink);
+            normalized.push({
+                id: `os-en-${enCount}`,
+                lang: 'en',
+                label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
+                hint,
+                fps: parseFloat(s.MovieFPS) || null,
+                url: s.SubDownloadLink,
+                fallbackUrl: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`,
+                encoding: s.SubEncoding || 'utf-8'
+            });
+        }
+
+        // B. Fallback backend /api/subtitles si une langue manque encore
+        const needBackendFr = frCount === 0;
+        const needBackendEn = enCount === 0;
         for (const sub of backendSubs) {
             if (!sub?.url || seenUrls.has(sub.url)) continue;
             const rawLang = String(sub.lang || '').toLowerCase();
-            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && frCount < 4) {
+            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && needBackendFr && frCount < 4) {
                 frCount++;
                 seenUrls.add(sub.url);
                 normalized.push({
@@ -1013,7 +1162,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
                     url: sub.url,
                     encoding: 'utf-8'
                 });
-            } else if ((rawLang === 'en' || rawLang === 'eng') && enCount < 3) {
+            } else if ((rawLang === 'en' || rawLang === 'eng') && needBackendEn && enCount < 3) {
                 enCount++;
                 seenUrls.add(sub.url);
                 normalized.push({
@@ -1028,59 +1177,53 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             }
         }
 
-        // B. Fallback Stremio OpenSubtitles v3 uniquement pour les langues absentes du backend (évite les doublons)
-        const needStremFr = frCount === 0;
-        const needStremEn = enCount === 0;
-        const langMap = {
-            fre: 'fr', fra: 'fr', fr: 'fr',
-            eng: 'en', en: 'en',
-            spa: 'es', es: 'es'
-        };
-
-        for (const sub of stremSubs) {
-            const rawLang = String(sub.lang || '').toLowerCase();
-            const standardLang = langMap[rawLang];
-            if (!standardLang || !sub.url || seenUrls.has(sub.url)) continue;
-
-            if (standardLang === 'fr' && needStremFr && frCount < 3) {
-                frCount++;
-                seenUrls.add(sub.url);
-                normalized.push({
-                    id: sub.id || `strem-fr-${frCount}`,
-                    lang: 'fr',
-                    label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
-                    hint: '',
-                    url: sub.url,
-                    encoding: sub.SubEncoding || 'utf-8'
-                });
-            } else if (standardLang === 'en' && needStremEn && enCount < 2) {
-                enCount++;
-                seenUrls.add(sub.url);
-                normalized.push({
-                    id: sub.id || `strem-en-${enCount}`,
-                    lang: 'en',
-                    label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
-                    hint: '',
-                    url: sub.url,
-                    encoding: sub.SubEncoding || 'utf-8'
-                });
-            } else if (standardLang === 'es' && esCount < 1) {
-                esCount++;
-                seenUrls.add(sub.url);
-                normalized.push({
-                    id: sub.id || `strem-es-${esCount}`,
-                    lang: 'es',
-                    label: 'Espagnol',
-                    hint: '',
-                    url: sub.url,
-                    encoding: sub.SubEncoding || 'utf-8'
-                });
+        // C. Dernier recours Stremio OpenSubtitles v3 uniquement si FR ou EN manquent encore (filtré strictement FR/EN)
+        if (frCount === 0 || enCount === 0) {
+            const st = createTimeoutSignal(4500);
+            try {
+                const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${stremKey}.json`;
+                const res = await fetch(endpoint, { headers: { Accept: 'application/json' }, signal: st.signal });
+                if (res.ok) {
+                    const data = await res.json();
+                    const stremSubs = Array.isArray(data?.subtitles) ? data.subtitles : [];
+                    const needStremFr = frCount === 0;
+                    const needStremEn = enCount === 0;
+                    for (const sub of stremSubs) {
+                        const rawLang = String(sub.lang || '').toLowerCase();
+                        if (!sub.url || seenUrls.has(sub.url)) continue;
+                        if ((rawLang === 'fre' || rawLang === 'fra' || rawLang === 'fr') && needStremFr && frCount < 3) {
+                            frCount++;
+                            seenUrls.add(sub.url);
+                            normalized.push({
+                                id: sub.id || `strem-fr-${frCount}`,
+                                lang: 'fr',
+                                label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
+                                hint: '',
+                                url: sub.url,
+                                encoding: sub.SubEncoding || 'utf-8'
+                            });
+                        } else if ((rawLang === 'eng' || rawLang === 'en') && needStremEn && enCount < 2) {
+                            enCount++;
+                            seenUrls.add(sub.url);
+                            normalized.push({
+                                id: sub.id || `strem-en-${enCount}`,
+                                lang: 'en',
+                                label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
+                                hint: '',
+                                url: sub.url,
+                                encoding: sub.SubEncoding || 'utf-8'
+                            });
+                        }
+                    }
+                }
+            } catch { /* ignore */ } finally {
+                st.cleanup();
             }
         }
 
-        // Tri : Français d'abord, puis Anglais, puis Espagnol
+        // Tri : Français d'abord, puis Anglais
         normalized.sort((a, b) => {
-            const order = { fr: 1, en: 2, es: 3 };
+            const order = { fr: 1, en: 2 };
             return (order[a.lang] || 99) - (order[b.lang] || 99);
         });
 
@@ -1165,22 +1308,23 @@ export function parseVttCues(rawText) {
 /**
  * Récupère et parse directement les sous-titres en mémoire (détection gzip par magic bytes + encodages Windows-1252 / UTF-8)
  */
-export async function fetchSubtitleCues(subUrl, subEncoding = null) {
+export async function fetchSubtitleCues(subUrl, subEncoding = null, fallbackUrl = null) {
     if (!subUrl) return [];
-    try {
+    const loadFromUrl = async (targetUrl) => {
         const st = createTimeoutSignal(8000);
         let res;
         try {
-            res = await fetch(subUrl, { signal: st.signal });
+            res = await fetch(targetUrl, { signal: st.signal });
         } finally {
             st.cleanup();
         }
-        if (!res.ok) return [];
+        if (!res.ok) return null;
 
         let buf = await res.arrayBuffer();
         const bytes = new Uint8Array(buf);
-        // Décompresser uniquement si les magic bytes gzip (0x1F 0x8B) sont réellement présents
-        if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b && typeof DecompressionStream !== 'undefined') {
+        const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+        if (isGzip) {
+            if (typeof DecompressionStream === 'undefined') return null;
             const ds = new DecompressionStream('gzip');
             const decompressedStream = new Blob([bytes]).stream().pipeThrough(ds);
             buf = await new Response(decompressedStream).arrayBuffer();
@@ -1189,9 +1333,13 @@ export async function fetchSubtitleCues(subUrl, subEncoding = null) {
         let rawText;
         if (subEncoding && !/ascii|utf-?8/i.test(subEncoding)) {
             try {
-                rawText = new TextDecoder('windows-1252').decode(buf);
+                rawText = new TextDecoder('utf-8', { fatal: true }).decode(buf);
             } catch {
-                rawText = new TextDecoder('utf-8').decode(buf);
+                try {
+                    rawText = new TextDecoder('windows-1252').decode(buf);
+                } catch {
+                    rawText = new TextDecoder('utf-8').decode(buf);
+                }
             }
         } else {
             try {
@@ -1202,7 +1350,23 @@ export async function fetchSubtitleCues(subUrl, subEncoding = null) {
         }
 
         return parseVttCues(rawText);
+    };
+
+    try {
+        const primary = await loadFromUrl(subUrl);
+        if (primary && primary.length > 0) return primary;
+        if (fallbackUrl && fallbackUrl !== subUrl) {
+            const fallback = await loadFromUrl(fallbackUrl);
+            if (fallback && fallback.length > 0) return fallback;
+        }
+        return [];
     } catch (err) {
+        if (fallbackUrl && fallbackUrl !== subUrl) {
+            try {
+                const fallback = await loadFromUrl(fallbackUrl);
+                if (fallback && fallback.length > 0) return fallback;
+            } catch { /* ignore */ }
+        }
         console.warn('[Altyflix Subtitles] Erreur chargement/décodage :', err);
         return [];
     }

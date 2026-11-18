@@ -3,7 +3,7 @@ let audioCtx = null;
 export const getAudioContext = () => {
     if (typeof window === 'undefined') return null;
     if ((!audioCtx || audioCtx.state === 'suspended') && window.navigator.userActivation?.hasBeenActive === false) return null;
-    if (!audioCtx) {
+    if (!audioCtx || audioCtx.state === 'closed') {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
         if (AudioContextClass) {
             audioCtx = new AudioContextClass();
@@ -12,6 +12,6 @@ export const getAudioContext = () => {
     if (audioCtx && audioCtx.state === 'suspended') {
         audioCtx.resume().catch(() => {});
     }
-    return audioCtx;
+    return audioCtx && audioCtx.state === 'running' ? audioCtx : null;
 };
 

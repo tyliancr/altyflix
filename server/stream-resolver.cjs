@@ -58,16 +58,34 @@ const ALLOWED_POLL_HOSTS = [
 ];
 
 /**
- * Valide qu'une URL est sécurisée et autorisée (prévention SSRF stricte : HTTPS uniquement, pas de port non standard ni credentials)
+ * Valide et normalise une URL autorisée (prévention SSRF stricte : HTTPS uniquement, sans caractères de contrôle, sans port non standard ni credentials)
  */
-function isAllowedUrl(urlStr) {
+function normalizeAllowedUrl(urlStr) {
+  if (typeof urlStr !== 'string' || !urlStr || /[\x00-\x1f\x7f]/.test(urlStr)) return null;
   try {
     const u = new URL(urlStr);
-    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return false;
+    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return null;
     const host = u.hostname.toLowerCase();
-    return ALLOWED_POLL_HOSTS.some(h => host === h || host.endsWith('.' + h));
+    return ALLOWED_POLL_HOSTS.some(h => host === h || host.endsWith('.' + h)) ? u.href : null;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function isAllowedUrl(urlStr) {
+  return normalizeAllowedUrl(urlStr) !== null;
+}
+
+function normalizeFrenchioUrl(urlStr) {
+  const normalized = normalizeAllowedUrl(urlStr);
+  if (!normalized) return '';
+  try {
+    const u = new URL(normalized);
+    if (u.hostname.toLowerCase() !== 'frenchio.elfhosted.com') return '';
+    if (u.search || u.hash) return '';
+    return u.href.replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
+  } catch {
+    return '';
   }
 }
 
@@ -88,18 +106,18 @@ function parseBytes(str) {
 }
 
 /**
- * Détecte si un stream Torrentio est une erreur explicite
+ * Détecte si un stream Torrentio est une erreur explicite (sans faux positif sur les titres contenant "invalid" ou "failed")
  */
 function isTorrentioErrorStream(stream) {
   if (!stream) return true;
   const url = String(stream.url || '');
-  const title = String(stream.title || '');
-  const name = String(stream.name || '');
+  const title = String(stream.title || '').toLowerCase();
+  const name = String(stream.name || '').toLowerCase();
 
   if (url.includes('failed_access') || url.includes('/videos/failed_')) return true;
   if (isDownloadingUrl(url)) return true;
-  if (name.toLowerCase().includes('error') || name.toLowerCase().includes('tb error') || name.toLowerCase().includes('rd error')) return true;
-  if (title.toLowerCase().includes('invalid') || title.toLowerCase().includes('failed') || title.toLowerCase().includes('rate limit')) return true;
+  if (/\b(?:tb|rd|ad|pm|dl)?\s*error\b/i.test(name)) return true;
+  if (/(?:invalid\s+(?:api|token|key|debrid|auth)|access\s+denied|rate\s+limit\s+exceeded|failed\s+to\s+(?:resolve|access|connect)|not\s+a\s+valid\s+debrid)/i.test(title)) return true;
 
   return false;
 }
@@ -124,7 +142,7 @@ function parseStreamDetails(stream) {
 
   // Détection du statut Debrid : Cache (+) vs Téléchargement (download)
   // Si vérifié en temps réel contre l'API TorBox (_torboxVerifiedCached), la vérité TorBox prime sur Torrentio
-  let isCached = /\[(tb|rd|ad|pm|dl)\+\]/i.test(rawName) || /\[\+\]/.test(rawName) || /\b\+\b/.test(rawName) || Boolean(stream.isTorboxLibrary);
+  let isCached = /\[(tb|rd|ad|pm|dl)\+\]/i.test(rawName) || /\[\+\]/.test(rawName) || Boolean(stream.isTorboxLibrary);
   let isDownloading = !isCached && (/\[(tb|rd|ad|pm|dl)\s+download\]/i.test(rawName) || /download/i.test(rawName));
   if (typeof stream._torboxVerifiedCached === 'boolean') {
     isCached = stream._torboxVerifiedCached;
@@ -178,7 +196,7 @@ function parseStreamDetails(stream) {
   const hasMp3 = /\bmp3\b/i.test(fullText);
   const hasOpus = /\bopus\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
-  const hasUnsupportedAudio = /\b(ac3|ac-3|e-?ac-?3|eac3|ddp\s*5\.?1|ddp5\.?1|dd\s*5\.?1|dd5\.?1|dd\+|dts(?:-?hd)?|truehd|atmos|lpcm)\b/i.test(fullText);
+  const hasUnsupportedAudio = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp\s*5\.?1|ddp5\.?1|dd\s*5\.?1|dd5\.?1|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
   const isWebAudioSafe = (hasAac || hasMp3 || hasOpus || hasFlac || /yts|yify|rapta|pir8/i.test(fullText)) && !hasUnsupportedAudio;
 
   const isMp4 = /\.mp4(\?|$)/i.test(stream?.url || '') || /\.mp4/i.test(filename);
@@ -218,14 +236,16 @@ function parseStreamDetails(stream) {
 /**
  * Système de score et curation des flux vidéo
  */
-function curateStreams(rawStreams, provider) {
+function curateStreams(rawStreams, provider, { enableAviTranscode = true, preferredLang = 'vf' } = {}) {
+  const preferVo = String(preferredLang || '').toLowerCase() === 'vo' || String(preferredLang || '').toLowerCase() === 'vostfr';
   const valid = rawStreams
-    .filter(s => typeof s.url === 'string' && (s.url.startsWith('http') || s.url.startsWith('/api/')) && !isTorrentioErrorStream(s))
+    .filter(s => typeof s.url === 'string' && normalizeAllowedUrl(s.url) !== null && !isTorrentioErrorStream(s))
     .map((s, idx) => {
+      const normalizedUrl = normalizeAllowedUrl(s.url);
       const details = parseStreamDetails(s);
       return {
         id: `stream-${idx}`,
-        url: s.url,
+        url: normalizedUrl,
         quality: details.resolution,
         tierKey: details.tierKey,
         isCached: details.isCached,
@@ -263,12 +283,18 @@ function curateStreams(rawStreams, provider) {
     if (st.isWebAudioSafe) score += 25000;
     if (st.hasUnsupportedAudio) score -= 35000;
 
-    // 3. Langue française prioritaire
-    if (st.isFrench) score += 15000;
-    else if (st.isVostfr) score += 500;
+    // 3. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
+    if (preferVo) {
+      if (!st.isFrench) score += 15000;
+      else score += 500;
+    } else {
+      if (st.isFrench) score += 15000;
+      else if (st.isVostfr) score += 500;
+    }
 
-    // 4. Format MP4 universel
+    // 4. Format MP4 universel (et forte pénalité AVI si le serveur ne peut pas transcoder, ex. Netlify)
     if (st.isMp4) score += 3000;
+    if (st.isAvi && !enableAviTranscode) score -= 45000;
 
     // 5. Poids adapté à la bande passante
     const gb = st.sizeBytes / (1024 * 1024 * 1024);
@@ -358,22 +384,24 @@ function curateStreams(rawStreams, provider) {
     else if (s.isVostfr) qLabel += ' · VOSTFR';
     else qLabel += ' · VO';
 
-    const streamPlaybackUrl = (s.isAvi && s.url.startsWith('http')) ? `/api/video-stream?url=${encodeURIComponent(s.url)}` : s.url;
+    const canTranscodeAvi = Boolean(s.isAvi && enableAviTranscode);
+    const streamPlaybackUrl = (canTranscodeAvi && s.url.startsWith('http')) ? `/api/video-stream?url=${encodeURIComponent(s.url)}` : s.url;
 
     return {
       ...s,
       url: streamPlaybackUrl,
       originalUrl: s.url,
-      isTranscoded: Boolean(s.isAvi),
+      isTranscoded: canTranscodeAvi,
       qualityLabel: qLabel
     };
   });
 
+  const activeCanTranscodeAvi = Boolean(defaultActive?.isAvi && enableAviTranscode);
   const activeFormatted = defaultActive ? formattedStreams.find(s => s.id === defaultActive.id) || {
     ...defaultActive,
-    url: (defaultActive.isAvi && defaultActive.url.startsWith('http')) ? `/api/video-stream?url=${encodeURIComponent(defaultActive.url)}` : defaultActive.url,
+    url: (activeCanTranscodeAvi && defaultActive.url.startsWith('http')) ? `/api/video-stream?url=${encodeURIComponent(defaultActive.url)}` : defaultActive.url,
     originalUrl: defaultActive.url,
-    isTranscoded: Boolean(defaultActive.isAvi),
+    isTranscoded: activeCanTranscodeAvi,
     qualityLabel: defaultActive.quality
   } : null;
 
@@ -389,17 +417,14 @@ function curateStreams(rawStreams, provider) {
 /**
  * Vérifie le statut réel d'un lien Torrentio de débridage (détection directe sans CORS)
  */
-async function checkStreamStatus(streamUrl, knownFilename = '') {
-  if (!streamUrl || typeof streamUrl !== 'string') {
-    return { success: false, status: 'error', error: 'URL manquante ou invalide.' };
-  }
-
-  if (!isAllowedUrl(streamUrl)) {
-    return { success: false, status: 'error', error: 'Hôte non autorisé pour la vérification.' };
+async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTranscode = true } = {}) {
+  const safeStreamUrl = normalizeAllowedUrl(streamUrl);
+  if (!safeStreamUrl) {
+    return { success: false, status: 'error', statusCode: 400, error: 'Hôte non autorisé pour la vérification.' };
   }
 
   try {
-    const res = await fetch(streamUrl, {
+    const res = await fetch(safeStreamUrl, {
       method: 'HEAD',
       redirect: 'manual',
       signal: AbortSignal.timeout(2500)
@@ -411,9 +436,13 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
     if (res.status >= 300 && res.status < 400 && location) {
       let resolvedLocation;
       try {
-        resolvedLocation = new URL(location, streamUrl).toString();
+        resolvedLocation = normalizeAllowedUrl(new URL(location, safeStreamUrl).toString());
       } catch {
-        return { success: false, status: 'error', error: 'Redirection invalide.' };
+        return { success: false, status: 'error', statusCode: 502, error: 'Redirection invalide.' };
+      }
+
+      if (!resolvedLocation) {
+        return { success: false, status: 'error', statusCode: 403, error: 'Hôte de redirection non autorisé.' };
       }
 
       if (isDownloadingUrl(resolvedLocation)) {
@@ -424,11 +453,6 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
           ready: false,
           message: 'Le torrent est en cours de téléchargement vers le cloud debrid...'
         };
-      }
-
-      // Protection SSRF : revalider la cible de redirection avant toute requête sortante
-      if (!isAllowedUrl(resolvedLocation)) {
-        return { success: false, status: 'error', error: 'Hôte de redirection non autorisé.' };
       }
 
       // Inspection de la cible finale pour détection AVI / Transcodage
@@ -447,14 +471,15 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
       }
 
       console.log(`[Altyflix Stream Poll] Flux prêt ! Redirection vers : ${resolvedLocation.split('?')[0]}${isAvi ? ' [Transcodage AVI->MP4 requis]' : ''}`);
-      const effectivePlaybackUrl = isAvi ? `/api/video-stream?url=${encodeURIComponent(resolvedLocation)}` : resolvedLocation;
+      const canTranscodeAvi = Boolean(isAvi && enableAviTranscode);
+      const effectivePlaybackUrl = canTranscodeAvi ? `/api/video-stream?url=${encodeURIComponent(resolvedLocation)}` : resolvedLocation;
 
       return {
         success: true,
         status: 'ready',
         ready: true,
         isAvi,
-        isTranscoded: isAvi,
+        isTranscoded: canTranscodeAvi,
         playbackUrl: effectivePlaybackUrl,
         directUrl: resolvedLocation
       };
@@ -462,7 +487,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
 
     // Réponse directe 200 OK
     if (res.status === 200) {
-      if (isDownloadingUrl(streamUrl)) {
+      if (isDownloadingUrl(safeStreamUrl)) {
         return {
           success: true,
           status: 'downloading',
@@ -472,17 +497,18 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
       }
 
       const cType = (res.headers.get('content-type') || '').toLowerCase();
-      const isAvi = /\.avi(\?|$)/i.test(streamUrl) || cType.includes('msvideo') || cType.includes('avi');
-      const effectivePlaybackUrl = isAvi ? `/api/video-stream?url=${encodeURIComponent(streamUrl)}` : streamUrl;
+      const isAvi = /\.avi(\?|$)/i.test(safeStreamUrl) || cType.includes('msvideo') || cType.includes('avi');
+      const canTranscodeAvi = Boolean(isAvi && enableAviTranscode);
+      const effectivePlaybackUrl = canTranscodeAvi ? `/api/video-stream?url=${encodeURIComponent(safeStreamUrl)}` : safeStreamUrl;
 
       return {
         success: true,
         status: 'ready',
         ready: true,
         isAvi,
-        isTranscoded: isAvi,
+        isTranscoded: canTranscodeAvi,
         playbackUrl: effectivePlaybackUrl,
-        directUrl: streamUrl
+        directUrl: safeStreamUrl
       };
     }
 
@@ -490,15 +516,16 @@ async function checkStreamStatus(streamUrl, knownFilename = '') {
     return {
       success: false,
       status: 'error',
-      statusCode: res.status,
-      error: `Réponse serveur inattendue (${res.status}).`
+      statusCode: res.status >= 400 && res.status <= 599 ? res.status : 502,
+      error: 'Flux temporairement indisponible.'
     };
   } catch (err) {
     console.error('[Altyflix Stream Poll] Erreur de vérification :', err.message);
     return {
       success: false,
       status: 'error',
-      error: 'Délai d\'attente dépassé ou erreur réseau lors du polling : ' + err.message
+      statusCode: 502,
+      error: 'Délai d\'attente dépassé lors de la vérification du flux.'
     };
   }
 }
@@ -518,6 +545,7 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
     } else {
       const res = await fetch('https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true', {
         headers: { 'Authorization': `Bearer ${torboxToken}` },
+        redirect: 'error',
         signal: AbortSignal.timeout(2500)
       });
       if (!res.ok) return [];
@@ -554,9 +582,7 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
         if (!isVideo) continue;
 
         if (type === 'tv') {
-          const sNum = String(season).padStart(2, '0');
-          const eNum = String(episode).padStart(2, '0');
-          const epRegex = new RegExp(`(?:s${sNum}e${eNum}|${season}x${eNum}|ep\\s*0?${episode})`, 'i');
+          const epRegex = new RegExp(`(?:^|[^a-z0-9])(?:s0?${season}e0?${episode}|${season}x0?${episode}|ep\\.?\\s*0?${episode})(?!\\d)`, 'i');
           if (!epRegex.test(fName) && !epRegex.test(t.name)) continue;
         } else if (episodePattern.test(fName)) {
           continue;
@@ -573,17 +599,24 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
     const resolved = await Promise.all(
       topCandidates.map(async ({ torrent: t, file: f, fName, size }) => {
         try {
-          const dlRes = await fetch(`https://api.torbox.app/v1/api/torrents/requestdl?token=${torboxToken}&torrent_id=${t.id}&file_id=${f.id}`, {
+          const dlQuery = new URLSearchParams({
+            token: String(torboxToken),
+            torrent_id: String(t.id),
+            file_id: String(f.id)
+          });
+          const dlRes = await fetch(`https://api.torbox.app/v1/api/torrents/requestdl?${dlQuery.toString()}`, {
+            redirect: 'error',
             signal: AbortSignal.timeout(2200)
           });
           if (dlRes.ok) {
             const dlData = await dlRes.json();
-            if (dlData.success && dlData.data) {
+            const safeDlUrl = dlData?.success ? normalizeAllowedUrl(dlData.data) : null;
+            if (safeDlUrl) {
               const sizeGb = size ? (size / (1024 * 1024 * 1024)).toFixed(2) + ' GB' : '';
               return {
                 name: `[TB+] Torbox Cloud\n1080p`,
                 title: `${fName}\n👤 1 💾 ${sizeGb} ⚙️ Ma Bibliothèque TorBox\n🇫🇷`,
-                url: dlData.data,
+                url: safeDlUrl,
                 isTorboxLibrary: true
               };
             }
@@ -616,9 +649,12 @@ async function resolveStreamsServer({
   userProvider = null,
   userToken = null,
   userFrenchioUrl = null,
-  enableAudioRemux = false
+  enableAudioRemux = false,
+  enableAviTranscode = enableAudioRemux,
+  tmdbApiKey = null
 }) {
   const isTv = type === 'tv';
+  const normalizedLang = String(lang || 'vf').toLowerCase() === 'vo' || String(lang || 'vf').toLowerCase() === 'vostfr' ? 'vo' : 'vf';
   const rawProvider = ((userProvider && userProvider.trim()) || process.env.DEBRID_PROVIDER || 'torbox').toLowerCase();
   const provider = ALLOWED_PROVIDERS.has(rawProvider) ? rawProvider : 'torbox';
   const token = (userToken && userToken.trim()) || process.env.DEBRID_TOKEN || process.env.TORBOX_TOKEN || '';
@@ -642,12 +678,29 @@ async function resolveStreamsServer({
   // Résolution IMDb si absent (multi-tentatives sécurisées via tmdbUrl)
   let imdbId = (typeof initialImdbId === 'string' && /^tt\d{5,10}$/.test(initialImdbId.trim())) ? initialImdbId.trim() : null;
   let cleanTitle = (title || '').trim();
-  const tmdbKey = process.env.TMDB_API_KEY || 'a0819950449844817a0942ca79a4ccb0';
+  const tmdbKey = (tmdbApiKey && String(tmdbApiKey).trim()) || process.env.TMDB_API_KEY || '';
 
-  if ((!imdbId || !cleanTitle) && safeId) {
+  const finalizeStreamUrl = (s) => {
+    if (!s) return s;
+    if (s.isAvi && enableAviTranscode && s.url && !s.url.startsWith('/api/video-stream')) {
+      return { ...s, url: `/api/video-stream?url=${encodeURIComponent(s.url)}`, isTranscoded: true };
+    }
+    if (enableAudioRemux && s.hasUnsupportedAudio && s.verifiedReady && s.url && s.url.startsWith('http')) {
+      return {
+        ...s,
+        url: `/api/video-stream?audio=aac&url=${encodeURIComponent(s.url)}`,
+        directUrl: s.directUrl || s.url,
+        isTranscoded: true,
+        audioRemuxed: true
+      };
+    }
+    return s;
+  };
+
+  if ((!imdbId || !cleanTitle) && safeId && tmdbKey) {
     try {
       const detailUrl = tmdbUrl(isTv ? `tv/${safeId}/external_ids` : `movie/${safeId}/external_ids`, {}, tmdbKey);
-      const tmdbRes = await fetch(detailUrl, { signal: AbortSignal.timeout(5000) });
+      const tmdbRes = await fetch(detailUrl, { redirect: 'error', signal: AbortSignal.timeout(5000) });
       if (tmdbRes.ok) {
         const tmdbData = await tmdbRes.json();
         if (!imdbId && /^tt\d{5,10}$/.test(String(tmdbData.imdb_id || ''))) imdbId = tmdbData.imdb_id;
@@ -658,10 +711,10 @@ async function resolveStreamsServer({
   }
 
   // Fallback de recherche IMDb et titre si toujours manquant
-  if ((!imdbId || !cleanTitle) && safeId) {
+  if ((!imdbId || !cleanTitle) && safeId && tmdbKey) {
     try {
       const baseDetailUrl = tmdbUrl(isTv ? `tv/${safeId}` : `movie/${safeId}`, { language: 'fr-FR' }, tmdbKey);
-      const baseRes = await fetch(baseDetailUrl, { signal: AbortSignal.timeout(4000) });
+      const baseRes = await fetch(baseDetailUrl, { redirect: 'error', signal: AbortSignal.timeout(4000) });
       if (baseRes.ok) {
         const baseData = await baseRes.json();
         const candidateImdb = baseData.imdb_id || baseData.external_ids?.imdb_id;
@@ -673,7 +726,7 @@ async function resolveStreamsServer({
           const searchTitle = cleanTitle || baseData.original_title || baseData.title;
           if (searchTitle) {
             const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${isTv ? 'series' : 'movie'}/top/search=${encodeURIComponent(searchTitle)}.json`;
-            const cRes = await fetch(cinemetaUrl, { signal: AbortSignal.timeout(4000) });
+            const cRes = await fetch(cinemetaUrl, { redirect: 'error', signal: AbortSignal.timeout(4000) });
             if (cRes.ok) {
               const cData = await cRes.json();
               const cid = cData?.metas?.[0]?.id;
@@ -691,16 +744,16 @@ async function resolveStreamsServer({
   }
 
   // Recherche TMDB par titre si IMDb ID toujours manquant
-  if (!imdbId && cleanTitle) {
+  if (!imdbId && cleanTitle && tmdbKey) {
     try {
       const searchUrl = tmdbUrl(isTv ? 'search/tv' : 'search/movie', { query: cleanTitle, language: 'fr-FR' }, tmdbKey);
-      const sRes = await fetch(searchUrl, { signal: AbortSignal.timeout(3500) });
+      const sRes = await fetch(searchUrl, { redirect: 'error', signal: AbortSignal.timeout(3500) });
       if (sRes.ok) {
         const sData = await sRes.json();
         const topResult = sData.results?.[0];
         if (topResult?.id && positiveInteger(topResult.id)) {
           const extUrl = tmdbUrl(isTv ? `tv/${topResult.id}/external_ids` : `movie/${topResult.id}/external_ids`, {}, tmdbKey);
-          const extRes = await fetch(extUrl, { signal: AbortSignal.timeout(3000) });
+          const extRes = await fetch(extUrl, { redirect: 'error', signal: AbortSignal.timeout(3000) });
           if (extRes.ok) {
             const extData = await extRes.json();
             if (/^tt\d{5,10}$/.test(String(extData.imdb_id || ''))) {
@@ -727,13 +780,15 @@ async function resolveStreamsServer({
           torboxToken: token
         });
         if (mylistStreams.length > 0) {
-          const curated = curateStreams(mylistStreams, provider);
+          const curated = curateStreams(mylistStreams, provider, { enableAviTranscode, preferredLang: normalizedLang });
+          const readyFallback = curated.streams.map(s => finalizeStreamUrl({ ...s, verifiedReady: true }));
+          const activeFallback = curated.activeStream ? (readyFallback.find(s => s.id === curated.activeStream.id) || readyFallback[0]) : readyFallback[0];
           return {
             success: true,
             status: 'ready',
             imdbId: null,
-            streams: curated.streams,
-            activeStream: curated.activeStream,
+            streams: readyFallback,
+            activeStream: activeFallback,
             hasTrueVf: curated.hasTrueVf
           };
         }
@@ -751,8 +806,8 @@ async function resolveStreamsServer({
 
   const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
   const rawFrenchioUrl = (userFrenchioUrl && userFrenchioUrl.trim()) || process.env.FRENCHIO_URL || '';
-  const activeFrenchioUrl = isAllowedUrl(rawFrenchioUrl) ? rawFrenchioUrl : '';
-  const cacheKey = `${provider}:${sha256Short(token)}:${streamKey}:${sha256Short(activeFrenchioUrl)}:${enableAudioRemux ? 'remux' : 'direct'}`;
+  const activeFrenchioUrl = normalizeFrenchioUrl(rawFrenchioUrl);
+  const cacheKey = `${provider}:${sha256Short(token)}:${streamKey}:${normalizedLang}:${sha256Short(activeFrenchioUrl)}:${enableAudioRemux ? 'remux' : 'direct'}:${enableAviTranscode ? 'avi' : 'noavi'}`;
 
   const cachedResult = getCachedResolve(cacheKey);
   if (cachedResult) {
@@ -783,6 +838,7 @@ async function resolveStreamsServer({
       try {
         const res = await fetch(url, {
           headers: { 'Accept': 'application/json' },
+          redirect: 'error',
           signal: AbortSignal.timeout(4500)
         });
         if (res.ok) {
@@ -799,9 +855,8 @@ async function resolveStreamsServer({
       if (!activeFrenchioUrl) return [];
       try {
         const streamPath = isTv ? `series/${streamKey}.json` : `movie/${streamKey}.json`;
-        const cleanBase = activeFrenchioUrl.replace(/\/manifest\.json$/, '').replace(/\/$/, '');
-        const fUrl = `${cleanBase}/stream/${streamPath}`;
-        const fRes = await fetch(fUrl, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(4000) });
+        const fUrl = `${activeFrenchioUrl}/stream/${streamPath}`;
+        const fRes = await fetch(fUrl, { headers: { 'Accept': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(4000) });
         if (fRes.ok) {
           const fData = await fRes.json();
           if (Array.isArray(fData?.streams)) return fData.streams;
@@ -877,6 +932,7 @@ async function resolveStreamsServer({
           const hashesParam = Array.from(hashesSet).join(',');
           const cacheRes = await fetch(`https://api.torbox.app/v1/api/torrents/checkcached?hash=${hashesParam}&format=object`, {
             headers: { 'Authorization': `Bearer ${token}` },
+            redirect: 'error',
             signal: AbortSignal.timeout(2200)
           });
           if (cacheRes.ok) {
@@ -904,7 +960,7 @@ async function resolveStreamsServer({
       }
     }
 
-    const curated = curateStreams(rawStreams, provider);
+    const curated = curateStreams(rawStreams, provider, { enableAviTranscode, preferredLang: normalizedLang });
 
     if (!curated.streams || curated.streams.length === 0) {
       return {
@@ -927,11 +983,11 @@ async function resolveStreamsServer({
           return { ...st, isCached: true, isDownloading: false, verifiedReady: true };
         }
         const rawTarget = st.originalUrl || st.url;
-        if (!rawTarget || !rawTarget.startsWith('http')) {
-          return { ...st, verifiedReady: !st.isDownloading };
+        if (!rawTarget || !normalizeAllowedUrl(rawTarget)) {
+          return { ...st, verifiedReady: false };
         }
         try {
-          const check = await checkStreamStatus(rawTarget, st.filename || '');
+          const check = await checkStreamStatus(rawTarget, st.filename || '', { enableAviTranscode });
           if (check.ready && check.playbackUrl) {
             const isAviNow = Boolean(st.isAvi || check.isAvi);
             return {
@@ -942,7 +998,7 @@ async function resolveStreamsServer({
               isCached: true,
               isDownloading: false,
               isAvi: isAviNow,
-              isTranscoded: isAviNow,
+              isTranscoded: Boolean(isAviNow && enableAviTranscode),
               verifiedReady: true
             };
           }
@@ -967,15 +1023,18 @@ async function resolveStreamsServer({
     let finalStreams = verifiedList;
 
     if (readyStreams.length > 0) {
-      // Préférer VF + audio natif d'abord ; si le remux AAC FFmpeg est actif, préférer VF avant VO !
+      const wantVo = normalizedLang === 'vo';
+      const matchesLang = (s) => (wantVo ? !s.isFrench : s.isFrench);
+      const isPlayableFormat = (s) => !s.isAvi || enableAviTranscode;
       const pickBestReady = (list) =>
-        list.find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-        list.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
-        (enableAudioRemux ? (list.find(s => s.isFrench && s.tierKey === '1080p') || list.find(s => s.isFrench)) : null) ||
-        list.find(s => !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-        list.find(s => !s.hasUnsupportedAudio) ||
-        list.find(s => s.isFrench && s.tierKey === '1080p') ||
-        list.find(s => s.isFrench) ||
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
+        (enableAudioRemux ? (list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') || list.find(s => isPlayableFormat(s) && matchesLang(s))) : null) ||
+        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+        list.find(s => isPlayableFormat(s)) ||
         list[0];
 
       active = pickBestReady(readyStreams);
@@ -984,30 +1043,12 @@ async function resolveStreamsServer({
       initialStatus = 'ready';
     } else {
       // Aucune source en cache : on lance le débridage proprement avec l'écran de chargement
-      active = verifiedList.find(s => s.isFrench) || verifiedList[0];
+      active = verifiedList.find(s => (normalizedLang === 'vo' ? !s.isFrench : s.isFrench)) || verifiedList[0];
       if (active) {
         active = { ...active, isDownloading: true, isCached: false };
       }
       initialStatus = 'downloading';
     }
-
-    // Synchroniser l'élément actif dans la liste streams et activer le remux audio AAC pour AC3/DTS si FFmpeg est dispo
-    const finalizeStreamUrl = (s) => {
-      if (!s) return s;
-      if (s.isAvi && s.url && !s.url.startsWith('/api/video-stream')) {
-        return { ...s, url: `/api/video-stream?url=${encodeURIComponent(s.url)}`, isTranscoded: true };
-      }
-      if (enableAudioRemux && s.hasUnsupportedAudio && s.verifiedReady && s.url && s.url.startsWith('http')) {
-        return {
-          ...s,
-          url: `/api/video-stream?audio=aac&url=${encodeURIComponent(s.url)}`,
-          directUrl: s.directUrl || s.url,
-          isTranscoded: true,
-          audioRemuxed: true
-        };
-      }
-      return s;
-    };
 
     const finalActive = active
       ? finalizeStreamUrl({ ...active, originalUrl: active.originalUrl || active.url })
@@ -1039,7 +1080,7 @@ async function resolveStreamsServer({
       success: false,
       reason: 'NETWORK_ERROR',
       status: 'error',
-      message: 'Erreur réseau lors de la recherche des flux : ' + err.message,
+      message: 'Service de recherche temporairement indisponible.',
       imdbId,
       streams: []
     };
@@ -1055,6 +1096,7 @@ async function resolveStreamsServer({
 }
 
 module.exports = {
+  normalizeAllowedUrl,
   isAllowedUrl,
   isDownloadingUrl,
   isTorrentioErrorStream,

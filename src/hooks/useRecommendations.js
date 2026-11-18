@@ -78,8 +78,8 @@ const useRecommendations = () => {
     useEffect(() => {
         activeRef.current = true;
 
-        // Ne pas charger de recommandations adultes non filtrées en mode Enfant
-        if (currentProfile?.isKid) {
+        // Ne pas charger sans profil actif ou en mode Enfant
+        if (!currentProfile?.id || currentProfile?.isKid) {
             setRecommendations([]);
             setMatchScores(new Map());
             setSeedTitle(null);

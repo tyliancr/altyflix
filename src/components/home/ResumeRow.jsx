@@ -4,10 +4,10 @@ import { getBackdropUrl, getContentType, getPosterUrl } from '../../utils/helper
 import { playHaptic } from '../../utils/interactions';
 import SmartImage from '../common/SmartImage';
 
-export default function ResumeRow({ history, title }) {
+export default function ResumeRow({ history = [], title }) {
     const { play } = usePlayer();
     const { removeFromHistory } = useProfile();
-    const unfinished = history.filter(item => {
+    const unfinished = (history || []).filter(item => {
         const p = Number(item.progress);
         return (item.contentId || item.id) && p > 0 && p < 88;
     });
@@ -31,7 +31,7 @@ export default function ResumeRow({ history, title }) {
                             role="button"
                             tabIndex={0}
                             onClick={() => { playHaptic(); play({ ...item, id, media_type: type }); }}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { playHaptic(); play({ ...item, id, media_type: type }); } }}
+                            onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); playHaptic(); play({ ...item, id, media_type: type }); } }}
                             aria-label={['Reprendre ' + name, episode, percent + ' %'].filter(Boolean).join(', ')}
                             className="group relative aspect-video w-64 shrink-0 snap-start overflow-hidden rounded-xl bg-[#101016] text-left sm:w-80 shadow-[0_6px_20px_rgba(0,0,0,0.45)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.8)] transition-all duration-300 ring-1 ring-inset ring-white/[0.07] hover:ring-white/25 cursor-pointer select-none"
                         >
@@ -53,11 +53,11 @@ export default function ResumeRow({ history, title }) {
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     playHaptic();
-                                    removeFromHistory(id);
+                                    removeFromHistory(id, type);
                                 }}
                                 title="Retirer de la ligne"
                                 aria-label={`Retirer ${name} de la ligne`}
-                                className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-black/75 hover:bg-[#E50914] text-white/80 hover:text-white flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110 shadow-xl border border-white/15"
+                                className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-black/75 hover:bg-[#E50914] text-white/80 hover:text-white flex items-center justify-center transition-all duration-200 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 hover:scale-110 shadow-xl border border-white/15"
                             >
                                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />

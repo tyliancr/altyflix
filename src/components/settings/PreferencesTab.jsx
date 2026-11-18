@@ -166,6 +166,7 @@ export default function PreferencesTab({
                             <Field
                                 label="Clé API Debrid (Torbox / Real-Debrid)"
                                 type="password"
+                                autoComplete="new-password"
                                 value={debridToken || ''}
                                 onChange={e => setDebridToken(e.target.value)}
                                 hint="Votre clé personnelle Torbox (torbox.app/settings) ou Real-Debrid."

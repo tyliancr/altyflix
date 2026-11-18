@@ -27,10 +27,15 @@ export const PlayerProvider = ({ children }) => {
     const play = useCallback((content) => {
         if (!content) return;
 
-        // Check history for resume point
-        const historyItem = watchHistory.find(item =>
-            String(item.contentId) === String(content.id || content.contentId)
-        );
+        // Check history for resume point (match type + id to avoid movie/TV collisions)
+        const targetId = content.id || content.contentId;
+        const targetType = content.media_type || content.type || (content.first_air_date || content.number_of_seasons ? 'tv' : null);
+        const historyItem = watchHistory.find(item => {
+            if (String(item.contentId || item.id) !== String(targetId)) return false;
+            if (!targetType) return true;
+            const itemType = item.media_type || item.type;
+            return !itemType || itemType === targetType;
+        });
 
         let season = 1;
         let episode = 1;

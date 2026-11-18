@@ -117,6 +117,7 @@ export const AuthProvider = ({ children }) => {
     }, []);
     const logout = useCallback(async () => {
         try {
+            try { localStorage.removeItem('returnUrl'); } catch { /* ignore */ }
             if (isFirebaseConfigured) await signOut(auth);
             setCurrentUser(null);
             setError(null);

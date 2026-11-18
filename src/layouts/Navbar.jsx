@@ -34,23 +34,30 @@ const Navbar = () => {
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
-    // Global keyboard shortcut for quick search (Ctrl+K, Cmd+K, /) — désactivé sur /settings
+    // Global keyboard shortcut for quick search (Ctrl+K, Cmd+K, /) — désactivé sur /settings et dans le lecteur
     useEffect(() => {
         if (isSettings) return undefined;
+        let focusTimer = null;
         const handleKeyDown = (e) => {
+            if (document.querySelector('[data-player-root]')) return;
             if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
                 e.preventDefault();
                 setIsSearchOpen(true);
-                setTimeout(() => searchInputRef.current?.focus(), 60);
+                clearTimeout(focusTimer);
+                focusTimer = setTimeout(() => searchInputRef.current?.focus(), 60);
             } else if (e.key === '/' && !isSearchOpen) {
                 e.preventDefault();
                 setIsSearchOpen(true);
-                setTimeout(() => searchInputRef.current?.focus(), 60);
+                clearTimeout(focusTimer);
+                focusTimer = setTimeout(() => searchInputRef.current?.focus(), 60);
             }
         };
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        return () => {
+            clearTimeout(focusTimer);
+            window.removeEventListener('keydown', handleKeyDown);
+        };
     }, [isSearchOpen, isSettings]);
 
     const navLinks = [

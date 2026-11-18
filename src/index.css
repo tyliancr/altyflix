@@ -34,7 +34,7 @@
     height: 100%;
     width: 100%;
     max-width: 100vw;
-    overflow-x: hidden;
+    overflow-x: clip;
     overscroll-behavior-x: none;
     background-color: var(--ALTYFLIX-black);
   }
@@ -46,7 +46,7 @@
     padding: 0;
     width: 100%;
     max-width: 100vw;
-    overflow-x: hidden;
+    overflow-x: clip;
     overscroll-behavior-x: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -274,7 +274,7 @@
   min-height: 100vh;
   width: 100%;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
   position: relative;
   background: var(--ALTYFLIX-black);
 }

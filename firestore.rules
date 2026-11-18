@@ -22,7 +22,12 @@ service cloud.firestore {
     }
     // users/{uid}/progress et users/{uid}/preferences sont couverts par la règle users ci-dessus.
     match /profiles/{profileId} {
-      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow get: if signedIn() && (
+        resource != null
+          ? resource.data.userId == request.auth.uid
+          : profileId.matches('^' + request.auth.uid + '_.*')
+      );
+      allow list, delete: if signedIn() && resource.data.userId == request.auth.uid;
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
       allow update: if signedIn() && resource.data.userId == request.auth.uid &&
         request.resource.data.userId == resource.data.userId;
@@ -32,6 +37,7 @@ service cloud.firestore {
       return d.keys().hasOnly(['id','contentId','userId','profileId','authorName','authorAvatar','rating','text','updatedAt']) &&
         d.userId == request.auth.uid && ownsProfile(d.profileId) &&
         d.contentId is string && d.contentId.size() <= 20 &&
+        d.id is string && d.id == d.contentId + '_' + d.profileId &&
         d.rating is int && d.rating >= 1 && d.rating <= 5 &&
         d.text is string && d.text.size() <= 5000 &&
         d.authorName is string && d.authorName.size() <= 100 &&
@@ -39,7 +45,7 @@ service cloud.firestore {
         d.updatedAt == request.time;
     }
     match /reviews/{reviewId} {
-      allow read: if true;
+      allow read: if signedIn();
       allow create: if signedIn() && validReview() && reviewId == request.resource.data.contentId + '_' + request.resource.data.profileId;
       allow update: if signedIn() && resource.data.userId == request.auth.uid && validReview() &&
         request.resource.data.profileId == resource.data.profileId &&
@@ -48,7 +54,12 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.userId == request.auth.uid;
     }
     match /progress/{progressId} {
-      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow get: if signedIn() && (
+        resource != null
+          ? resource.data.userId == request.auth.uid
+          : progressId.matches('^' + request.auth.uid + '_.*')
+      );
+      allow list, delete: if signedIn() && resource.data.userId == request.auth.uid;
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid && ownsProfile(request.resource.data.profileId);
       allow update: if signedIn() && resource.data.userId == request.auth.uid &&
         request.resource.data.userId == resource.data.userId &&

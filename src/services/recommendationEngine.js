@@ -281,10 +281,12 @@ export const fetchRecommendations = async (tasteProfile, excludeIds = new Set(),
                     deduped.push(item);
                 }
 
-                // Enrich the candidates with details (genres, cast, directors) in parallel
+                // Enrich only top 10 candidates (avoid 30-call TMDB 429 burst); score remaining directly from genre_ids
                 const candidates = deduped.slice(0, 30);
-                const enrichedCandidates = await Promise.all(
-                    candidates.map(async (item) => {
+                const toEnrich = candidates.slice(0, 10);
+                const quickOnes = candidates.slice(10).map(item => ({ ...item, cast_ids: [], director_ids: [] }));
+                const enrichedTop = await Promise.all(
+                    toEnrich.map(async (item) => {
                         try {
                             const isTv = Boolean(
                                 item.media_type === 'tv' ||
@@ -317,6 +319,7 @@ export const fetchRecommendations = async (tasteProfile, excludeIds = new Set(),
                         return { ...item, cast_ids: [], director_ids: [] };
                     })
                 );
+                const enrichedCandidates = [...enrichedTop, ...quickOnes];
 
                 const matchScores = new Map();
                 const scored = enrichedCandidates.map(item => {

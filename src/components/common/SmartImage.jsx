@@ -57,7 +57,7 @@ const SmartImage = memo(({
         const el = imgRef.current;
         setLoaded(Boolean(el && el.complete && el.naturalWidth > 0));
         return () => clearTimeout(retryTimerRef.current);
-    }, [src]);
+    }, [src, fallbackSrc]);
 
     // Check if image is already synchronously cached right after mount/update
     useEffect(() => {
@@ -90,7 +90,7 @@ const SmartImage = memo(({
             }, delay);
             return;
         }
-        if (!usingFallbackSrc && fallbackSrc && fallbackSrc !== src) {
+        if (src && !usingFallbackSrc && fallbackSrc && fallbackSrc !== src) {
             setUsingFallbackSrc(true);
             setAttempt(0);
             return;

@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { Card, SectionHeader } from './SettingsUI';
 import { playHaptic } from '../../utils/interactions';
+import { getContentType } from '../../utils/helpers';
 import Icon from '../ui/Icons';
 
 /** Small progress ring used for the completion rate. */
@@ -78,8 +79,10 @@ export default function StatsTab({
                 {history.length > 0 ? (
                     <ul className="divide-y divide-white/[0.07]">
                         {history.map(item => {
+                            const id = item.contentId || item.id;
                             const title = item.title || item.name;
-                            const isTv = item.type === 'tv';
+                            const type = getContentType(item, item.season != null ? 'tv' : 'movie');
+                            const isTv = type === 'tv';
                             const progress = Math.round(item.progress || 0);
                             const when = item.lastWatchedAt || item.timestamp;
                             const meta = [
@@ -89,8 +92,8 @@ export default function StatsTab({
                             ].filter(Boolean).join(' · ');
 
                             return (
-                                <li key={`${item.type}-${item.contentId}`} className="group flex items-center gap-4 px-6 py-3.5 transition-colors hover:bg-white/[0.025]">
-                                    <Link to={`/${isTv ? 'tv' : 'movie'}/${item.contentId}`} className="relative aspect-video w-28 flex-none overflow-hidden rounded-lg bg-[#101016] ring-1 ring-inset ring-white/[0.07]">
+                                <li key={`${type}-${id}`} className="group flex items-center gap-4 px-6 py-3.5 transition-colors hover:bg-white/[0.025]">
+                                    <Link to={`/${type}/${id}`} className="relative aspect-video w-28 flex-none overflow-hidden rounded-lg bg-[#101016] ring-1 ring-inset ring-white/[0.07]">
                                         {item.backdrop_path && (
                                             <img src={`https://image.tmdb.org/t/p/w300${item.backdrop_path}`} alt="" loading="lazy" className="h-full w-full object-cover" />
                                         )}
@@ -99,14 +102,14 @@ export default function StatsTab({
                                         </span>
                                     </Link>
                                     <div className="min-w-0 flex-1">
-                                        <Link to={`/${isTv ? 'tv' : 'movie'}/${item.contentId}`} className="block truncate text-[15px] font-semibold text-white hover:underline">
+                                        <Link to={`/${type}/${id}`} className="block truncate text-[15px] font-semibold text-white hover:underline">
                                             {title}
                                         </Link>
                                         <p className="mt-0.5 truncate text-[13px] text-white/50">{meta}</p>
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={() => { playHaptic(); removeFromHistory(item.contentId); }}
+                                        onClick={() => { playHaptic(); removeFromHistory(id, type); }}
                                         aria-label={`Retirer ${title} de l’historique`}
                                         className="grid h-9 w-9 flex-none place-items-center rounded-full text-white/35 transition-colors hover:bg-white/10 hover:text-white"
                                     >

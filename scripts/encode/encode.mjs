@@ -229,10 +229,28 @@ async function writeSubtitles(job, duration) {
 }
 
 function vttTime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
+  const totalMs = Math.max(0, Math.round(Number(seconds || 0) * 1000));
+  const ms = totalMs % 1000;
+  const totalSec = Math.floor(totalMs / 1000);
+  const s = totalSec % 60;
+  const m = Math.floor(totalSec / 60) % 60;
+  const h = Math.floor(totalSec / 3600);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
+
+function parseSeconds(value, label) {
+  if (value === undefined || value === null || value === '') return 0;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) throw new Error(`${label} invalide : ${value}`);
+    return value;
+  }
+  const str = String(value).trim();
+  if (/^\d+(?:\.\d+)?$/.test(str)) return Number(str);
+  const hms = str.match(/^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/);
+  if (hms) return Number(hms[1]) * 3600 + Number(hms[2]) * 60 + Number(hms[3]);
+  const msMatch = str.match(/^(\d+):(\d{1,2}(?:\.\d+)?)$/);
+  if (msMatch) return Number(msMatch[1]) * 60 + Number(msMatch[2]);
+  throw new Error(`${label} invalide : ${value}`);
 }
 
 async function makeThumbnails(job, source, duration) {
@@ -296,8 +314,16 @@ async function writeMaster(job, source, renditions) {
 async function main() {
   const job = await loadJob();
   const source = await probe(job.input);
-  let duration = source.duration - Number(job.start || 0);
-  if (job.duration !== undefined) duration = Math.min(duration, Number(job.duration));
+  const startSec = parseSeconds(job.start, '--start');
+  const sourceDur = Number(source.duration);
+  let duration = Number.isFinite(sourceDur) && sourceDur > 0 ? sourceDur - startSec : NaN;
+  if (job.duration !== undefined) {
+    const reqDur = parseSeconds(job.duration, '--duration');
+    duration = Number.isFinite(duration) ? Math.min(duration, reqDur) : reqDur;
+  }
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error(`Durée résultante invalide (${duration} s) : vérifiez --start et --duration.`);
+  }
 
   let ladder = LADDER.filter(step => step.height <= source.height);
   if (!ladder.length) ladder = [{ ...LADDER.at(-1), height: even(source.height) }];

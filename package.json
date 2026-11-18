@@ -17,8 +17,7 @@
     "seed": "node scripts/encode/seed.mjs",
     "check:structure": "node tools/check-structure.mjs",
     "check": "npm run check:structure && npm run lint && npm test && npm run build",
-    "bench:stream": "node tools/bench-stream.mjs",
-    "test:e2e:stream": "node tools/e2e-stream.mjs"
+    "bench:stream": "node tools/bench-stream.mjs"
   },
   "dependencies": {
     "cors": "^2.8.6",

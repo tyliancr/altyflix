@@ -2,6 +2,8 @@
 import { useNavigate } from 'react-router-dom';
 import { getPersonDetails } from '../../services/tmdb';
 import { getPosterUrl, getContentType } from '../../utils/helpers';
+import { isKidSafe } from '../../utils/kidsFilter';
+import { useProfile } from '../../contexts/ProfileContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from '../../hooks/useTranslation';
 
@@ -9,13 +11,34 @@ const LOCALE_MAP = { fr: 'fr-FR', en: 'en-US', es: 'es-ES', de: 'de-DE', it: 'it
 
 const CastQuickView = ({ isOpen, onClose, personId }) => {
     const navigate = useNavigate();
+    const { currentProfile } = useProfile();
+    const isKid = Boolean(currentProfile?.isKid);
     const { t, language } = useTranslation();
     const [person, setPerson] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(false);
     const [bioBiographyExpanded, setBiographyExpanded] = useState(false);
+    const [isDesktop, setIsDesktop] = useState(() => (
+        typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : true
+    ));
 
     const locale = LOCALE_MAP[language] || 'fr-FR';
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+        const mql = window.matchMedia('(min-width: 768px)');
+        const onChange = (e) => setIsDesktop(e.matches);
+        setIsDesktop(mql.matches);
+        mql.addEventListener?.('change', onChange);
+        return () => mql.removeEventListener?.('change', onChange);
+    }, []);
+
+    useEffect(() => {
+        if (!isOpen) return undefined;
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [isOpen, onClose]);
 
     // Lock body scroll when drawer is open (critical for PWA/iOS)
     useEffect(() => {
@@ -68,16 +91,19 @@ const CastQuickView = ({ isOpen, onClose, personId }) => {
 
     const knownFor = (() => {
         if (!person) return [];
+        const seen = new Set();
         return [
             ...(person.movie_credits?.cast || []).map(i => ({ ...i, media_type: 'movie' })),
             ...(person.tv_credits?.cast || []).map(i => ({ ...i, media_type: 'tv' })),
         ]
-            .filter(i => i.poster_path)
-            .reduce((acc, curr) => {
-                if (!acc.find(i => i.id === curr.id)) acc.push(curr);
-                return acc;
-            }, [])
-            .sort((a, b) => b.popularity - a.popularity)
+            .filter(i => i.poster_path && (!isKid || isKidSafe(i)))
+            .filter(curr => {
+                const key = `${curr.media_type}-${curr.id}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
             .slice(0, 8);
     })();
 
@@ -107,8 +133,12 @@ const CastQuickView = ({ isOpen, onClose, personId }) => {
                     ─────────────────────────────────────────────────────── */}
 
                     {/* MOBILE: Bottom Sheet */}
+                    {!isDesktop && (
                     <motion.div
-                        className="md:hidden fixed inset-x-0 bottom-0 z-[910] flex flex-col rounded-t-2xl overflow-hidden"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={person?.name || 'Profil'}
+                        className="fixed inset-x-0 bottom-0 z-[910] flex flex-col rounded-t-2xl overflow-hidden"
                         style={{
                             maxHeight: '92dvh',
                             background: '#111118',
@@ -165,7 +195,7 @@ const CastQuickView = ({ isOpen, onClose, personId }) => {
                         </div>
 
                         {/* Footer CTA */}
-                        {!loading && person && (
+                        {!loading && person && !isKid && (
                             <div className="px-5 py-4 border-t border-white/10 flex-shrink-0" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}>
                                 <button
                                     onClick={handleViewFull}
@@ -180,10 +210,15 @@ const CastQuickView = ({ isOpen, onClose, personId }) => {
                             </div>
                         )}
                     </motion.div>
+                    )}
 
                     {/* DESKTOP: Right Sidebar */}
+                    {isDesktop && (
                     <motion.div
-                        className="hidden md:flex fixed inset-y-0 right-0 w-[480px] z-[910] flex-col"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={person?.name || 'Profil'}
+                        className="flex fixed inset-y-0 right-0 w-[480px] z-[910] flex-col"
                         style={{
                             background: '#111118',
                             boxShadow: '-8px 0 60px rgba(0,0,0,0.7)',
@@ -236,7 +271,7 @@ const CastQuickView = ({ isOpen, onClose, personId }) => {
                         </div>
 
                         {/* Footer CTA */}
-                        {!loading && person && (
+                        {!loading && person && !isKid && (
                             <div className="px-8 py-5 border-t border-white/10 flex-shrink-0">
                                 <button
                                     onClick={handleViewFull}
@@ -251,6 +286,7 @@ const CastQuickView = ({ isOpen, onClose, personId }) => {
                             </div>
                         )}
                     </motion.div>
+                    )}
                 </>
             )}
         </AnimatePresence>

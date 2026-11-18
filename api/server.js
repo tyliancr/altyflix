@@ -22,7 +22,8 @@ if (!devUid) {
 }
 
 const app = createApp({ config, store, verifyIdToken, devUid, serveMedia: true });
-app.listen(config.port, () => {
-  console.log(`API vidéo ALTYFLIX : http://localhost:${config.port}/api  (données : ${config.dataBackend})`);
-  if (devUid) console.warn(`⚠ AUTH_DEV_UID actif : toutes les requêtes sont traitées comme l'utilisateur "${devUid}".`);
+const bindHost = devUid ? '127.0.0.1' : undefined;
+app.listen(config.port, bindHost, () => {
+  console.log(`API vidéo ALTYFLIX : http://${bindHost || 'localhost'}:${config.port}/api  (données : ${config.dataBackend})`);
+  if (devUid) console.warn(`⚠ AUTH_DEV_UID actif (localhost uniquement) : toutes les requêtes sont traitées comme l'utilisateur "${devUid}".`);
 });

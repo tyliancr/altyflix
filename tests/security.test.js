@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { once } from 'node:events';
 import security from '../server/security.cjs';
+import netlifyApiHandler from '../netlify/functions/api.mjs';
 import { seasonLabel, getSeasons } from '../src/utils/seasons.js';
 import { getContentType, sanitizeReturnUrl } from '../src/utils/helpers.js';
 
-const { tmdbUrl, validateStreams, arteLimit, BoundedCache, createRateLimiter, fetchJson } = security;
+const {
+  tmdbUrl, validateStreams, arteLimit, BoundedCache, createRateLimiter, fetchJson,
+  cleanSubtitleToVtt, normalizeAllowedSubtitleUrl, rankOpenSubtitles
+} = security;
 const require = createRequire(import.meta.url);
 process.env.TMDB_API_KEY = 'test-key-not-a-real-credential';
 
@@ -80,4 +84,52 @@ test('HTTP server rejects traversal, malformed URLs and unsafe methods', async (
     assert.equal(response.headers.get('x-frame-options'), 'DENY');
     assert.equal((await response.json()).season, 3);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('subtitle helpers clean ad cues, handle blank whitespace lines and block SSRF/CRLF URLs', () => {
+  const srtWithAdsAndSpaces = [
+    '1',
+    '0:00:01,000 --> 0:00:04,000',
+    'Watch Online Movies and Series for FREE',
+    'www.osdb.link/lm',
+    '   ',
+    '2',
+    '0:00:05,500 --> 0:00:08,000',
+    'Bonjour l’équipe !',
+  ].join('\n');
+  const vtt = cleanSubtitleToVtt(srtWithAdsAndSpaces);
+  assert.ok(vtt.startsWith('WEBVTT\n\n'));
+  assert.ok(!vtt.includes('osdb.link'), 'Ad cue must be stripped');
+  assert.ok(vtt.includes('00:00:05.500 --> 00:00:08.000'), '1-digit hour timestamp must be zero-padded');
+  assert.ok(vtt.includes('Bonjour l’équipe !'));
+
+  const allAds = cleanSubtitleToVtt('1\n00:00:01,000 --> 00:00:05,000\nOpenSubtitles.org\n');
+  assert.equal(allAds, 'WEBVTT\n\n');
+
+  assert.equal(normalizeAllowedSubtitleUrl('https://dl.opensubtitles.org/en/download/file/123'), 'https://dl.opensubtitles.org/en/download/file/123');
+  assert.equal(normalizeAllowedSubtitleUrl('https://dl.opensubtitles.org/file\r\nX-Test:1'), null);
+  assert.equal(normalizeAllowedSubtitleUrl('http://127.0.0.1/sub.srt'), null);
+
+  const ranked = rankOpenSubtitles([
+    { SubFileName: 'Show.S01E01.CD1.srt', SubFormat: 'srt', SubDownloadsCnt: '9999', SubDownloadLink: 'https://dl.opensubtitles.org/en/download/file/1' },
+    { SubFileName: 'Show.S01E01.WEB-DL.srt', SubFormat: 'srt', SubDownloadsCnt: '-50', SubDownloadLink: 'https://dl.opensubtitles.org/en/download/file/2' },
+    { SubFileName: 'Show.S01E01.sub', SubFormat: 'sub', SubDownloadsCnt: '500', SubDownloadLink: 'https://dl.opensubtitles.org/en/download/file/3' },
+  ]);
+  assert.equal(ranked.length, 1);
+  assert.equal(ranked[0].item.SubFileName, 'Show.S01E01.WEB-DL.srt');
+  assert.equal(Number.isFinite(ranked[0].score), true);
+});
+
+test('Netlify API function enforces health, SSRF and CRLF protections', async () => {
+  const healthRes = await netlifyApiHandler(new Request('https://altyflix.netlify.app/api/health'));
+  assert.equal(healthRes.status, 200);
+
+  const ssrfVideo = await netlifyApiHandler(new Request('https://altyflix.netlify.app/api/video-stream?url=http://127.0.0.1:3000/secret'));
+  assert.ok([400, 403].includes(ssrfVideo.status), `Expected 400/403, got ${ssrfVideo.status}`);
+
+  const crlfVideo = await netlifyApiHandler(new Request('https://altyflix.netlify.app/api/video-stream?url=' + encodeURIComponent('https://api.torbox.app/x\r\nSet-Cookie:a=1')));
+  assert.ok([400, 403].includes(crlfVideo.status), `Expected 400/403, got ${crlfVideo.status}`);
+
+  const ssrfSub = await netlifyApiHandler(new Request('https://altyflix.netlify.app/api/subtitles-vtt?url=http://169.254.169.254/latest/meta-data'));
+  assert.ok([400, 403].includes(ssrfSub.status), `Expected 400/403, got ${ssrfSub.status}`);
 });

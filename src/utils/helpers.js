@@ -46,56 +46,16 @@ export const formatRuntime = (minutes) => {
 };
 
 /**
- * Format timestamp to readable time
- * @param {number} seconds - Time in seconds
- * @returns {string} Formatted time (e.g., "1:23:45")
- */
-export const formatTime = (seconds) => {
-    if (!seconds || seconds < 0) return '0:00';
-
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-
-    if (hours > 0) {
-        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${minutes}:${secs.toString().padStart(2, '0')}`;
-};
-
-/**
  * Format year from date string
  * @param {string} dateString - Date string (e.g., "2023-12-01")
  * @returns {string} Year
  */
 export const getYear = (dateString) => {
     if (!dateString) return 'N/A';
-    return new Date(dateString).getFullYear().toString();
-};
-
-/**
- * Debounce function
- * @param {Function} func - Function to debounce
- * @param {number} delay - Delay in milliseconds
- * @returns {Function} Debounced function
- */
-export const debounce = (func, delay) => {
-    let timeoutId;
-    return (...args) => {
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => func(...args), delay);
-    };
-};
-
-/**
- * Truncate text to specified length
- * @param {string} text - Text to truncate
- * @param {number} maxLength - Maximum length
- * @returns {string} Truncated text
- */
-export const truncate = (text, maxLength = 150) => {
-    if (!text || text.length <= maxLength) return text;
-    return text.substring(0, maxLength).trim() + '...';
+    const match = String(dateString).trim().match(/^(\d{4})/);
+    if (match) return match[1];
+    const year = new Date(dateString).getFullYear();
+    return Number.isNaN(year) ? 'N/A' : String(year);
 };
 
 /**
@@ -189,7 +149,19 @@ export const storage = {
 export const getContentType = (item, defaultType = 'movie') => {
     if (!item) return defaultType;
 
-    if (item.media_type === 'movie' || item.type === 'movie') return 'movie';
+    // Known TMDB override (Spider-Noir is a TV series even if mistagged)
+    if (Number(item.contentId || item.id) === 220102) return 'tv';
+
+    // Explicit movie tag takes precedence over legacy history entries that saved season/episode on movies,
+    // unless strong TMDB TV schema fields are present.
+    if (
+        (item.media_type === 'movie' || item.type === 'movie') &&
+        !item.first_air_date &&
+        !item.number_of_seasons &&
+        !item.seasons
+    ) {
+        return 'movie';
+    }
 
     // 1. Structural TV indicators (absolute truth: movies never have seasons or episodes)
     if (

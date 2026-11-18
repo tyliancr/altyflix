@@ -38,7 +38,7 @@ const NotFound = () => {
                 <p className="mx-auto mt-3 max-w-md text-base leading-relaxed text-white/50">{t('notFound.desc')}</p>
                 <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
                     <Button size="lg" onClick={() => navigate('/')}>{t('notFound.back')}</Button>
-                    <Button size="lg" variant="glass" onClick={() => navigate(-1)}>Page précédente</Button>
+                    <Button size="lg" variant="glass" onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}>Page précédente</Button>
                 </div>
             </motion.div>
         </div>

@@ -7,8 +7,8 @@ process.on('unhandledRejection', reason => {
 
 const streamApi = require('./stream-api.cjs');
 const { resolveNativeStream, getDemoVtt } = require('./nativeStreamingEngine.cjs');
-const { resolveStreamsServer, checkStreamStatus, isAllowedUrl } = require('./stream-resolver.cjs');
-const { SECURITY_HEADERS, HttpError, positiveInteger, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter, isAllowedSubtitleUrl, readBoundedBuffer, decodeSubtitleBuffer, cleanSubtitleToVtt, rankOpenSubtitles } = require('./security.cjs');
+const { resolveStreamsServer, checkStreamStatus, normalizeAllowedUrl } = require('./stream-resolver.cjs');
+const { SECURITY_HEADERS, DOCUMENTARY_CATEGORIES, HttpError, positiveInteger, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter, normalizeAllowedSubtitleUrl, readBoundedBuffer, decodeSubtitleBuffer, cleanSubtitleToVtt, rankOpenSubtitles } = require('./security.cjs');
 /**
  * ALTYFLIX Backend Server - Node.js (Built-in HTTP, Zero Dependances External)
  * Proxy sécurisé TMDB, API de lecture et hébergement statique SPA
@@ -81,17 +81,7 @@ const memoryCache = new BoundedCache(250);
 const getCache = key => memoryCache.get(key);
 const setCache = (key, value, ttl) => memoryCache.set(key, value, ttl);
 const allowRequest = createRateLimiter();
-
-const DOCUMENTARY_CATEGORIES = [
-  { id: 'all', name: 'Tous les Documentaires', icon: '🎬' },
-  { id: 'nature', name: 'Nature & Environnement', icon: '🌿' },
-  { id: 'history', name: 'Histoire & Civilisations', icon: '📜' },
-  { id: 'science', name: 'Science & Espace', icon: '🚀' },
-  { id: 'truecrime', name: 'Crime & Enquêtes (True Crime)', icon: '🔍' },
-  { id: 'society', name: 'Société & Géopolitique', icon: '🌍' },
-  { id: 'music', name: 'Musique & Art', icon: '🎨' },
-  { id: 'sports', name: 'Sport & Aventure Extrême', icon: '⚽' }
-];
+const allowRemuxRequest = createRateLimiter(30, 60000);
 
 
 
@@ -143,7 +133,7 @@ function resolveCaseInsensitivePath(targetPath) {
 
     try {
       const items = fs.readdirSync(current);
-      const matched = items.find(item => norm(item) === partNorm);
+      const matched = items.find(item => !item.startsWith('.') && norm(item) === partNorm);
       if (matched) {
         current = path.join(current, matched);
       } else {
@@ -295,35 +285,43 @@ const server = http.createServer(async (req, res) => {
 
   // Stream Proxy Universel avec protection SSRF, support HTTP 206 Range et remux audio AAC sécurisé
   if (pathname === '/api/video-stream') {
-    const targetUrl = query.url;
-    if (!targetUrl || !isAllowedUrl(targetUrl)) {
+    const targetUrl = normalizeAllowedUrl(query.url);
+    if (!targetUrl) {
       return sendJSON(res, 400, { error: 'URL vidéo non autorisée.' });
     }
 
     const wantsAudioRemux = query.audio === 'aac';
+    const clientIp = (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'])
+      ? String(req.headers['x-forwarded-for']).split(',')[0].trim()
+      : (req.socket.remoteAddress || 'local');
 
     // Répondre immédiatement aux requêtes HEAD sans lancer un processus FFmpeg inutile
     if (req.method === 'HEAD' && wantsAudioRemux) {
       res.writeHead(200, {
         'Content-Type': 'video/mp4',
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'private, no-store'
       });
       return res.end();
     }
 
-    const spawnFfmpegRemux = (inputUrl, { copyVideo }) => {
+    const spawnFfmpegRemux = (rawInputUrl, { copyVideo }) => {
+      if (res.destroyed || res.writableEnded) return;
       if (!HAS_FFMPEG) {
         return sendJSON(res, 503, { error: 'Remux audio indisponible sur ce serveur.' });
+      }
+      if (!allowRemuxRequest(clientIp)) {
+        res.setHeader('Retry-After', '60');
+        return sendJSON(res, 429, { error: 'Trop de requêtes de conversion. Réessayez dans un instant.' });
       }
       if (activeFfmpegJobs >= MAX_CONCURRENT_FFMPEG) {
         return sendJSON(res, 503, { error: 'Trop de flux en cours de conversion. Réessayez dans un instant.' });
       }
-      if (!isAllowedUrl(inputUrl)) {
+      const inputUrl = normalizeAllowedUrl(rawInputUrl);
+      if (!inputUrl) {
         return sendJSON(res, 400, { error: 'Hôte vidéo non autorisé.' });
       }
 
-      activeFfmpegJobs++;
       const { spawn } = require('child_process');
       const seekSec = Math.max(0, parseInt(query.t || query.start || '0', 10) || 0);
       const ffmpegArgs = [
@@ -379,15 +377,23 @@ const server = http.createServer(async (req, res) => {
         'pipe:1'
       );
 
-      const ffmpegProc = spawn('ffmpeg', ffmpegArgs, {
-        stdio: ['ignore', 'pipe', 'ignore']
-      });
+      let ffmpegProc;
+      try {
+        ffmpegProc = spawn('ffmpeg', ffmpegArgs, {
+          stdio: ['ignore', 'pipe', 'ignore']
+        });
+      } catch {
+        return sendJSON(res, 502, { error: 'Flux vidéo indisponible.' });
+      }
 
+      activeFfmpegJobs++;
       let cleaned = false;
       let killTimer = null;
+      let maxLifeTimer = null;
       const cleanupProc = () => {
         if (cleaned) return;
         cleaned = true;
+        if (maxLifeTimer) clearTimeout(maxLifeTimer);
         activeFfmpegJobs = Math.max(0, activeFfmpegJobs - 1);
         try {
           if (ffmpegProc.exitCode === null && !ffmpegProc.killed) {
@@ -402,8 +408,16 @@ const server = http.createServer(async (req, res) => {
         } catch {}
       };
 
+      // Durée de vie maximale d'un job FFmpeg (4h) pour éviter tout blocage permanent d'un slot
+      maxLifeTimer = setTimeout(() => {
+        cleanupProc();
+        try { res.destroy(); } catch {}
+      }, 4 * 60 * 60 * 1000);
+      maxLifeTimer.unref?.();
+
       ffmpegProc.on('exit', () => {
         if (killTimer) clearTimeout(killTimer);
+        if (maxLifeTimer) clearTimeout(maxLifeTimer);
         if (!cleaned) {
           cleaned = true;
           activeFfmpegJobs = Math.max(0, activeFfmpegJobs - 1);
@@ -426,18 +440,52 @@ const server = http.createServer(async (req, res) => {
         try { res.destroy(); } catch {}
       });
 
-      res.writeHead(200, {
-        'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-        'Cache-Control': 'no-cache'
+      // Différer writeHead(200) au premier bloc de données FFmpeg pour renvoyer un vrai 502 si FFmpeg échoue au démarrage
+      ffmpegProc.stdout.once('data', (firstChunk) => {
+        if (res.destroyed || res.writableEnded) {
+          cleanupProc();
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'video/mp4',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Cache-Control': 'private, no-store'
+        });
+        res.write(firstChunk);
+        ffmpegProc.stdout.pipe(res);
       });
-      ffmpegProc.stdout.pipe(res);
     };
 
     if (wantsAudioRemux) {
+      // Pré-résoudre et valider chaque redirection en Node (anti-SSRF) avant d'invoquer FFmpeg
+      let resolvedRemuxUrl = targetUrl;
+      try {
+        for (let hop = 0; hop < 4; hop++) {
+          const safeHop = normalizeAllowedUrl(resolvedRemuxUrl);
+          if (!safeHop) return sendJSON(res, 403, { error: 'Hôte de redirection non autorisé.' });
+          const headRes = await fetch(safeHop, {
+            method: 'HEAD',
+            redirect: 'manual',
+            signal: AbortSignal.timeout(8000)
+          });
+          if (headRes.status >= 300 && headRes.status < 400 && headRes.headers.get('location')) {
+            try { await headRes.body?.cancel(); } catch {}
+            resolvedRemuxUrl = new URL(headRes.headers.get('location'), safeHop).toString();
+            continue;
+          }
+          try { await headRes.body?.cancel(); } catch {}
+          resolvedRemuxUrl = safeHop;
+          break;
+        }
+      } catch {
+        // En cas de HEAD non supporté par le CDN, on continue avec l'URL déjà validée par normalizeAllowedUrl
+      }
+      if (!normalizeAllowedUrl(resolvedRemuxUrl)) {
+        return sendJSON(res, 403, { error: 'Hôte vidéo non autorisé.' });
+      }
       console.log(`[Video Stream Proxy] Remux audio instantané (copie vidéo + AC3/DTS -> AAC)...`);
-      spawnFfmpegRemux(targetUrl, { copyVideo: true });
+      spawnFfmpegRemux(resolvedRemuxUrl, { copyVideo: true });
       return;
     }
 
@@ -453,27 +501,44 @@ const server = http.createServer(async (req, res) => {
 
     try {
       // Suivre manuellement les redirections en validant chaque saut (protection SSRF)
+      // Timeout uniquement sur l'acquisition des headers (annulé dès réception pour ne jamais couper la lecture à 15 s)
       let currentUrl = targetUrl;
       let upstreamRes = null;
       for (let hop = 0; hop < 4; hop++) {
-        if (!isAllowedUrl(currentUrl)) {
+        const safeHop = normalizeAllowedUrl(currentUrl);
+        if (!safeHop) {
           return sendJSON(res, 403, { error: 'Hôte de redirection non autorisé.' });
         }
-        upstreamRes = await fetch(currentUrl, {
-          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-          headers: upstreamHeaders,
-          redirect: 'manual',
-          signal: AbortSignal.any([abortCtrl.signal, AbortSignal.timeout(15000)])
-        });
+        const connectTimer = setTimeout(() => { try { abortCtrl.abort(); } catch {} }, 15000);
+        try {
+          upstreamRes = await fetch(safeHop, {
+            method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+            headers: upstreamHeaders,
+            redirect: 'manual',
+            signal: abortCtrl.signal
+          });
+        } finally {
+          clearTimeout(connectTimer);
+        }
         if (upstreamRes.status >= 300 && upstreamRes.status < 400 && upstreamRes.headers.get('location')) {
           try { await upstreamRes.body?.cancel(); } catch {}
-          currentUrl = new URL(upstreamRes.headers.get('location'), currentUrl).toString();
+          currentUrl = new URL(upstreamRes.headers.get('location'), safeHop).toString();
           continue;
         }
+        currentUrl = safeHop;
         break;
       }
 
-      if (!upstreamRes) return sendJSON(res, 502, { error: 'Flux vidéo indisponible.' });
+      if (!upstreamRes || (upstreamRes.status >= 300 && upstreamRes.status < 400)) {
+        try { await upstreamRes?.body?.cancel(); } catch {}
+        return sendJSON(res, 502, { error: 'Flux vidéo indisponible.' });
+      }
+
+      if (upstreamRes.status < 200 || upstreamRes.status >= 300) {
+        try { await upstreamRes.body?.cancel(); } catch {}
+        const safeErrStatus = (upstreamRes.status >= 400 && upstreamRes.status <= 599) ? upstreamRes.status : 502;
+        return sendJSON(res, safeErrStatus, { error: 'Flux vidéo indisponible.' });
+      }
 
       const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
       const contentDisp = (upstreamRes.headers.get('content-disposition') || '').toLowerCase();
@@ -488,6 +553,7 @@ const server = http.createServer(async (req, res) => {
       if (isAvi && req.method !== 'HEAD') {
         console.log(`[Video Stream Proxy] Transcodage dynamique à la volée du flux AVI vers MP4 HTML5...`);
         try { await upstreamRes.body?.cancel(); } catch {}
+        if (abortCtrl.signal.aborted || res.destroyed || res.writableEnded) return;
         abortUpstream();
         spawnFfmpegRemux(finalUrl, { copyVideo: false });
         return;
@@ -498,7 +564,7 @@ const server = http.createServer(async (req, res) => {
         'Accept-Ranges': 'bytes',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-        'Cache-Control': 'public, max-age=3600'
+        'Cache-Control': 'private, no-store'
       };
 
       if (upstreamRes.headers.has('content-length')) {
@@ -541,39 +607,50 @@ const server = http.createServer(async (req, res) => {
 
   // Service de proxy / conversion VTT pour les sous-titres (protégé SSRF + anti Gzip Bomb)
   if (pathname === '/api/subtitles-vtt') {
-    const targetUrl = query.url;
-    if (!targetUrl || !isAllowedSubtitleUrl(targetUrl)) {
+    const targetUrl = normalizeAllowedSubtitleUrl(query.url);
+    if (!targetUrl) {
       return sendJSON(res, 400, { error: 'URL de sous-titres non autorisée.' });
     }
     try {
       let currentUrl = targetUrl;
       let vttRes = null;
       for (let hop = 0; hop < 4; hop++) {
-        if (!isAllowedSubtitleUrl(currentUrl)) {
+        const safeHop = normalizeAllowedSubtitleUrl(currentUrl);
+        if (!safeHop) {
           return sendJSON(res, 403, { error: 'Redirection sous-titres non autorisée.' });
         }
-        vttRes = await fetch(currentUrl, {
+        vttRes = await fetch(safeHop, {
           headers: { 'User-Agent': 'TemporaryUserAgent' },
           redirect: 'manual',
           signal: AbortSignal.timeout(8000)
         });
         if (vttRes.status >= 300 && vttRes.status < 400 && vttRes.headers.get('location')) {
           try { await vttRes.body?.cancel(); } catch {}
-          currentUrl = new URL(vttRes.headers.get('location'), currentUrl).toString();
+          currentUrl = new URL(vttRes.headers.get('location'), safeHop).toString();
           continue;
         }
         break;
       }
-      if (!vttRes || !vttRes.ok) return sendJSON(res, vttRes?.status || 502, { error: 'Erreur sous-titre.' });
+      if (!vttRes || (vttRes.status >= 300 && vttRes.status < 400)) {
+        try { await vttRes?.body?.cancel(); } catch {}
+        return sendJSON(res, 502, { error: 'Trop de redirections pour les sous-titres.' });
+      }
+      if (!vttRes.ok) {
+        const errStatus = (vttRes.status >= 400 && vttRes.status <= 599) ? vttRes.status : 502;
+        return sendJSON(res, errStatus, { error: 'Erreur sous-titre.' });
+      }
       const rawBuf = await readBoundedBuffer(vttRes, 2 * 1024 * 1024);
       let decodedBuf = rawBuf;
-      // Décompression asynchrone bornée à 5 Mo (anti Gzip Bomb)
+      // Décompression asynchrone bornée à 5 Mo (anti Gzip Bomb — jamais renvoyer du binaire brut en 200 OK)
       if (rawBuf.length >= 2 && rawBuf[0] === 0x1f && rawBuf[1] === 0x8b) {
         try {
           const gunzipAsync = require('util').promisify(zlib.gunzip);
           decodedBuf = await gunzipAsync(rawBuf, { maxOutputLength: 5 * 1024 * 1024 });
-        } catch {
-          decodedBuf = rawBuf;
+        } catch (gzErr) {
+          if (gzErr?.code === 'ERR_BUFFER_TOO_LARGE') {
+            throw new HttpError(413, 'Fichier sous-titre trop volumineux après décompression.');
+          }
+          throw new HttpError(502, 'Fichier sous-titre corrompu.');
         }
       }
 
@@ -676,17 +753,18 @@ const server = http.createServer(async (req, res) => {
           const stremPath = safeType === 'tv'
             ? `https://opensubtitles-v3.strem.io/subtitles/series/${imdbId}:${safeSeason}:${safeEpisode}.json`
             : `https://opensubtitles-v3.strem.io/subtitles/movie/${imdbId}.json`;
-          const stremRes = await fetch(stremPath, { signal: AbortSignal.timeout(3500) });
+          const stremRes = await fetch(stremPath, { redirect: 'error', signal: AbortSignal.timeout(3500) });
           if (stremRes.ok) {
             const data = await stremRes.json();
             const list = Array.isArray(data?.subtitles) ? data.subtitles : [];
             list.slice(0, 3).forEach((s, idx) => {
-              if (s.url && isAllowedSubtitleUrl(s.url)) {
+              const safeSubUrl = normalizeAllowedSubtitleUrl(s.url);
+              if (safeSubUrl) {
                 formatted.push({
                   id: `strem-${idx}`,
                   label: s.lang === 'eng' ? (idx === 0 ? 'English' : `English [${idx + 1}]`) : (s.lang || 'Piste ' + (idx + 1)),
                   lang: s.lang || 'en',
-                  url: `/api/subtitles-vtt?url=${encodeURIComponent(s.url)}`
+                  url: `/api/subtitles-vtt?url=${encodeURIComponent(safeSubUrl)}`
                 });
               }
             });
@@ -738,7 +816,9 @@ const server = http.createServer(async (req, res) => {
         userProvider,
         userToken,
         userFrenchioUrl,
-        enableAudioRemux: HAS_FFMPEG
+        enableAudioRemux: HAS_FFMPEG,
+        enableAviTranscode: HAS_FFMPEG,
+        tmdbApiKey: TMDB_API_KEY
       });
       return sendJSON(res, 200, result);
     } catch (err) {
@@ -759,8 +839,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const statusData = await checkStreamStatus(targetUrl);
-      const httpStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
+      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: HAS_FFMPEG });
+      const rawStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
+      const httpStatus = (rawStatus === 200 || (rawStatus >= 400 && rawStatus <= 599)) ? rawStatus : 502;
       return sendJSON(res, httpStatus, statusData);
     } catch (err) {
       console.error('[Stream Poll Endpoint] Error:', err);
@@ -792,7 +873,7 @@ const server = http.createServer(async (req, res) => {
       console.error('[Native Engine] Resolution error:', err);
       return sendJSON(res, 500, {
         success: false,
-        error: 'Erreur interne du moteur de lecture natif : ' + err.message
+        error: 'Erreur interne du moteur de lecture natif.'
       });
     }
   }
@@ -856,7 +937,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Root API info
-  if (pathname === '/api') {
+  if (pathname === '/api' || pathname === '/api/') {
     return sendJSON(res, 200, {
       status: 'online',
       version: '2.0.0',

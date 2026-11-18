@@ -2,6 +2,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { getPersonDetails } from '../services/tmdb';
 import { getPosterUrl, departmentLabel } from '../utils/helpers';
+import { isKidSafe } from '../utils/kidsFilter';
+import { useProfile } from '../contexts/ProfileContext';
 import { Helmet } from 'react-helmet-async';
 import { motion } from 'framer-motion';
 import { useTranslation } from '../hooks/useTranslation';
@@ -17,7 +19,10 @@ const releaseTime = (item) => new Date(item.release_date || item.first_air_date 
 const PersonPage = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const { currentProfile } = useProfile();
+    const isKid = Boolean(currentProfile?.isKid);
     const { t, language } = useTranslation();
+    const goBack = () => (window.history.length > 1 ? navigate(-1) : navigate('/'));
     const [person, setPerson] = useState(null);
     const [loading, setLoading] = useState(true);
     const locale = LOCALE_MAP[language] || 'fr-FR';
@@ -53,6 +58,7 @@ const PersonPage = () => {
         const unique = all.filter(item => {
             const key = `${item.media_type}-${item.id}`;
             if (!item.poster_path || seen.has(key)) return false;
+            if (isKid && !isKidSafe(item)) return false;
             seen.add(key);
             return true;
         });
@@ -61,7 +67,7 @@ const PersonPage = () => {
         else if (sortBy === 'date-desc') filtered.sort((a, b) => releaseTime(b) - releaseTime(a));
         else filtered.sort((a, b) => releaseTime(a) - releaseTime(b));
         return filtered;
-    }, [person, activeTab, sortBy]);
+    }, [person, activeTab, sortBy, isKid]);
 
     if (loading) {
         return (
@@ -83,7 +89,7 @@ const PersonPage = () => {
     if (!person) {
         return (
             <div className="grid min-h-screen place-items-center bg-[#060608] px-6">
-                <EmptyState title={t('person.notFound')} action={<Button onClick={() => navigate(-1)}>{t('person.back')}</Button>} />
+                <EmptyState title={t('person.notFound')} action={<Button onClick={goBack}>{t('person.back')}</Button>} />
             </div>
         );
     }
@@ -106,7 +112,7 @@ const PersonPage = () => {
             <div className="mx-auto max-w-6xl">
                 <button
                     type="button"
-                    onClick={() => navigate(-1)}
+                    onClick={goBack}
                     className="mb-8 flex items-center gap-2 text-sm font-medium text-white/50 transition-colors hover:text-white"
                 >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -126,7 +132,7 @@ const PersonPage = () => {
                             {person.profile_path ? (
                                 <img src={getPosterUrl(person.profile_path, 'h632')} alt={person.name} className="h-full w-full object-cover" />
                             ) : (
-                                <span className="grid h-full w-full place-items-center font-display text-6xl font-bold text-white/20">{person.name.charAt(0)}</span>
+                                <span className="grid h-full w-full place-items-center font-display text-6xl font-bold text-white/20">{(person.name || '?').charAt(0)}</span>
                             )}
                         </div>
                     </div>

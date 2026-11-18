@@ -50,25 +50,36 @@ try { Step 'Package' { & "$Jdk\bin\jar.exe" uf unsigned.apk classes.dex } } fina
 Step 'Align' { & "$bt\zipalign.exe" -f -p 4 "$out\unsigned.apk" "$out\aligned.apk" }
 
 $ks = Join-Path $here 'keystore\altyflix-tv.jks'
+$pwFile = Join-Path $here 'keystore\password.txt'
 if (-not (Test-Path $ks)) {
     New-Item -ItemType Directory -Force (Split-Path $ks) | Out-Null
-    $pass = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
-    Set-Content -Encoding ascii (Join-Path $here 'keystore\password.txt') $pass
-    Step 'Create signing key' {
-        & $keytool -genkeypair -keystore $ks -storepass $pass -keypass $pass -alias altyflix `
-            -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=ALTYFLIX TV' 2>$null
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $bytes = New-Object byte[] 24
+    $rng.GetBytes($bytes)
+    $rng.Dispose()
+    $pass = [Convert]::ToBase64String($bytes) -replace '[^A-Za-z0-9]', 'A'
+    Set-Content -Encoding ascii $pwFile $pass
+    $env:ALTYFLIX_KS_PASS = $pass
+    try {
+        Step 'Create signing key' {
+            & $keytool -genkeypair -keystore $ks -storepass:env ALTYFLIX_KS_PASS -keypass:env ALTYFLIX_KS_PASS -alias altyflix `
+                -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=ALTYFLIX TV' 2>$null
+        }
+    } finally { Remove-Item Env:ALTYFLIX_KS_PASS -ErrorAction SilentlyContinue }
+}
+$env:ALTYFLIX_KS_PASS = (Get-Content $pwFile).Trim()
+try {
+    Step 'Sign' {
+        & "$bt\apksigner.bat" sign --ks $ks --ks-pass 'env:ALTYFLIX_KS_PASS' --key-pass 'env:ALTYFLIX_KS_PASS' `
+            --out "$out\altyflix-tv.apk" "$out\aligned.apk"
     }
-}
-$pass = (Get-Content (Join-Path $here 'keystore\password.txt')).Trim()
-Step 'Sign' {
-    & "$bt\apksigner.bat" sign --ks $ks --ks-pass "pass:$pass" --key-pass "pass:$pass" `
-        --out "$out\altyflix-tv.apk" "$out\aligned.apk"
-}
+} finally { Remove-Item Env:ALTYFLIX_KS_PASS -ErrorAction SilentlyContinue }
 Write-Host "APK: $out\altyflix-tv.apk"
 
 if ($Install) {
     $adb = Join-Path $Sdk 'platform-tools\adb.exe'
     if (-not (Test-Path $adb)) { $adb = 'adb' }
-    Step 'Connect' { & $adb connect "${Install}:5555" }
-    Step 'Install' { & $adb -s "${Install}:5555" install -r "$out\altyflix-tv.apk" }
+    $target = if ($Install -match ':\d+$') { $Install } else { "${Install}:5555" }
+    Step 'Connect' { & $adb connect $target }
+    Step 'Install' { & $adb -s $target install -r "$out\altyflix-tv.apk" }
 }

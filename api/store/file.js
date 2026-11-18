@@ -39,8 +39,11 @@ export function createFileStore(config) {
     async setProgress(uid, progressKey, value) {
       update(data => { user(data, uid).progress[progressKey] = { ...value, updatedAt: Date.now() }; });
     },
-    async listProgress(uid, limit) {
-      return Object.values(read().users[uid]?.progress || {}).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit);
+    async listProgress(uid, limit, profileId) {
+      return Object.values(read().users[uid]?.progress || {})
+        .filter(item => !profileId || item.profileId === profileId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, limit);
     },
     async getPreferences(uid, profileId) {
       return read().users[uid]?.preferences[profileId] || null;

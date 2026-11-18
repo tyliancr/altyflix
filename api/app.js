@@ -23,8 +23,9 @@ export function createApp({ config, store, verifyIdToken, devUid, serveMedia = f
   app.use(cors({
     // Sans en-tête Origin (curl, même origine), CORS ne s'applique pas ; sinon l'origine doit être dans la liste.
     origin: (origin, callback) => callback(null, !origin || config.allowedOrigins.includes(origin)),
-    methods: ['GET', 'PUT', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type'],
+    methods: ['GET', 'HEAD', 'PUT', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Range'],
+    exposedHeaders: ['Content-Length', 'Content-Range'],
     maxAge: 600,
   }));
 
@@ -50,8 +51,7 @@ export function createApp({ config, store, verifyIdToken, devUid, serveMedia = f
   });
 
   const routes = createRoutes({ store, config, auth: requireAuth({ verifyIdToken, devUid }) });
-  // Netlify transmet le chemin d'origine (/api/...) ou celui de la fonction selon le mode d'appel.
-  app.use(['/api', '/.netlify/functions/video'], routes);
+  app.use('/api', routes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

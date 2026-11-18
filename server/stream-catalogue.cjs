@@ -4,6 +4,7 @@ const ids=new Map();
 const cursors={movie:{page:1},tv:{page:1}};
 let nextCheck=0, syncTask, blockedUntil=0;
 function store(k,data,ttl,id){
+  if(cache.has(k)) evict(k);
   if(cache.size>=400) evict(cache.keys().next().value);
   cache.set(k,{data,until:Date.now()+ttl,id});
   if(id){
@@ -40,7 +41,10 @@ async function sync(key){
 }
 async function catalogue(endpoint,params,key){
   const url=tmdbUrl(endpoint,params,key);
-  const k=endpoint+'?'+new URLSearchParams(params);
+  const keyParams=new URLSearchParams(url.searchParams);
+  keyParams.delete('api_key');
+  keyParams.sort();
+  const k=url.pathname+'?'+keyParams.toString();
   const hit=cache.get(k);if(hit?.until>Date.now())return hit.data;
   if(loading.has(k))return loading.get(k);
   if(loading.size>=32)throw new HttpError(429,'Catalogue occupé.');

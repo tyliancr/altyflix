@@ -15,7 +15,7 @@ export function srtToVtt(input, { hls = false } = {}) {
   text = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n').trim();
 
   const cues = [];
-  for (const block of text.split(/\n{2,}/)) {
+  for (const block of text.split(/\n[ \t]*\n+/)) {
     const lines = block.split('\n');
     const timeIndex = lines.findIndex(line => line.includes('-->'));
     if (timeIndex === -1) continue;

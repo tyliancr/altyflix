@@ -362,13 +362,18 @@ const ProfileSelector = () => {
 
     const handleSave = async () => {
         if (!profileName.trim() || saving) return;
+        const cleanPin = String(pinCode || '').replace(/\D/g, '');
+        if (cleanPin.length > 0 && cleanPin.length < 4) {
+            setSaveError('Le code PIN doit contenir exactement 4 chiffres (ou être laissé vide).');
+            return;
+        }
         setSaveError('');
         setSaving(true);
         const data = {
             name: profileName.trim(),
             avatar: selectedAvatar,
             isKid,
-            pin: pinCode.length === 4 ? pinCode : null,
+            pin: cleanPin.length === 4 ? cleanPin : null,
         };
         const result = editingProfile
             ? await updateProfile(editingProfile.id, data)
@@ -388,9 +393,12 @@ const ProfileSelector = () => {
         if (enterTimerRef.current) clearTimeout(enterTimerRef.current);
         enterTimerRef.current = setTimeout(() => {
             switchProfile(profile);
-            const returnUrl = localStorage.getItem('returnUrl');
+            let returnUrl = null;
+            try {
+                returnUrl = localStorage.getItem('returnUrl');
+                if (returnUrl) localStorage.removeItem('returnUrl');
+            } catch { /* storage blocked */ }
             if (returnUrl) {
-                localStorage.removeItem('returnUrl');
                 navigate(sanitizeReturnUrl(returnUrl, '/'));
             } else {
                 navigate('/');

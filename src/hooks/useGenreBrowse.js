@@ -58,8 +58,12 @@ export default function useGenreBrowse({ genres, loadShelves, fetchGenrePage, ge
                     if (!active) return;
                     setShelves(firstShelves);
                     setLoading(false);
-                    const more = (await rest).filter(s => s.content?.length);
-                    if (active) setShelves([...firstShelves, ...more]);
+                    try {
+                        const more = (await rest).filter(s => s.content?.length);
+                        if (active) setShelves([...firstShelves, ...more]);
+                    } catch (restError) {
+                        console.warn('Error loading secondary shelves:', restError);
+                    }
                 }
             } catch (error) {
                 if (!active) return;

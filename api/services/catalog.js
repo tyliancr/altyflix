@@ -46,7 +46,7 @@ export function createCatalog({ store, config }) {
   });
 
   async function profileProgress(uid, profileId) {
-    return (await store.listProgress(uid, 100)).filter(item => item.profileId === profileId);
+    return (await store.listProgress(uid, 100, profileId)).filter(item => item.profileId === profileId);
   }
 
   async function nextEpisode(titleId, season, episode) {
@@ -115,7 +115,7 @@ export function createCatalog({ store, config }) {
     const isSeries = title.type === 'series';
     if (isSeries && body.season === undefined) throw new ApiError(400, 'invalid_request', 'season et episode sont requis pour une série.');
     const target = isSeries ? await store.getEpisode(title.id, body.season, body.episode) : title;
-    if (!target) throw notFound('Épisode introuvable.');
+    if (!target || target.published === false) throw notFound('Épisode introuvable.');
     const duration = target.media?.duration || body.duration;
     const position = Math.min(body.position, duration);
     const data = {

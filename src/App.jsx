@@ -21,6 +21,11 @@ class ErrorBoundary extends Component {
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
   componentDidCatch(error, info) {
     console.error('[ALTYFLIX] Erreur page :', error, info);
   }
@@ -160,8 +165,9 @@ const KidRestrictedRoute = ({ children }) => {
 
 // App Routes Component — Stable layout without flickering
 const AppRoutes = () => {
+  const location = useLocation();
   return (
-    <ErrorBoundary>
+    <ErrorBoundary resetKey={location.pathname}>
       <Suspense fallback={<div className="min-h-screen bg-[#08080C]" />}>
         <Routes>
           {/* Public Routes */}

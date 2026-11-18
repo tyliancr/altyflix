@@ -177,27 +177,55 @@ export default function NetflixPlayer({
     const updateSubtitleLinesRef = useRef(() => {});
 
     // Récupération des détails (série / épisode / film) incluant la durée réelle TMDB pour la barre de lecture
+    const nextEpTargetRef = useRef(null);
+    const skipNextCleanupSaveRef = useRef(false);
+    const seekingTranscodeRef = useRef(false);
+
     useEffect(() => {
         let live = true;
         setResolvedDurationSec(0);
+        nextEpTargetRef.current = null;
         if (isTv && id) {
+            let loadedSeries = null;
+            let loadedSeason = null;
+            const updateNextTarget = () => {
+                if (!live) return;
+                const eps = Array.isArray(loadedSeason?.episodes) ? [...loadedSeason.episodes].sort((a, b) => a.episode_number - b.episode_number) : [];
+                const nextInSeason = eps.find(e => e.episode_number > episode);
+                if (nextInSeason) {
+                    nextEpTargetRef.current = { season, episode: nextInSeason.episode_number };
+                    setNextEpAvailable(true);
+                    return;
+                }
+                const seasonsList = Array.isArray(loadedSeries?.seasons) ? [...loadedSeries.seasons].filter(s => s.season_number > 0).sort((a, b) => a.season_number - b.season_number) : [];
+                const nextSeason = seasonsList.find(s => s.season_number > season && (s.episode_count ?? 1) > 0);
+                if (nextSeason) {
+                    nextEpTargetRef.current = { season: nextSeason.season_number, episode: 1 };
+                    setNextEpAvailable(true);
+                } else {
+                    nextEpTargetRef.current = null;
+                    setNextEpAvailable(false);
+                }
+            };
             getSeriesDetails(id).then(d => {
                 if (!live) return;
+                loadedSeries = d;
                 setTvDetails(d);
                 const fallbackEpDur = Number(d?.episode_run_time?.[0]) * 60 || 0;
                 if (fallbackEpDur > 60) {
                     setResolvedDurationSec(prev => (prev > 60 ? prev : fallbackEpDur));
                 }
+                updateNextTarget();
             }).catch(() => {});
             getSeasonDetails(id, season).then(data => {
                 if (!live) return;
+                loadedSeason = data;
                 const ep = data?.episodes?.find(e => e.episode_number === episode);
                 setCurrentEpTitle(ep?.name || '');
                 setCurrentEpOverview(ep?.overview || '');
                 const epDur = Number(ep?.runtime) * 60 || 0;
                 if (epDur > 60) setResolvedDurationSec(epDur);
-                const hasNext = data?.episodes?.some(e => e.episode_number > episode);
-                setNextEpAvailable(hasNext);
+                updateNextTarget();
             }).catch(() => {});
         } else if (!isTv && id) {
             const initialMovieDur = Number(contentRef.current?.runtime) * 60 || 0;
@@ -508,9 +536,11 @@ export default function NetflixPlayer({
         };
         const onPause = () => {
             setIsPlaying(false);
-            // En pause, plus rien ne charge : on retire l'indicateur (il pouvait rester bloqué)
-            setIsBuffering(false);
-            if (!pendingResumeSeek) saveForThisEpisode();
+            // Ne pas effacer le spinner si la pause vient d'un seek transcodé en cours de chargement
+            if (!seekingTranscodeRef.current) {
+                setIsBuffering(false);
+            }
+            if (!pendingResumeSeek && !seekingTranscodeRef.current) saveForThisEpisode();
         };
 
         const onTimeUpdate = () => {
@@ -563,7 +593,9 @@ export default function NetflixPlayer({
             const desiredVolume = volumeRef.current ?? 1;
             video.muted = desiredMuted;
             video.volume = desiredVolume;
-            video.play().catch(() => {
+            seekingTranscodeRef.current = false;
+            video.play().catch((err) => {
+                if (err?.name !== 'NotAllowedError') return;
                 video.muted = true;
                 setIsAutoplayMuted(true);
                 setIsMuted(true);
@@ -578,6 +610,7 @@ export default function NetflixPlayer({
 
         const onWaiting = () => setIsBuffering(true);
         const onPlaying = () => {
+            seekingTranscodeRef.current = false;
             setIsBuffering(false);
             if (!hasInitialSaved && !pendingResumeSeek) {
                 hasInitialSaved = true;
@@ -585,6 +618,8 @@ export default function NetflixPlayer({
             }
         };
         const onVideoError = () => {
+            // Ignorer MEDIA_ERR_ABORTED (code 1, ex. changement rapide de seek transcodé)
+            if (video.error?.code === 1) return;
             console.warn('[Altyflix Player] Erreur de lecture vidéo native :', video.error);
             handleStreamErrorRef.current?.();
         };
@@ -609,7 +644,8 @@ export default function NetflixPlayer({
         video.addEventListener('seeked', onSeeked);
 
         return () => {
-            if (!pendingResumeSeek) saveForThisEpisode();
+            if (!pendingResumeSeek && !skipNextCleanupSaveRef.current) saveForThisEpisode();
+            skipNextCleanupSaveRef.current = false;
             loadedUrlRef.current = null;
             window.removeEventListener('beforeunload', onBeforeUnload);
             video.removeEventListener('play', onPlay);
@@ -634,6 +670,8 @@ export default function NetflixPlayer({
     // Réinitialisation propre lors d'un changement d'épisode (sauvegarde l'ancien, purge flux & sous-titres)
     const resetEpisodeState = useCallback(() => {
         saveCurrentProgress();
+        skipNextCleanupSaveRef.current = true;
+        resolvedKeyRef.current = '';
         currentTimeRef.current = 0;
         transcodeOffsetRef.current = 0;
         loadedUrlRef.current = null;
@@ -652,15 +690,21 @@ export default function NetflixPlayer({
         setStreamState('resolving');
     }, [saveCurrentProgress]);
 
-    // Passage à l'épisode suivant
+    // Passage à l'épisode suivant (gère aussi les fins de saison → Saison+1 Épisode 1)
     const handleNextEpisode = useCallback(() => {
         if (onNext) {
             saveCurrentProgress();
             onNext();
             return;
         }
+        const target = nextEpTargetRef.current;
         resetEpisodeState();
-        setEpisode(ep => ep + 1);
+        if (target) {
+            setSeason(target.season);
+            setEpisode(target.episode);
+        } else {
+            setEpisode(ep => ep + 1);
+        }
     }, [onNext, saveCurrentProgress, resetEpisodeState]);
 
     // Affiche les contrôles puis les masque après quelques secondes de lecture (style Netflix).
@@ -766,6 +810,7 @@ export default function NetflixPlayer({
                 seekUrl = `${base}${base.includes('?') ? '&' : '?'}t=${seekSec}`;
             }
 
+            seekingTranscodeRef.current = true;
             transcodeOffsetRef.current = seekSec;
             setCurrentTime(target);
             setIsBuffering(true);
@@ -942,6 +987,8 @@ export default function NetflixPlayer({
         if (video) {
             try { video.pause(); } catch { /* ignore */ }
         }
+        saveCurrentProgress();
+        skipNextCleanupSaveRef.current = true;
         loadedUrlRef.current = null;
         transcodeOffsetRef.current = 0;
         setActiveStream(st);
@@ -1059,14 +1106,12 @@ export default function NetflixPlayer({
     }, [handleSelectSubtitle]);
 
     const toggleSubtitlesAlwaysOn = useCallback(() => {
-        setSubtitlesAlwaysOn(prev => {
-            const next = !prev;
-            try { localStorage.setItem(subsPrefKey, next ? 'true' : 'false'); } catch { /* stockage indisponible */ }
-            if (currentProfile?.id && updateProfile) {
-                updateProfile(currentProfile.id, { subtitlesAlwaysOn: next });
-            }
-            return next;
-        });
+        const next = !subtitlesAlwaysOnRef.current;
+        setSubtitlesAlwaysOn(next);
+        try { localStorage.setItem(subsPrefKey, next ? 'true' : 'false'); } catch { /* stockage indisponible */ }
+        if (currentProfile?.id && updateProfile) {
+            updateProfile(currentProfile.id, { subtitlesAlwaysOn: next });
+        }
     }, [currentProfile?.id, updateProfile, subsPrefKey]);
 
     // Chargement automatique des sous-titres disponibles (classés selon la release/FPS de la vidéo active)
@@ -1252,17 +1297,18 @@ export default function NetflixPlayer({
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, handleMouseMove, closePanel]);
 
-    // Fin de l'épisode : enchaîne automatiquement sur le suivant
+    // Fin de l'épisode : enchaîne automatiquement sur le suivant (si autoplayNext activé)
+    const autoplayNextEnabled = currentProfile?.autoplayNext !== false;
     useEffect(() => {
         const video = videoRef.current;
         if (!video) return undefined;
         const onEnded = () => {
-            if (isTv && nextEpAvailable) handleNextEpisode();
+            if (isTv && nextEpAvailable && autoplayNextEnabled) handleNextEpisode();
             else setControlsVisible(true);
         };
         video.addEventListener('ended', onEnded);
         return () => video.removeEventListener('ended', onEnded);
-    }, [isTv, nextEpAvailable, handleNextEpisode]);
+    }, [isTv, nextEpAvailable, autoplayNextEnabled, handleNextEpisode]);
 
     // Changement d'épisode : sauvegarde l'ancien puis repart proprement de zéro
     const goToEpisode = useCallback((s, e) => {

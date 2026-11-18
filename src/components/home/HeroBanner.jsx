@@ -6,6 +6,7 @@ import tmdb from '../../services/tmdb';
 import { motion, AnimatePresence } from 'framer-motion';
 import AltyflixLogo from '../common/AltyflixLogo';
 import SmartImage from '../common/SmartImage';
+import { TrailerModal } from '../ui/Primitives';
 
 const GENRE_NAMES = {
     28: 'Action', 12: 'Aventure', 16: 'Animation', 35: 'Comédie', 80: 'Crime',
@@ -50,15 +51,17 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
 
     const paused = hovered || showTrailer;
 
-    // Reset index when movies list changes
+    // Reset index and slide timer when movies list changes
+    const remainingMs = useRef(SLIDE_DURATION_MS);
+    const timedIndex = useRef(-1);
     useEffect(() => {
         setActiveIndex(0);
+        timedIndex.current = -1;
+        remainingMs.current = SLIDE_DURATION_MS;
     }, [propMovies, propMovie]);
 
     // Auto-advance. Pausing keeps the time already elapsed, so the timer stays
     // in step with the progress indicator when the hero is resumed.
-    const remainingMs = useRef(SLIDE_DURATION_MS);
-    const timedIndex = useRef(-1);
     useEffect(() => {
         if (timedIndex.current !== activeIndex) {
             timedIndex.current = activeIndex;
@@ -160,6 +163,8 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
     }
 
     const movieId = idOf(movie);
+    const effectiveTv = detailedMovie ? isTvItem(detailedMovie) : isTv;
+    const effectiveType = effectiveTv ? 'tv' : 'movie';
     const title = movie.title || movie.name || movie.original_title || movie.original_name;
     const description = movie.overview;
     const logo = logos[movieId];
@@ -168,7 +173,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
     const genres = detailedMovie?.genres?.slice(0, 3) ||
         (movie.genre_ids?.slice(0, 3).map(id => ({ id, name: GENRE_NAMES[id] })).filter(g => g.name)) || [];
     const year = (movie.release_date || movie.first_air_date)?.substring(0, 4);
-    const length = isTv
+    const length = effectiveTv
         ? (detailedMovie?.number_of_seasons ? `${detailedMovie.number_of_seasons} saison${detailedMovie.number_of_seasons > 1 ? 's' : ''}` : null)
         : (detailedMovie?.runtime ? formatRuntime(detailedMovie.runtime) : null);
     const facts = [year, length, ...genres.map(g => g.name)].filter(Boolean);
@@ -239,7 +244,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                         <div className="inline-flex items-center gap-2">
                             <AltyflixLogo size={18} />
                             <span className="text-[11px] sm:text-xs font-black uppercase tracking-[0.26em] text-white/95">
-                                {isTv ? 'SÉRIE' : 'FILM'}
+                                {effectiveTv ? 'SÉRIE' : 'FILM'}
                             </span>
                         </div>
                         {rankLabel && movies.length > 1 && (
@@ -317,7 +322,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                         <motion.button
                             whileHover={{ scale: 1.03 }}
                             whileTap={{ scale: 0.97 }}
-                            onClick={() => play(movie)}
+                            onClick={() => play({ ...movie, media_type: effectiveType })}
                             className="flex items-center justify-center gap-2.5 bg-white text-black pl-5 pr-7 sm:pl-6 sm:pr-8 h-12 sm:h-[52px] rounded-xl text-base sm:text-lg font-bold hover:bg-white/85 transition-colors duration-200 shadow-[0_10px_40px_rgba(0,0,0,0.45)]"
                         >
                             <svg className="w-6 h-6 sm:w-7 sm:h-7 fill-current flex-shrink-0" viewBox="0 0 24 24">
@@ -329,7 +334,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                         <motion.button
                             whileHover={{ scale: 1.03 }}
                             whileTap={{ scale: 0.97 }}
-                            onClick={() => navigate(`/${isTv ? 'tv' : 'movie'}/${movieId}`)}
+                            onClick={() => navigate(`/${effectiveType}/${movieId}`)}
                             className="flex items-center justify-center gap-2.5 bg-white/[0.14] hover:bg-white/[0.22] backdrop-blur-xl border border-white/15 text-white px-5 sm:px-7 h-12 sm:h-[52px] rounded-xl text-base sm:text-lg font-semibold transition-colors duration-200"
                         >
                             <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -377,7 +382,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                                 <span className={`block h-[3px] rounded-full overflow-hidden transition-all duration-500 ${isActive ? 'w-10 bg-white/25' : 'w-4 bg-white/30 group-hover:bg-white/60'}`}>
                                     {isActive && (
                                         <span
-                                            key={idx}
+                                            key={`${movieId}-${idx}`}
                                             className="block h-full w-full bg-white origin-left hero-progress"
                                             style={{ animationDuration: `${SLIDE_DURATION_MS}ms`, animationPlayState: paused ? 'paused' : 'running' }}
                                         />
@@ -390,45 +395,10 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
             )}
 
             {/* Trailer Modal */}
-            <AnimatePresence>
-                {showTrailer && trailerKey && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[500] flex items-center justify-center bg-black/90 backdrop-blur-sm"
-                        onClick={() => setShowTrailer(false)}
-                    >
-                        <motion.div
-                            initial={{ scale: 0.94, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.94, opacity: 0 }}
-                            transition={{ type: 'spring', damping: 26, stiffness: 260 }}
-                            className="relative w-full max-w-5xl aspect-video mx-4 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_40px_100px_rgba(0,0,0,0.85)]"
-                            onClick={e => e.stopPropagation()}
-                        >
-                            <iframe
-                                src={`https://www.youtube-nocookie.com/embed/${trailerKey}?autoplay=1&modestbranding=1&rel=0`}
-                                title="Bande-annonce"
-                                className="w-full h-full"
-                                frameBorder="0"
-                                allow="autoplay; encrypted-media; fullscreen"
-                                allowFullScreen
-                                referrerPolicy="strict-origin-when-cross-origin"
-                            />
-                            <button
-                                onClick={() => setShowTrailer(false)}
-                                aria-label="Fermer"
-                                className="absolute top-3 right-3 w-10 h-10 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/80 transition-all"
-                            >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            <TrailerModal
+                videoKey={showTrailer ? trailerKey : null}
+                onClose={() => setShowTrailer(false)}
+            />
         </div>
     );
 };

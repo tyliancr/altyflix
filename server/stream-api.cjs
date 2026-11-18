@@ -39,7 +39,11 @@ async function progress(method,params,body,auth){
   const r=await fetch(url,options);
   if(r.status===404&&method==='GET')return {position:0,duration:null};
   if(!r.ok)throw new HttpError([401,403].includes(r.status)?r.status:502,'Progression indisponible.');
-  const f=(await r.json()).fields;return {position:Number(f.position.doubleValue??f.position.integerValue),duration:Number(f.duration.doubleValue??f.duration.integerValue)};
+  const f=(await r.json())?.fields;
+  if(!f?.position)return {position:0,duration:null};
+  const pos=Number(f.position.doubleValue??f.position.integerValue??0);
+  const dur=f.duration?Number(f.duration.doubleValue??f.duration.integerValue):null;
+  return {position:Number.isFinite(pos)?pos:0,duration:Number.isFinite(dur)?dur:null};
 }
 async function handle({path,method='GET',params={},auth,body=''}){
   if(path==='/api/streams'){

@@ -55,10 +55,15 @@ const PinModal = ({ isOpen, onClose, onSubmit, profileName }) => {
         const digits = raw.replace(/\D/g, '');
         if (raw && !digits) return;
 
-        // Pasting or autofill can deliver several digits at once.
+        // Pasting or autofill can deliver several digits at once; typing into an already-filled box replaces it.
         const next = [...pin];
-        if (digits.length > 1) {
-            digits.slice(0, 4 - index).split('').forEach((d, i) => { next[index + i] = d; });
+        let singleReplace = false;
+        if (pin[index] && digits.length === 2) {
+            next[index] = digits[0] === pin[index] ? digits[1] : digits[0];
+            singleReplace = true;
+        } else if (digits.length > 1) {
+            const pasted = digits.length > 4 && pin[index] ? digits.replace(pin[index], '') : digits;
+            pasted.slice(0, 4 - index).split('').forEach((d, i) => { next[index + i] = d; });
         } else {
             next[index] = digits;
         }
@@ -67,6 +72,7 @@ const PinModal = ({ isOpen, onClose, onSubmit, profileName }) => {
 
         const filled = next.findIndex(d => !d);
         if (filled === -1) submit(next.join(''));
+        else if (singleReplace) inputRefs.current[Math.min(index + 1, 3)]?.focus();
         else if (digits) inputRefs.current[Math.min(filled, 3)]?.focus();
     };
 

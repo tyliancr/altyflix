@@ -9,7 +9,6 @@ const withTime = data => (data ? { ...data, updatedAt: millis(data.updatedAt) } 
 /** Stockage Firestore (production). Schéma détaillé dans docs/VIDEO.md. */
 export function createFirestoreStore(config) {
   const db = adminDb(config);
-  db.settings({ ignoreUndefinedProperties: true });
   const user = uid => db.collection('users').doc(uid);
 
   return {
@@ -34,8 +33,10 @@ export function createFirestoreStore(config) {
     async setProgress(uid, key, data) {
       await user(uid).collection('progress').doc(key).set({ ...data, updatedAt: FieldValue.serverTimestamp() });
     },
-    async listProgress(uid, limit) {
-      const snap = await user(uid).collection('progress').orderBy('updatedAt', 'desc').limit(limit).get();
+    async listProgress(uid, limit, profileId) {
+      let query = user(uid).collection('progress');
+      if (profileId) query = query.where('profileId', '==', profileId);
+      const snap = await query.orderBy('updatedAt', 'desc').limit(limit).get();
       return snap.docs.map(doc => withTime(doc.data()));
     },
     async getPreferences(uid, profileId) {

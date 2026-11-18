@@ -194,29 +194,37 @@ const DetailPage = () => {
 
         setIsSubmittingReview(true);
         const contentId = content.id || content.contentId;
-
-        const result = await addOrUpdateReview(contentId, currentProfile, currentUser.uid, reviewRating, reviewText.trim());
-        if (result.success) {
-            const fetchedReviews = await getReviewsByContent(contentId);
-            setReviews(fetchedReviews);
-            setUserReview(fetchedReviews.find(r => r.profileId === currentProfile.id));
-        } else {
+        try {
+            const result = await addOrUpdateReview(contentId, currentProfile, currentUser.uid, reviewRating, reviewText.trim());
+            if (result?.success) {
+                const fetchedReviews = await getReviewsByContent(contentId);
+                setReviews(fetchedReviews);
+                setUserReview(fetchedReviews.find(r => r.profileId === currentProfile.id));
+            } else {
+                addToast(result?.error || "Erreur lors de l'enregistrement de l'avis.", 'error');
+            }
+        } catch {
             addToast("Erreur lors de l'enregistrement de l'avis.", 'error');
+        } finally {
+            setIsSubmittingReview(false);
         }
-        setIsSubmittingReview(false);
     };
 
     const handleDeleteReview = async () => {
         if (!currentUser || !currentProfile) return;
 
         const contentId = content.id || content.contentId;
-        const result = await deleteReview(contentId, currentProfile.id);
-        if (result.success) {
-            setReviewText('');
-            setReviewRating(0);
-            setUserReview(null);
-            setReviews(await getReviewsByContent(contentId));
-        } else {
+        try {
+            const result = await deleteReview(contentId, currentProfile.id);
+            if (result?.success) {
+                setReviewText('');
+                setReviewRating(0);
+                setUserReview(null);
+                setReviews(await getReviewsByContent(contentId));
+            } else {
+                addToast(result?.error || "Impossible de supprimer l'avis.", 'error');
+            }
+        } catch {
             addToast("Impossible de supprimer l'avis.", 'error');
         }
     };
@@ -276,10 +284,14 @@ const DetailPage = () => {
         ? content.recommendations.results
         : content.similar?.results || []).filter(i => i.poster_path).slice(0, 14);
 
-    const historyItem = watchHistory.find(h => String(h.contentId || h.id) === resolvedContentId);
+    const historyItem = watchHistory.find(h => {
+        if (String(h.contentId || h.id) !== resolvedContentId) return false;
+        const hType = h.media_type || h.type;
+        return !hType || hType === (isTV ? 'tv' : 'movie');
+    });
     const watchProgress = historyItem?.progress || 0;
     const isWatched = watchProgress >= 90;
-    const hasProgress = watchProgress > 5 && watchProgress < 90;
+    const hasProgress = watchProgress > 0 && watchProgress < 88;
     const resumesHere = hasProgress && (!isTV || selectedSeason === resumeInfo.season);
     const inList = isInMyList(content);
     const backdropPath = content.backdrop_path || content.poster_path;

@@ -152,3 +152,46 @@ test('Debrid Stream Resolver: Support Cloud TorBox (hôte CDN autorisé et flux 
   assert.equal(curated.activeStream.qualityLabel, '1080p FHD · VF');
   assert.ok(curated.activeStream.url.startsWith('/api/video-stream?url='));
 });
+
+test('Debrid Stream Resolver: regressions DD+, HDR10+DV cache, CRLF et titres avec "Failed"', () => {
+  // 1. DD+ (E-AC-3) doit declencher hasUnsupportedAudio -> needsTranscode
+  const ddpStream = {
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Film.2024.FRENCH.1080p.WEB.DD+5.1.H264.mkv\n👤 10 💾 3.2 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/hash_ddp/film.mkv'
+  };
+  const ddpDetails = parseStreamDetails(ddpStream);
+  assert.equal(ddpDetails.hasUnsupportedAudio, true);
+  assert.equal(ddpDetails.isWebAudioSafe, false);
+
+  // 2. [TB download] avec HDR10+DV ne doit JAMAIS etre marque isCached=true
+  const hdrDlStream = {
+    name: '[TB download] Torrentio\n4k',
+    title: 'Film.2024.2160p.HDR10+DV.DD+5.1.mkv\n👤 5 💾 12.0 GB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/hash_hdr/film.mkv'
+  };
+  const hdrDetails = parseStreamDetails(hdrDlStream);
+  assert.equal(hdrDetails.isCached, false);
+  assert.equal(hdrDetails.isDownloading, true);
+
+  // 3. Les caracteres de controle / CRLF dans une URL sont rejetes
+  assert.equal(isAllowedUrl('https://api.torbox.app/v1/file\r\nSet-Cookie:a=1'), false);
+  assert.equal(isAllowedUrl('https://api.torbox.app/v1/file\nX-Inject:1'), false);
+
+  // 4. Un titre legitime contenant "Failed" ou "Invalid" n'est pas un clip d'erreur Torrentio
+  assert.equal(isTorrentioErrorStream({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'How.I.Failed.My.Exam.2023.1080p.FRENCH.mp4',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/hash_ok/movie.mp4'
+  }), false);
+
+  // 5. En mode serverless (enableAviTranscode: false), un flux AVI n'est pas reecrit en /api/video-stream
+  const aviServerless = {
+    name: '[TB+] Torrentio\n1080p',
+    title: 'OldMovie.2003.FRENCH.XviD.avi\n👤 4 💾 700 MB',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/hash_avi2/movie.avi'
+  };
+  const serverlessCurated = curateStreams([aviServerless], 'torbox', { enableAviTranscode: false });
+  assert.equal(serverlessCurated.activeStream.isTranscoded, false);
+  assert.ok(serverlessCurated.activeStream.url.startsWith('https://torrentio.strem.fun/'));
+});

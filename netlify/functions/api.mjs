@@ -10,16 +10,17 @@ import streamResolver from '../../server/stream-resolver.cjs';
 import security from '../../server/security.cjs';
 
 const gunzipAsync = promisify(zlib.gunzip);
-const { resolveStreamsServer, checkStreamStatus, isAllowedUrl } = streamResolver;
+const { resolveStreamsServer, checkStreamStatus, normalizeAllowedUrl } = streamResolver;
 const {
   SECURITY_HEADERS,
+  DOCUMENTARY_CATEGORIES,
   HttpError,
   positiveInteger,
   arteLimit,
   tmdbUrl,
   BoundedCache,
   fetchJson,
-  isAllowedSubtitleUrl,
+  normalizeAllowedSubtitleUrl,
   readBoundedBuffer,
   decodeSubtitleBuffer,
   cleanSubtitleToVtt,
@@ -38,38 +39,50 @@ function getEnv(name, fallback = '') {
   return process.env[name] || fallback;
 }
 
-const DOCUMENTARY_CATEGORIES = [
-  { id: 'all', name: 'Tous les Documentaires', icon: '🎬' },
-  { id: 'nature', name: 'Nature & Environnement', icon: '🌿' },
-  { id: 'history', name: 'Histoire & Civilisations', icon: '📜' },
-  { id: 'science', name: 'Sciences & Espace', icon: '🚀' },
-  { id: 'truecrime', name: 'Enquêtes & True Crime', icon: '🔍' },
-  { id: 'sports', name: 'Sports & Exploits', icon: '🏆' },
-  { id: 'society', name: 'Société & Géopolitique', icon: '🌍' },
-  { id: 'music', name: 'Musique & Culture', icon: '🎵' }
-];
+function getCorsOrigin(req) {
+  const origin = req?.headers?.get?.('origin') || '';
+  if (!origin) return '*';
+  const configured = getEnv('ALLOWED_ORIGINS', '');
+  const allowed = configured
+    ? configured.split(',').map(s => s.trim()).filter(Boolean)
+    : ['https://altyflix.netlify.app', 'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'];
+  try {
+    const reqOrigin = new URL(req.url).origin;
+    if (origin === reqOrigin) return origin;
+  } catch {}
+  return allowed.includes(origin) ? origin : 'null';
+}
 
-function jsonResponse(data, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      ...SECURITY_HEADERS,
-      'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url',
-      ...extraHeaders
-    }
-  });
+function makeJsonResponse(req) {
+  const corsOrigin = getCorsOrigin(req);
+  return function jsonResponse(data, status = 200, extraHeaders = {}) {
+    const safeStatus = (status >= 200 && status <= 599 && status !== 204 && status !== 304) ? status : 502;
+    return new Response(JSON.stringify(data), {
+      status: safeStatus,
+      headers: {
+        ...SECURITY_HEADERS,
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': corsOrigin,
+        'Vary': 'Origin',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url',
+        ...extraHeaders
+      }
+    });
+  };
 }
 
 export default async function handler(req) {
+  const corsOrigin = getCorsOrigin(req);
+  const jsonResponse = makeJsonResponse(req);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
       headers: {
         ...SECURITY_HEADERS,
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': corsOrigin,
+        'Vary': 'Origin',
         'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url'
       }
@@ -143,7 +156,9 @@ export default async function handler(req) {
         userProvider,
         userToken,
         userFrenchioUrl,
-        enableAudioRemux: false
+        enableAudioRemux: false,
+        enableAviTranscode: false,
+        tmdbApiKey: TMDB_API_KEY
       });
       return jsonResponse(result, 200, { 'Cache-Control': 'no-store' });
     } catch (err) {
@@ -163,8 +178,9 @@ export default async function handler(req) {
       return jsonResponse({ success: false, status: 'error', error: 'Paramètre url manquant.' }, 400);
     }
     try {
-      const statusData = await checkStreamStatus(targetUrl);
-      const httpStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
+      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: false });
+      const rawStatus = statusData.success === false ? (statusData.statusCode || 400) : 200;
+      const httpStatus = (rawStatus === 200 || (rawStatus >= 400 && rawStatus <= 599)) ? rawStatus : 502;
       return jsonResponse(statusData, httpStatus, { 'Cache-Control': 'no-store' });
     } catch (err) {
       console.error('[Netlify API /api/stream-poll] Error:', err);
@@ -176,18 +192,19 @@ export default async function handler(req) {
     }
   }
 
-  // 5. Redirection sécurisée pour /api/video-stream (hôtes CDN/Debrid strictement allowlistés)
+  // 5. Redirection sécurisée pour /api/video-stream (hôtes CDN/Debrid strictement allowlistés + URL normalisée sans CRLF)
   if (pathname === '/api/video-stream') {
-    const targetUrl = query.url;
-    if (!targetUrl || !isAllowedUrl(targetUrl)) {
+    const safeTargetUrl = normalizeAllowedUrl(query.url);
+    if (!safeTargetUrl) {
       return jsonResponse({ error: 'URL vidéo non autorisée.' }, 400);
     }
     return new Response(null, {
       status: 302,
       headers: {
         ...SECURITY_HEADERS,
-        'Access-Control-Allow-Origin': '*',
-        Location: targetUrl,
+        'Access-Control-Allow-Origin': corsOrigin,
+        'Vary': 'Origin',
+        Location: safeTargetUrl,
         'Cache-Control': 'no-store'
       }
     });
@@ -195,37 +212,48 @@ export default async function handler(req) {
 
   // 6. Sous-titres VTT proxy & décompression gzip bornée (anti SSRF + anti Gzip Bomb)
   if (pathname === '/api/subtitles-vtt') {
-    const targetUrl = query.url;
-    if (!targetUrl || !isAllowedSubtitleUrl(targetUrl)) {
+    const safeTargetUrl = normalizeAllowedSubtitleUrl(query.url);
+    if (!safeTargetUrl) {
       return jsonResponse({ error: 'URL de sous-titres non autorisée.' }, 400);
     }
     try {
-      let currentUrl = targetUrl;
+      let currentUrl = safeTargetUrl;
       let vttRes = null;
       for (let hop = 0; hop < 4; hop++) {
-        if (!isAllowedSubtitleUrl(currentUrl)) {
+        const safeHop = normalizeAllowedSubtitleUrl(currentUrl);
+        if (!safeHop) {
           return jsonResponse({ error: 'Redirection sous-titres non autorisée.' }, 403);
         }
-        vttRes = await fetch(currentUrl, {
+        vttRes = await fetch(safeHop, {
           headers: { 'User-Agent': 'TemporaryUserAgent' },
           redirect: 'manual',
           signal: AbortSignal.timeout(8000)
         });
         if (vttRes.status >= 300 && vttRes.status < 400 && vttRes.headers.get('location')) {
           try { await vttRes.body?.cancel(); } catch {}
-          currentUrl = new URL(vttRes.headers.get('location'), currentUrl).toString();
+          currentUrl = new URL(vttRes.headers.get('location'), safeHop).toString();
           continue;
         }
         break;
       }
-      if (!vttRes || !vttRes.ok) return jsonResponse({ error: 'Erreur sous-titre.' }, vttRes?.status || 502);
+      if (!vttRes || (vttRes.status >= 300 && vttRes.status < 400)) {
+        try { await vttRes?.body?.cancel(); } catch {}
+        return jsonResponse({ error: 'Trop de redirections pour les sous-titres.' }, 502);
+      }
+      if (!vttRes.ok) {
+        const errStatus = (vttRes.status >= 400 && vttRes.status <= 599) ? vttRes.status : 502;
+        return jsonResponse({ error: 'Erreur sous-titre.' }, errStatus);
+      }
       const rawBuf = await readBoundedBuffer(vttRes, 2 * 1024 * 1024);
       let decodedBuf = rawBuf;
       if (rawBuf.length >= 2 && rawBuf[0] === 0x1f && rawBuf[1] === 0x8b) {
         try {
           decodedBuf = await gunzipAsync(rawBuf, { maxOutputLength: 5 * 1024 * 1024 });
-        } catch {
-          decodedBuf = rawBuf;
+        } catch (gzErr) {
+          if (gzErr?.code === 'ERR_BUFFER_TOO_LARGE') {
+            throw new HttpError(413, 'Fichier sous-titre trop volumineux après décompression.');
+          }
+          throw new HttpError(502, 'Fichier sous-titre corrompu.');
         }
       }
 
@@ -320,17 +348,18 @@ export default async function handler(req) {
           const stremPath = safeType === 'tv'
             ? `https://opensubtitles-v3.strem.io/subtitles/series/${imdbId}:${safeSeason}:${safeEpisode}.json`
             : `https://opensubtitles-v3.strem.io/subtitles/movie/${imdbId}.json`;
-          const stremRes = await fetch(stremPath, { signal: AbortSignal.timeout(3500) });
+          const stremRes = await fetch(stremPath, { redirect: 'error', signal: AbortSignal.timeout(3500) });
           if (stremRes.ok) {
             const data = await stremRes.json();
             const list = Array.isArray(data?.subtitles) ? data.subtitles : [];
             list.slice(0, 3).forEach((s, idx) => {
-              if (s.url && isAllowedSubtitleUrl(s.url)) {
+              const safeSubUrl = normalizeAllowedSubtitleUrl(s.url);
+              if (safeSubUrl) {
                 formatted.push({
                   id: `strem-${idx}`,
                   label: s.lang === 'eng' ? (idx === 0 ? 'English' : `English [${idx + 1}]`) : (s.lang || 'Piste ' + (idx + 1)),
                   lang: s.lang || 'en',
-                  url: `/api/subtitles-vtt?url=${encodeURIComponent(s.url)}`
+                  url: `/api/subtitles-vtt?url=${encodeURIComponent(safeSubUrl)}`
                 });
               }
             });

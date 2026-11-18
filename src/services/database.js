@@ -74,9 +74,9 @@ export const updateUserLastLogin = async (userId) => {
     }
     if (isFirebaseConfigured) {
         try {
-            await updateDoc(doc(db, 'users', userId), {
+            await setDoc(doc(db, 'users', userId), {
                 lastLogin: serverTimestamp(),
-            });
+            }, { merge: true });
         } catch (error) {
             console.warn('Firestore updateUserLastLogin failed:', error);
         }
@@ -104,9 +104,16 @@ export const updateUserEmail = async (userId, email) => {
 /**
  * Profile operations
  */
+const generateUuid = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
 export const createProfile = async (profileData) => {
     if (!auth.currentUser || profileData.userId !== auth.currentUser.uid) throw new Error('Profil non autorisé.');
-    const profileId = `${profileData.userId}_${crypto.randomUUID()}`;
+    const profileId = `${profileData.userId}_${generateUuid()}`;
     const newProfile = { ...profileData, id: profileId, createdAt: Date.now() };
     if (isFirebaseConfigured) await setDoc(doc(db, 'profiles', profileId), { ...profileData, createdAt: serverTimestamp() });
     const key = `altyflix_profiles_${profileData.userId}`;
@@ -177,7 +184,14 @@ export const updateProfile = async (profileId, updates) => {
 export const deleteProfile = async (profileId) => {
     const userId = auth.currentUser?.uid;
     if (!userId) throw new Error('Connexion requise.');
-    if (isFirebaseConfigured) await deleteDoc(doc(db, 'profiles', profileId));
+    if (isFirebaseConfigured) {
+        await deleteDoc(doc(db, 'profiles', profileId));
+        // Clean up subdocuments belonging to this profile (best-effort)
+        await Promise.allSettled([
+            deleteDoc(doc(db, 'users', userId, 'profiles', profileId, 'favorites', 'list')),
+            deleteDoc(doc(db, 'users', userId, 'profiles', profileId, 'history', 'main')),
+        ]);
+    }
     const key = `altyflix_profiles_${userId}`;
     setLocalJSON(key, getLocalJSON(key, []).filter(p => p.id !== profileId));
     return { success: true };

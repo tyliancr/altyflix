@@ -127,8 +127,13 @@ const ReviewsSection = ({
                     <ul className="divide-y divide-white/[0.07]">
                         {reviews.map((review, i) => {
                             const isMine = review.profileId === currentProfile?.id;
-                            const date = review.updatedAt?.toDate
-                                ? new Date(review.updatedAt.toDate()).toLocaleDateString(language, { day: 'numeric', month: 'long', year: 'numeric' })
+                            const rawDate = review.updatedAt?.toDate
+                                ? review.updatedAt.toDate()
+                                : (typeof review.updatedAt?.seconds === 'number'
+                                    ? new Date(review.updatedAt.seconds * 1000)
+                                    : (typeof review.updatedAt === 'number' && review.updatedAt > 0 ? new Date(review.updatedAt) : null));
+                            const date = rawDate && !Number.isNaN(rawDate.getTime())
+                                ? rawDate.toLocaleDateString(language, { day: 'numeric', month: 'long', year: 'numeric' })
                                 : (JUST_NOW[language] || 'Just now');
                             return (
                                 <motion.li
@@ -162,7 +167,7 @@ const ReviewsSection = ({
                     </ul>
                 ) : (
                     <EmptyState
-                        title={t('detail.noReviewsTitle')}
+                        title={t('detail.noReviews')}
                         icon={<svg className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d={STAR} /></svg>}
                     >
                         {t('detail.noReviewsDesc')}

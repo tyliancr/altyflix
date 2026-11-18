@@ -111,51 +111,8 @@ export const GENRE_NAMES = {
     10768: 'Guerre & Politique',
 };
 
-// Video source types
-export const VIDEO_SOURCE_TYPES = {
-    HTML5: 'html5',
-    IFRAME: 'iframe',
-    HLS: 'hls',
-    YOUTUBE: 'youtube',
-};
-
 // Content types
 export const CONTENT_TYPES = {
     MOVIE: 'movie',
     SERIES: 'tv',
-};
-
-// Hero banner rotation interval (milliseconds)
-export const HERO_ROTATION_INTERVAL = 8000;
-
-// Progress save interval (milliseconds)
-export const PROGRESS_SAVE_INTERVAL = 10000;
-
-// Search debounce delay (milliseconds)
-export const SEARCH_DEBOUNCE_DELAY = 300;
-
-// Carousel settings
-export const CAROUSEL_SETTINGS = {
-    itemsPerPage: {
-        mobile: 2,
-        tablet: 3,
-        desktop: 5,
-        wide: 6,
-    },
-    gap: 8,
-};
-
-// App metadata
-export const APP_CONFIG = {
-    name: viteEnv.VITE_APP_NAME || 'ALTYFLIX',
-    url: viteEnv.VITE_APP_URL || 'http://localhost:5173',
-    description: 'Premium streaming platform for movies and series',
-};
-
-// External video source providers (for future scraping integration)
-export const VIDEO_PROVIDERS = {
-    MOVIX: 'movix',
-    FLEMMIX: 'flemmix',
-    ALLOCINE: 'allocine',
-    CUSTOM: 'custom',
 };

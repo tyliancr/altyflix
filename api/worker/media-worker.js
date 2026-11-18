@@ -56,10 +56,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (request.method !== 'GET' && request.method !== 'HEAD') return new Response('Méthode non autorisée', { status: 405, headers });
 
+    if (!env.PLAYBACK_SIGNING_SECRET) return new Response('Configuration manquante', { status: 503, headers });
     const verified = await verify(new URL(request.url).pathname, env.PLAYBACK_SIGNING_SECRET);
     if (!verified) return new Response('Lien de lecture invalide ou expiré', { status: 403, headers });
 
-    const object = await env.MEDIA.get(verified.key, { range: request.headers, onlyIf: request.headers });
+    const object = request.method === 'HEAD'
+      ? await env.MEDIA.head(verified.key)
+      : await env.MEDIA.get(verified.key, { range: request.headers, onlyIf: request.headers });
     if (!object) return new Response('Introuvable', { status: 404, headers });
 
     headers.set('Content-Type', TYPES[verified.key.split('.').pop()] || 'application/octet-stream');
@@ -67,14 +70,23 @@ export default {
     headers.set('Accept-Ranges', 'bytes');
     // Le navigateur peut garder le fichier tant que le jeton est valide, pas au-delà.
     headers.set('Cache-Control', `private, max-age=${Math.max(0, verified.exp - Math.floor(Date.now() / 1000))}`);
+    if (request.method === 'HEAD') {
+      headers.set('Content-Length', String(object.size));
+      return new Response(null, { status: 200, headers });
+    }
     if (!('body' in object)) return new Response(null, { status: 304, headers }); // précondition If-None-Match satisfaite
     if (object.range) {
-      const { offset = 0, length = object.size - offset } = object.range;
+      const offset = 'suffix' in object.range
+        ? Math.max(0, object.size - object.range.suffix)
+        : (object.range.offset ?? 0);
+      const length = 'suffix' in object.range
+        ? Math.min(object.range.suffix, object.size)
+        : (object.range.length ?? (object.size - offset));
       headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${object.size}`);
       headers.set('Content-Length', String(length));
-      return new Response(request.method === 'HEAD' ? null : object.body, { status: 206, headers });
+      return new Response(object.body, { status: 206, headers });
     }
     headers.set('Content-Length', String(object.size));
-    return new Response(request.method === 'HEAD' ? null : object.body, { status: 200, headers });
+    return new Response(object.body, { status: 200, headers });
   },
 };

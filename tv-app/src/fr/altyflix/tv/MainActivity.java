@@ -59,6 +59,8 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);          // Firebase session, preferences
         s.setDatabaseEnabled(true);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
@@ -72,17 +74,29 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
 
         webView.setWebViewClient(new WebViewClient() {
+            private boolean isTrustedHost(String host) {
+                if (host == null) return false;
+                String h = host.toLowerCase();
+                return SITE_HOST.equals(h)
+                        || h.endsWith(".firebaseapp.com")
+                        || h.equals("accounts.google.com")
+                        || h.endsWith(".googleapis.com");
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String scheme = uri.getScheme();
+                String host = uri.getHost();
                 // Site pages and Firebase sign-in stay inside the app
-                if ("https".equals(scheme) || "http".equals(scheme)) return false;
-                // Anything else (intent:, market:) goes to the matching app if one exists
-                try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
-                } catch (Exception ignored) {
-                    // No app for this link: stay where we are
+                if ("https".equalsIgnoreCase(scheme) && isTrustedHost(host)) return false;
+                // External HTTPS links open in system browser only on explicit user gesture
+                if ("https".equalsIgnoreCase(scheme) && request.isForMainFrame() && request.hasGesture()) {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                    } catch (Exception ignored) {
+                        // No external browser available
+                    }
                 }
                 return true;
             }
@@ -113,8 +127,9 @@ public class MainActivity extends Activity {
         setContentView(root);
         applySystemUi();
 
-        if (savedInstanceState != null) webView.restoreState(savedInstanceState);
-        else webView.loadUrl(HOME_URL);
+        if (savedInstanceState == null || webView.restoreState(savedInstanceState) == null) {
+            webView.loadUrl(HOME_URL);
+        }
         webView.requestFocus();
     }
 
@@ -196,6 +211,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (webView != null) {
+            if (root != null) root.removeView(webView);
             webView.destroy();
             webView = null;
         }

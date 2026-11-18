@@ -43,7 +43,7 @@ const Home = () => {
     const { currentProfile, watchHistory } = useProfile();
     const { t } = useTranslation();
 
-    const kids = Boolean(currentProfile?.isKid || currentProfile?.name?.toLowerCase() === 'enfant');
+    const kids = Boolean(currentProfile?.isKid);
     const profileId = currentProfile?.id;
     const langKey = currentProfile?.language || 'fr';
     const homeCacheKey = `altyflix_home_feed_${langKey}_${kids ? 'kids' : 'std'}`;
@@ -139,7 +139,7 @@ const Home = () => {
                         ...airingToday.map(s => ({ ...s, type: 'tv', sortDate: s.effectiveDate }))
                     ].sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
 
-                    const uniqueContent = Array.from(new Map(allRecentContent.map(item => [item.id, item])).values())
+                    const uniqueContent = Array.from(new Map(allRecentContent.map(item => [`${item.type}_${item.id}`, item])).values())
                         .sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
 
                     const newReleasesList = uniqueContent.slice(0, 20);

@@ -4,6 +4,7 @@ import { getContentByGenre } from '../services/tmdb';
 import { GENRES, TV_GENRES, GENRE_NAMES } from '../config/constants';
 import { Helmet } from 'react-helmet-async';
 import { useTranslation } from '../hooks/useTranslation';
+import { useProfile } from '../contexts/ProfileContext';
 import PosterCard from '../components/ui/PosterCard';
 import { PageHeader, PosterGrid, GridSkeleton, SectionTitle, EmptyState } from '../components/ui/Primitives';
 
@@ -16,15 +17,19 @@ const TV_EQUIVALENT = {
     [GENRES.WAR]: TV_GENRES.WAR_POLITICS,
 };
 
+const BLOCKED_KID_GENRES = [27, 80, 53, 10752, 10768];
+
 const CategoryPage = () => {
     const { id } = useParams(); // movie genre id
     const { t } = useTranslation();
+    const { currentProfile } = useProfile();
+    const isKid = Boolean(currentProfile?.isKid);
     const [movies, setMovies] = useState([]);
     const [series, setSeries] = useState([]);
     const [loading, setLoading] = useState(true);
 
     const movieGenreId = parseInt(id, 10);
-    const isValidGenreId = Number.isInteger(movieGenreId) && movieGenreId > 0;
+    const isValidGenreId = Number.isInteger(movieGenreId) && movieGenreId > 0 && (!isKid || !BLOCKED_KID_GENRES.includes(movieGenreId));
     const isTvOnlyGenre = isValidGenreId && Object.values(TV_GENRES).includes(movieGenreId) && !Object.values(GENRES).includes(movieGenreId);
     const genreName = (isValidGenreId && GENRE_NAMES[movieGenreId]) || 'Genre';
 
@@ -47,12 +52,15 @@ const CategoryPage = () => {
             tvGenreId ? getContentByGenre('tv', tvGenreId, 1) : Promise.resolve({ results: [] }),
         ]).then(([moviesData, tvData]) => {
             if (!active) return;
-            setMovies(moviesData.status === 'fulfilled' ? moviesData.value.results?.slice(0, 14) || [] : []);
-            setSeries(tvData.status === 'fulfilled' ? tvData.value.results?.slice(0, 14) || [] : []);
+            const filterKid = (arr) => isKid
+                ? (arr || []).filter(item => !item.adult && !(item.genre_ids || []).some(g => BLOCKED_KID_GENRES.includes(g)))
+                : (arr || []);
+            setMovies(moviesData.status === 'fulfilled' ? filterKid(moviesData.value.results).slice(0, 14) : []);
+            setSeries(tvData.status === 'fulfilled' ? filterKid(tvData.value.results).slice(0, 14) : []);
             setLoading(false);
         });
         return () => { active = false; };
-    }, [movieGenreId, isValidGenreId, isTvOnlyGenre]);
+    }, [movieGenreId, isValidGenreId, isTvOnlyGenre, isKid]);
 
     return (
         <div className="min-h-screen bg-[#060608] px-[4%] pb-12 pt-[calc(env(safe-area-inset-top,0px)+6rem)] md:px-[5%] md:pt-32">

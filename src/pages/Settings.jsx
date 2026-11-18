@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useAuth, formatAuthErrorMessage } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
 import { deleteUser, verifyBeforeUpdateEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -166,15 +166,19 @@ const Settings = () => {
         }
     }, [activeTab, runDiagnostics]);
 
+    const toastTimerRef = useRef(null);
+    useEffect(() => () => clearTimeout(toastTimerRef.current), []);
+
     const triggerToast = (type, text) => {
+        clearTimeout(toastTimerRef.current);
         setMessage({ type, text });
-        setTimeout(() => setMessage({ type: '', text: '' }), 5000);
+        toastTimerRef.current = setTimeout(() => setMessage({ type: '', text: '' }), 5000);
     };
 
     // Save profile information
     const handleProfileSave = async (e) => {
         e.preventDefault();
-        if (!profileName.trim()) return;
+        if (!currentProfile?.id || !profileName.trim()) return;
         const cleanPin = String(pinCode || '').replace(/\D/g, '');
         if (cleanPin.length > 0 && cleanPin.length < 4) {
             triggerToast('error', 'Le code PIN doit contenir exactement 4 chiffres (ou être laissé vide).');
@@ -205,6 +209,7 @@ const Settings = () => {
     // Save Preferences (wrapped in form submit handler)
     const handlePreferencesSave = async (e) => {
         e.preventDefault();
+        if (!currentProfile?.id) return;
         setLoading(true);
         try {
             const result = await updateProfile(currentProfile.id, {
@@ -245,7 +250,7 @@ const Settings = () => {
             triggerToast('success', t('settings.emailChangeSuccess'));
             setEmailForm({ newEmail: '', password: '' });
         } catch (error) {
-            triggerToast('error', error.message);
+            triggerToast('error', formatAuthErrorMessage(error));
         } finally {
             setLoading(false);
         }
@@ -266,7 +271,7 @@ const Settings = () => {
             triggerToast('success', t('settings.passwordChangeSuccess'));
             setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
         } catch (error) {
-            triggerToast('error', error.message);
+            triggerToast('error', formatAuthErrorMessage(error));
         } finally {
             setLoading(false);
         }

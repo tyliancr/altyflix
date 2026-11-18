@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Helmet } from 'react-helmet-async';
 import { useToast } from '../contexts/ToastContext';
+import { useProfile } from '../contexts/ProfileContext';
 import { PosterGrid, GridSkeleton, SectionTitle, SegmentedControl, EmptyState, Button, TrailerModal } from '../components/ui/Primitives';
 
 const BELL = 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9';
@@ -132,6 +133,8 @@ const ReleaseGrid = ({ items, reminders, onReminder }) => (
 // ─── Main Page ────────────────────────────────────────────────────────────────
 const UpcomingPage = () => {
     const { addToast } = useToast();
+    const { currentProfile } = useProfile();
+    const isKid = Boolean(currentProfile?.isKid);
     const [allItems, setAllItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeFilter, setActiveFilter] = useState('all');
@@ -201,6 +204,7 @@ const UpcomingPage = () => {
                     const key = `${item.type}-${item.id}`;
                     if (!item.date || seen.has(key)) return false;
                     const d = new Date(item.date);
+                    if (Number.isNaN(d.getTime())) return false;
                     d.setHours(0, 0, 0, 0);
                     if (d < today) return false;
                     seen.add(key);
@@ -219,18 +223,26 @@ const UpcomingPage = () => {
         return () => { active = false; };
     }, []);
 
-    const { movies, newSeries, returningSeries, heroItem } = useMemo(() => {
-        const movies = allItems.filter(i => i.type === 'movie');
-        const newSeries = allItems.filter(i => i.type === 'tv' && i.subtypeLabel === 'Nouvelle série');
-        const returningSeries = allItems.filter(i => i.subtypeLabel === 'Nouvelle saison');
-        const hero = allItems.find(i => i.backdrop_path) || allItems[0] || null;
-        return { movies, newSeries, returningSeries, heroItem: hero };
-    }, [allItems]);
+    const { visibleItems, movies, newSeries, returningSeries, heroItem } = useMemo(() => {
+        const list = isKid
+            ? allItems.filter(item => {
+                if (item.adult) return false;
+                const gids = item.genre_ids || (item.genres || []).map(g => g.id);
+                if (gids.some(g => [27, 80, 53, 10752, 10768].includes(g))) return false;
+                return gids.some(g => [16, 10751, 10762].includes(g));
+            })
+            : allItems;
+        const movies = list.filter(i => i.type === 'movie');
+        const newSeries = list.filter(i => i.type === 'tv' && i.subtypeLabel === 'Nouvelle série');
+        const returningSeries = list.filter(i => i.subtypeLabel === 'Nouvelle saison');
+        const hero = list.find(i => i.backdrop_path) || list[0] || null;
+        return { visibleItems: list, movies, newSeries, returningSeries, heroItem: hero };
+    }, [allItems, isKid]);
 
     const filtered = activeFilter === 'movies' ? movies
         : activeFilter === 'series' ? newSeries
         : activeFilter === 'returning' ? returningSeries
-        : allItems;
+        : visibleItems;
 
     const [trailerKey, setTrailerKey] = useState(null);
     const [trailerLoading, setTrailerLoading] = useState(false);

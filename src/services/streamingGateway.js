@@ -31,18 +31,46 @@ const STORAGE_KEY_FRENCHIO_URL = 'altyflix_frenchio_url';
  * Récupère la configuration actuelle de la passerelle
  * Priorité : LocalStorage utilisateur si configuré, sinon clé globale serveur
  */
+// Helper compatible Safari < 16 & Smart TV WebViews (évite AbortSignal.timeout / AbortSignal.any absents)
+function createTimeoutSignal(ms, parentSignal = null) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+        try { controller.abort(new DOMException('Timeout', 'TimeoutError')); } catch { controller.abort(); }
+    }, ms);
+    const onParentAbort = () => {
+        clearTimeout(timer);
+        try { controller.abort(parentSignal?.reason); } catch { controller.abort(); }
+    };
+    if (parentSignal) {
+        if (parentSignal.aborted) {
+            onParentAbort();
+        } else {
+            parentSignal.addEventListener('abort', onParentAbort, { once: true });
+        }
+    }
+    return {
+        signal: controller.signal,
+        cleanup: () => {
+            clearTimeout(timer);
+            if (parentSignal) parentSignal.removeEventListener('abort', onParentAbort);
+        }
+    };
+}
+
 export function getGatewayConfig() {
     let provider = DEFAULT_PROVIDER;
     let customToken = '';
     let frenchioUrl = '';
 
     if (typeof window !== 'undefined') {
-        const storedProvider = localStorage.getItem(STORAGE_KEY_PROVIDER);
-        const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
-        const storedFrenchio = localStorage.getItem(STORAGE_KEY_FRENCHIO_URL);
-        if (storedProvider && storedProvider.trim()) provider = storedProvider.trim();
-        if (storedToken && storedToken.trim().length > 3) customToken = storedToken.trim();
-        if (storedFrenchio && storedFrenchio.trim()) frenchioUrl = storedFrenchio.trim();
+        try {
+            const storedProvider = localStorage.getItem(STORAGE_KEY_PROVIDER);
+            const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
+            const storedFrenchio = localStorage.getItem(STORAGE_KEY_FRENCHIO_URL);
+            if (storedProvider && storedProvider.trim()) provider = storedProvider.trim();
+            if (storedToken && storedToken.trim().length > 3) customToken = storedToken.trim();
+            if (storedFrenchio && storedFrenchio.trim()) frenchioUrl = storedFrenchio.trim();
+        } catch { /* stockage restreint */ }
     }
 
     const hasCustomToken = Boolean(customToken);
@@ -62,15 +90,17 @@ export function getGatewayConfig() {
 export function saveGatewayConfig({ provider, token, frenchioUrl }) {
     if (typeof window === 'undefined') return;
 
-    if (provider) {
-        localStorage.setItem(STORAGE_KEY_PROVIDER, provider);
-    }
-    if (typeof token === 'string') {
-        localStorage.setItem(STORAGE_KEY_TOKEN, token.trim());
-    }
-    if (typeof frenchioUrl === 'string') {
-        localStorage.setItem(STORAGE_KEY_FRENCHIO_URL, frenchioUrl.trim());
-    }
+    try {
+        if (provider) {
+            localStorage.setItem(STORAGE_KEY_PROVIDER, provider);
+        }
+        if (typeof token === 'string') {
+            localStorage.setItem(STORAGE_KEY_TOKEN, token.trim());
+        }
+        if (typeof frenchioUrl === 'string') {
+            localStorage.setItem(STORAGE_KEY_FRENCHIO_URL, frenchioUrl.trim());
+        }
+    } catch { /* stockage restreint */ }
 
     // Déclenche un événement personnalisé pour notifier l'UI
     window.dispatchEvent(new CustomEvent('altyflix-gateway-updated', {
@@ -520,17 +550,18 @@ export async function resolvePlaybackStreams({
             headers['x-frenchio-url'] = config.frenchioUrl;
         }
 
-        const timeoutSignal = AbortSignal.timeout(10000);
-        const reqSignal = callerSignal && typeof AbortSignal.any === 'function'
-            ? AbortSignal.any([callerSignal, timeoutSignal])
-            : (callerSignal || timeoutSignal);
-
+        const reqSig = createTimeoutSignal(10000, callerSignal);
         console.log(`[Altyflix Stream Resolver] Résolution sécurisée via backend pour ${type} ${imdbId}...`);
-        const serverRes = await fetch(`/api/stream-resolve?${queryParams.toString()}`, {
-            headers,
-            cache: 'no-store',
-            signal: reqSignal
-        });
+        let serverRes;
+        try {
+            serverRes = await fetch(`/api/stream-resolve?${queryParams.toString()}`, {
+                headers,
+                cache: 'no-store',
+                signal: reqSig.signal
+            });
+        } finally {
+            reqSig.cleanup();
+        }
 
         if (serverRes.ok) {
             const serverData = await serverRes.json();
@@ -581,11 +612,17 @@ export async function resolvePlaybackStreams({
         const options = `providers=${ALL_PROVIDERS}|sort=qualitysize|language=french|${activeProvider}=${encodeURIComponent(activeToken)}`;
         const endpoint = `https://torrentio.strem.fun/${options}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 
-        let res = await fetch(endpoint, {
-            headers: { 'Accept': 'application/json' },
-            cache: 'no-store',
-            signal: AbortSignal.timeout(8000)
-        });
+        const s1 = createTimeoutSignal(8000, callerSignal);
+        let res;
+        try {
+            res = await fetch(endpoint, {
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-store',
+                signal: s1.signal
+            });
+        } finally {
+            s1.cleanup();
+        }
 
         let rawStreams = [];
         if (res.ok) {
@@ -598,11 +635,17 @@ export async function resolvePlaybackStreams({
             const optionsGlobal = `providers=${ALL_PROVIDERS}|sort=qualitysize|${activeProvider}=${encodeURIComponent(activeToken)}`;
             const endpointGlobal = `https://torrentio.strem.fun/${optionsGlobal}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 
-            const resGlobal = await fetch(endpointGlobal, {
-                headers: { 'Accept': 'application/json' },
-                cache: 'no-store',
-                signal: AbortSignal.timeout(8000)
-            });
+            const s2 = createTimeoutSignal(8000, callerSignal);
+            let resGlobal;
+            try {
+                resGlobal = await fetch(endpointGlobal, {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store',
+                    signal: s2.signal
+                });
+            } finally {
+                s2.cleanup();
+            }
 
             if (resGlobal.ok) {
                 const dataGlobal = await resGlobal.json();
@@ -648,6 +691,7 @@ export async function resolvePlaybackStreams({
             hasTrueVf: curated.hasTrueVf
         };
     } catch (err) {
+        if (callerSignal?.aborted) return { success: false, aborted: true, streams: [] };
         return {
             success: false,
             reason: 'NETWORK_ERROR',
@@ -686,10 +730,16 @@ export async function pollStreamStatus({
         onProgress({ attempt: attempts, maxAttempts, elapsedSec });
 
         try {
-            const res = await fetch(`/api/stream-poll?url=${encodeURIComponent(streamUrl)}`, {
-                signal,
-                cache: 'no-store'
-            });
+            const pollSig = createTimeoutSignal(10000, signal);
+            let res;
+            try {
+                res = await fetch(`/api/stream-poll?url=${encodeURIComponent(streamUrl)}`, {
+                    signal: pollSig.signal,
+                    cache: 'no-store'
+                });
+            } finally {
+                pollSig.cleanup();
+            }
 
             let data = null;
             try { data = await res.json(); } catch { /* ignore */ }
@@ -761,13 +811,14 @@ export async function testGatewayToken({ provider, token }) {
 
     // 1. Validation directe auprès de l'API TorBox
     if (provider === 'torbox') {
+        const s = createTimeoutSignal(6000);
         try {
             const tbRes = await fetch('https://api.torbox.app/v1/api/user/me', {
                 headers: {
                     'Authorization': `Bearer ${cleanToken}`,
                     'Accept': 'application/json'
                 },
-                signal: AbortSignal.timeout(6000)
+                signal: s.signal
             });
 
             if (tbRes.status === 200) {
@@ -785,18 +836,21 @@ export async function testGatewayToken({ provider, token }) {
             }
         } catch {
             // En cas d'erreur réseau directe, continue vers Torrentio
+        } finally {
+            s.cleanup();
         }
     }
 
     // 2. Validation directe auprès de l'API Real-Debrid
     if (provider === 'realdebrid') {
+        const s = createTimeoutSignal(6000);
         try {
             const rdRes = await fetch('https://api.real-debrid.com/rest/1.0/user', {
                 headers: {
                     'Authorization': `Bearer ${cleanToken}`,
                     'Accept': 'application/json'
                 },
-                signal: AbortSignal.timeout(6000)
+                signal: s.signal
             });
 
             if (rdRes.status === 200) {
@@ -813,17 +867,20 @@ export async function testGatewayToken({ provider, token }) {
             }
         } catch {
             // Continue vers Torrentio
+        } finally {
+            s.cleanup();
         }
     }
 
     // 3. Fallback Torrentio
+    const s3 = createTimeoutSignal(8000);
     try {
         const options = `providers=yts|${provider}=${encodeURIComponent(cleanToken)}`;
         const endpoint = `https://torrentio.strem.fun/${options}/stream/movie/tt0137523.json`;
 
         const res = await fetch(endpoint, {
             headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(8000)
+            signal: s3.signal
         });
 
         if (!res.ok) {
@@ -854,6 +911,8 @@ export async function testGatewayToken({ provider, token }) {
         };
     } catch (err) {
         return { valid: false, message: 'Impossible de contacter la passerelle : ' + err.message };
+    } finally {
+        s3.cleanup();
     }
 }
 
@@ -882,23 +941,27 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
 
     // 1. Source 1 : Stremio OpenSubtitles v3 (fallback si une langue manque côté backend)
     const stremPromise = (async () => {
+        const s = createTimeoutSignal(6000);
         try {
             const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${stremKey}.json`;
             const res = await fetch(endpoint, {
                 headers: { 'Accept': 'application/json' },
-                signal: AbortSignal.timeout(6000)
+                signal: s.signal
             });
             if (!res.ok) return [];
             const data = await res.json();
             return Array.isArray(data?.subtitles) ? data.subtitles : [];
         } catch {
             return [];
+        } finally {
+            s.cleanup();
         }
     })();
 
     // 2. Source 2 : Backend /api/subtitles (OpenSubtitles REST classés par release/FPS, décodage CP1252/UTF-8, anti-pub)
     const backendSubsPromise = (async () => {
         if (!id && !cleanImdbId) return [];
+        const s = createTimeoutSignal(6000);
         try {
             const q = new URLSearchParams({
                 type: isTv ? 'tv' : 'movie',
@@ -909,13 +972,15 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             if (cleanImdbId) q.set('imdbId', cleanImdbId);
             if (filename) q.set('filename', String(filename).slice(0, 260));
             const res = await fetch(`/api/subtitles?${q.toString()}`, {
-                signal: AbortSignal.timeout(6000)
+                signal: s.signal
             });
             if (!res.ok) return [];
             const data = await res.json();
             return Array.isArray(data?.subtitles) ? data.subtitles : [];
         } catch {
             return [];
+        } finally {
+            s.cleanup();
         }
     })();
 
@@ -1099,9 +1164,13 @@ export function parseVttCues(rawText) {
 export async function fetchSubtitleCues(subUrl, subEncoding = null) {
     if (!subUrl) return [];
     try {
-        const res = await fetch(subUrl, {
-            signal: AbortSignal.timeout(8000)
-        });
+        const st = createTimeoutSignal(8000);
+        let res;
+        try {
+            res = await fetch(subUrl, { signal: st.signal });
+        } finally {
+            st.cleanup();
+        }
         if (!res.ok) return [];
 
         let buf = await res.arrayBuffer();
@@ -1141,7 +1210,13 @@ export async function fetchSubtitleCues(subUrl, subEncoding = null) {
 export async function loadSubtitleAsVttUrl(subUrl) {
     if (!subUrl) return null;
     try {
-        const res = await fetch(subUrl, { signal: AbortSignal.timeout(8000) });
+        const st = createTimeoutSignal(8000);
+        let res;
+        try {
+            res = await fetch(subUrl, { signal: st.signal });
+        } finally {
+            st.cleanup();
+        }
         if (!res.ok) return null;
         const text = await res.text();
 

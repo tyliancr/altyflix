@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import NetflixPlayer from '../components/player/NetflixPlayer';
 import { useProfile } from '../contexts/ProfileContext';
@@ -14,14 +14,30 @@ export default function WatchPage() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const { watchHistory, addToHistory } = useProfile();
+    const watchHistoryRef = useRef(watchHistory);
+    watchHistoryRef.current = watchHistory;
 
     const isTv = id?.startsWith('tv-') || searchParams.has('s');
     const tmdbId = id ? id.replace(/^(movie|tv)-/, '') : '';
-    const savedEntry = (watchHistory || []).find(h => String(h.contentId || h.id) === String(tmdbId));
-    const hasExplicitS = searchParams.has('s');
-    const hasExplicitE = searchParams.has('e');
-    const initialSeason = Math.max(1, parseInt(searchParams.get('s'), 10) || (!hasExplicitS && isTv && savedEntry?.season ? Number(savedEntry.season) : 1));
-    const initialEpisode = Math.max(1, parseInt(searchParams.get('e'), 10) || (!hasExplicitE && isTv && savedEntry?.episode ? Number(savedEntry.episode) : 1));
+    const urlSeasonParam = searchParams.get('s');
+    const urlEpisodeParam = searchParams.get('e');
+
+    // Figer la saison/épisode initiaux par route afin qu'une mise à jour de watchHistory
+    // (ex: passage à l'épisode suivant dans NetflixPlayer) ne démonte jamais le lecteur !
+    const { initialSeason, initialEpisode } = useMemo(() => {
+        const list = watchHistoryRef.current || [];
+        const savedEntry = list.find(h => {
+            if (String(h.contentId || h.id) !== String(tmdbId)) return false;
+            const hType = h.media_type || h.type;
+            return !hType || hType === (isTv ? 'tv' : 'movie');
+        });
+        const hasExplicitS = urlSeasonParam !== null;
+        const hasExplicitE = urlEpisodeParam !== null;
+        return {
+            initialSeason: Math.max(1, parseInt(urlSeasonParam, 10) || (!hasExplicitS && isTv && savedEntry?.season ? Number(savedEntry.season) : 1)),
+            initialEpisode: Math.max(1, parseInt(urlEpisodeParam, 10) || (!hasExplicitE && isTv && savedEntry?.episode ? Number(savedEntry.episode) : 1))
+        };
+    }, [tmdbId, isTv, urlSeasonParam, urlEpisodeParam]);
 
     const [content, setContent] = useState(() => ({
         id: tmdbId,

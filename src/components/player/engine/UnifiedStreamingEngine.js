@@ -300,7 +300,9 @@ export class UnifiedStreamingEngine {
                             this.retryCount++;
                             if (this.retryCount <= this.maxRetries) {
                                 console.log(`[UnifiedEngine:HLS] Erreur réseau, tentative ${this.retryCount}/${this.maxRetries}...`);
-                                setTimeout(() => {
+                                if (this.hlsRetryTimer) clearTimeout(this.hlsRetryTimer);
+                                this.hlsRetryTimer = setTimeout(() => {
+                                    this.hlsRetryTimer = null;
                                     if (!this.isDestroyed && this.hlsInstance) {
                                         this.hlsInstance.startLoad();
                                     }
@@ -342,11 +344,13 @@ export class UnifiedStreamingEngine {
             this.currentEngineType = ENGINE_TYPES.HLS;
             video.src = url;
             if (startPosition > 0) {
-                video.addEventListener('loadedmetadata', () => {
+                this._pendingMetaHandler = () => {
+                    this._pendingMetaHandler = null;
                     if (!this.isDestroyed && Number.isFinite(video.duration) && startPosition < video.duration - 10) {
                         video.currentTime = startPosition;
                     }
-                }, { once: true });
+                };
+                video.addEventListener('loadedmetadata', this._pendingMetaHandler, { once: true });
             }
             video.play().catch(() => {});
         } else {
@@ -399,6 +403,7 @@ export class UnifiedStreamingEngine {
         });
 
         player.addEventListener('buffering', (event) => {
+            if (this.isDestroyed) return;
             this.callbacks.onBufferingChange(event.buffering);
         });
 
@@ -412,15 +417,15 @@ export class UnifiedStreamingEngine {
             video.currentTime = startPosition;
         }
 
-        // Extraction des qualités DASH
+        // Extraction des qualités DASH (Auto toujours en tête, suivi des résolutions décroissantes)
         const tracks = player.getVariantTracks();
         const seenHeights = new Set();
-        const dashQualities = [{ id: -1, label: 'Auto (Adaptatif)' }];
+        const sortedTracks = [];
 
         tracks.forEach(t => {
             if (t.height && !seenHeights.has(t.height)) {
                 seenHeights.add(t.height);
-                dashQualities.push({
+                sortedTracks.push({
                     id: t.id,
                     height: t.height,
                     bitrate: t.bandwidth || 0,
@@ -429,11 +434,12 @@ export class UnifiedStreamingEngine {
             }
         });
 
-        dashQualities.sort((a, b) => (b.height || 0) - (a.height || 0));
-        this.callbacks.onQualitiesReady(dashQualities);
+        sortedTracks.sort((a, b) => (b.height || 0) - (a.height || 0));
+        this.callbacks.onQualitiesReady([{ id: -1, label: 'Auto (Adaptatif)' }, ...sortedTracks]);
 
         this.callbacks.onBufferingChange(false);
-        video.play().catch(() => {
+        video.play().catch((err) => {
+            if (err?.name !== 'NotAllowedError') return;
             video.muted = true;
             this.callbacks.onAutoplayMuted?.(true);
             video.play().catch(() => {});
@@ -460,11 +466,13 @@ export class UnifiedStreamingEngine {
 
         // Appliquer la position de reprise avant lecture (évite d'écraser l'historique à 0s)
         if (startPosition > 5) {
-            video.addEventListener('loadedmetadata', () => {
+            this._pendingMetaHandler = () => {
+                this._pendingMetaHandler = null;
                 if (!this.isDestroyed && Number.isFinite(video.duration) && startPosition < video.duration - 15) {
                     video.currentTime = startPosition;
                 }
-            }, { once: true });
+            };
+            video.addEventListener('loadedmetadata', this._pendingMetaHandler, { once: true });
         }
     }
 
@@ -766,6 +774,14 @@ export class UnifiedStreamingEngine {
      * Nettoyage complet des adaptateurs
      */
     cleanupAdapters() {
+        if (this.hlsRetryTimer) {
+            clearTimeout(this.hlsRetryTimer);
+            this.hlsRetryTimer = null;
+        }
+        if (this._pendingMetaHandler && this.videoElement) {
+            this.videoElement.removeEventListener('loadedmetadata', this._pendingMetaHandler);
+            this._pendingMetaHandler = null;
+        }
         if (this._torrentStatsInterval) {
             clearInterval(this._torrentStatsInterval);
             this._torrentStatsInterval = null;

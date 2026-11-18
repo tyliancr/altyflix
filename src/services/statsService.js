@@ -1,4 +1,4 @@
-﻿import { db } from '../config/firebase';
+﻿import { auth, db, isFirebaseConfigured } from '../config/firebase';
 import { doc, setDoc, increment, getDocs, collection, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import tmdb from './tmdb';
 
@@ -7,7 +7,7 @@ const STATS_MOVIES = 'stats_movies';
 const STATS_SERIES = 'stats_series';
 
 export const recordView = async (contentId, type) => {
-    if (!contentId || !type) return;
+    if (!contentId || !type || !isFirebaseConfigured || !auth?.currentUser) return;
 
     const collectionName = type === 'movie' ? STATS_MOVIES : STATS_SERIES;
     const statsRef = doc(db, collectionName, String(contentId));
@@ -23,6 +23,7 @@ export const recordView = async (contentId, type) => {
 };
 
 export const getTopWatched = async (type = 'movie') => {
+    if (!isFirebaseConfigured) return [];
     const collectionName = type === 'movie' ? STATS_MOVIES : STATS_SERIES;
     const q = query(collection(db, collectionName), orderBy('count', 'desc'), limit(10));
 

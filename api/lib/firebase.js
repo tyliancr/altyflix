@@ -19,5 +19,11 @@ export function getAdminApp(config) {
   return app;
 }
 
+let dbInstance;
 export const adminAuth = config => getAuth(getAdminApp(config));
-export const adminDb = config => getFirestore(getAdminApp(config));
+export const adminDb = config => {
+  if (dbInstance) return dbInstance;
+  dbInstance = getFirestore(getAdminApp(config));
+  try { dbInstance.settings({ ignoreUndefinedProperties: true }); } catch { /* déjà initialisé */ }
+  return dbInstance;
+};

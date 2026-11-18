@@ -55,15 +55,46 @@ export const ProfileProvider = ({ children }) => {
     activeUser.current = currentUser?.uid || null;
     const activeProfile = useRef(null);
     activeProfile.current = currentProfile?.id || null;
+    const profilesCountRef = useRef(profiles.length);
+    profilesCountRef.current = profiles.length;
     const previousUser = useRef(null);
+
+    const matchesContent = (item, targetId, targetType = null) => {
+        const itemId = item?.contentId || item?.id;
+        if (String(itemId) !== String(targetId)) return false;
+        if (!targetType) return true;
+        const itemType = item?.media_type || item?.type;
+        if (!itemType) return true;
+        return itemType === targetType;
+    };
+
+    const sanitizeFavoriteItem = (content, targetId) => {
+        const resolvedType = getContentType(content, 'movie');
+        return {
+            id: targetId,
+            contentId: targetId,
+            title: content.title || content.name || '',
+            name: content.name || content.title || '',
+            poster_path: content.poster_path || null,
+            backdrop_path: content.backdrop_path || null,
+            vote_average: typeof content.vote_average === 'number' ? content.vote_average : 0,
+            release_date: content.release_date || null,
+            first_air_date: content.first_air_date || null,
+            genre_ids: Array.isArray(content.genre_ids)
+                ? content.genre_ids
+                : (Array.isArray(content.genres) ? content.genres.map(g => g.id).filter(Boolean) : []),
+            overview: typeof content.overview === 'string' ? content.overview.slice(0, 400) : '',
+            type: resolvedType,
+            media_type: resolvedType,
+        };
+    };
 
     // Load profiles from database
     const loadProfiles = useCallback(async () => {
         if (!currentUser) return;
         try {
             // Only show blocking loader on cold start if nothing was cached
-            const currentProfiles = profiles;
-            if (!currentProfiles || currentProfiles.length === 0) {
+            if (profilesCountRef.current === 0) {
                 setLoading(true);
             }
             const userProfiles = await getProfilesByUser(currentUser.uid);
@@ -123,9 +154,7 @@ export const ProfileProvider = ({ children }) => {
             if (activeUser.current === currentUser?.uid) setLoading(false);
         }
     // NOTE: currentProfile is intentionally excluded from deps to avoid an
-    // infinite loop: profile change ? loadProfiles recreated ? useEffect fires
-    // ? loadProfiles runs again ? potential profile change ? repeat.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // infinite loop: profile change -> loadProfiles recreated -> useEffect fires.
     }, [currentUser]);
 
     // Load profiles when user changes
@@ -134,10 +163,14 @@ export const ProfileProvider = ({ children }) => {
         if (authLoading) return;
 
         if (currentUser) {
-            const isDifferentUser = previousUser.current && previousUser.current !== currentUser.uid;
+            const cachedActive = storage.get('altyflix_cached_active_profile');
+            const cachedBelongsToOtherUser = Boolean(cachedActive?.userId && cachedActive.userId !== currentUser.uid);
+            const isDifferentUser = (previousUser.current && previousUser.current !== currentUser.uid) || cachedBelongsToOtherUser;
             if (isDifferentUser) {
                 setCurrentProfile(null);
                 setProfiles([]);
+                setMyList([]);
+                setWatchHistory([]);
                 storage.remove('lastProfileId');
                 storage.remove('altyflix_cached_profiles');
                 storage.remove('altyflix_cached_active_profile');
@@ -153,6 +186,8 @@ export const ProfileProvider = ({ children }) => {
             previousUser.current = null;
             setProfiles([]);
             setCurrentProfile(null);
+            setMyList([]);
+            setWatchHistory([]);
             storage.remove('altyflix_cached_profiles');
             storage.remove('altyflix_cached_active_profile');
             storage.remove('lastProfileId');
@@ -174,7 +209,12 @@ export const ProfileProvider = ({ children }) => {
             });
 
             if (result.success) {
-                // Fetch real list in background, UI already updated!
+                const realProfile = { ...optimisticProfile, id: result.profileId };
+                setProfiles(prev => {
+                    const next = prev.map(p => p.id === tempId ? realProfile : p);
+                    storage.set('altyflix_cached_profiles', next);
+                    return next;
+                });
                 loadProfiles();
                 return { success: true, profileId: result.profileId };
             } else {
@@ -242,9 +282,17 @@ export const ProfileProvider = ({ children }) => {
             // Clear current profile and cached active profile if it's the one being deleted
             if (currentProfile && currentProfile.id === profileId) {
                 setCurrentProfile(null);
+                setMyList([]);
+                setWatchHistory([]);
                 storage.remove('lastProfileId');
                 storage.remove('altyflix_cached_active_profile');
             }
+
+            // Clean per-profile local storage keys
+            storage.remove(`altyflix_favorites_${profileId}`);
+            storage.remove(`altyflix_history_${profileId}`);
+            storage.remove(`altyflix_subtitles_always_on_${profileId}`);
+            storage.remove(`recent_searches_${profileId}`);
 
             const result = await deleteProfileDB(profileId);
             if (!result.success) {
@@ -264,6 +312,12 @@ export const ProfileProvider = ({ children }) => {
         setCurrentProfile(profile);
         storage.set('lastProfileId', profile.id);
         storage.set('altyflix_cached_active_profile', profile);
+
+        // Immediately swap list/history to target profile's cache to prevent cross-profile write leaks
+        const nextFavs = storage.get(`altyflix_favorites_${profile.id}`);
+        setMyList(Array.isArray(nextFavs) ? nextFavs : []);
+        const nextHist = storage.get(`altyflix_history_${profile.id}`);
+        setWatchHistory(Array.isArray(nextHist) ? nextHist : []);
         
         applyThemeLayout(profile.themeLayout || 'netflix');
 
@@ -317,15 +371,16 @@ export const ProfileProvider = ({ children }) => {
 
     // Add to My List
     const addToMyList = useCallback(async (content) => {
-        if (!currentProfile || !currentUser) return false;
+        if (!currentProfile || !currentUser || !content) return false;
 
         try {
             const localKey = `altyflix_favorites_${currentProfile.id}`;
             const targetId = content.id || content.contentId;
+            const targetType = getContentType(content, 'movie');
             let currentList = myList || [];
 
-            if (!currentList.some(item => String(item.id || item.contentId) === String(targetId))) {
-                const itemToSave = { ...content, id: targetId };
+            if (!currentList.some(item => matchesContent(item, targetId, targetType))) {
+                const itemToSave = sanitizeFavoriteItem(content, targetId);
                 const updatedList = [...currentList, itemToSave];
                 setMyList(updatedList);
                 storage.set(localKey, updatedList);
@@ -351,12 +406,14 @@ export const ProfileProvider = ({ children }) => {
     }, [currentProfile, currentUser, myList, addToast]);
 
     // Remove from My List
-    const removeFromMyList = useCallback(async (contentId) => {
+    const removeFromMyList = useCallback(async (contentId, contentType = null) => {
         if (!currentProfile || !currentUser) return false;
 
         try {
             const localKey = `altyflix_favorites_${currentProfile.id}`;
-            const updatedList = (myList || []).filter(item => String(item.id || item.contentId) !== String(contentId));
+            const targetId = typeof contentId === 'object' ? (contentId.id || contentId.contentId) : contentId;
+            const resolvedType = contentType || (typeof contentId === 'object' ? (contentId.media_type || contentId.type || null) : null);
+            const updatedList = (myList || []).filter(item => !matchesContent(item, targetId, resolvedType));
             setMyList(updatedList);
             storage.set(localKey, updatedList);
             addToast('Retiré de Ma Liste', 'success');
@@ -381,7 +438,8 @@ export const ProfileProvider = ({ children }) => {
     const isInMyList = useCallback((content) => {
         if (!content || !myList) return false;
         const targetId = content.id || content.contentId;
-        return myList.some(item => String(item.id || item.contentId) === String(targetId));
+        const targetType = content.media_type || content.type || null;
+        return myList.some(item => matchesContent(item, targetId, targetType));
     }, [myList]);
 
     const [watchHistory, setWatchHistory] = useState(() => {
@@ -446,17 +504,8 @@ export const ProfileProvider = ({ children }) => {
             const cachedHistory = storage.get(`altyflix_history_${currentProfile.id}`);
             const currentHistory = Array.isArray(cachedHistory) ? cachedHistory : [];
 
-            // Remove existing entry for this content
+            // Remove existing entry for this content (keyed by type + id to avoid Movie/TV TMDB ID collisions)
             const targetId = content.id || content.contentId;
-            const filteredHistory = currentHistory.filter(item => String(item.contentId || item.id) !== String(targetId));
-
-            // Logic: If progress >= 88%, we consider it "Finished".
-            // We keep it in history with 100% progress so "Mark as Watched" persists.
-            // We will filter it out in the Home UI "Continue Watching" row.
-            if (progress >= 88) {
-                progress = 100;
-            }
-
             const isTv = Boolean(
                 content.media_type === 'tv' ||
                 content.type === 'tv' ||
@@ -471,11 +520,19 @@ export const ProfileProvider = ({ children }) => {
                 (content.name && !content.title)
             );
             const resolvedType = isTv ? 'tv' : getContentType(content, 'movie');
+            const filteredHistory = currentHistory.filter(item => !matchesContent(item, targetId, resolvedType));
+
+            // Logic: If progress >= 88%, we consider it "Finished".
+            // We keep it in history with 100% progress so "Mark as Watched" persists.
+            // We will filter it out in the Home UI "Continue Watching" row.
+            if (progress >= 88) {
+                progress = 100;
+            }
 
             const newItem = {
                 contentId: targetId,
-                title: content.title || content.name,
-                name: content.name || content.title,
+                title: content.title || content.name || '',
+                name: content.name || content.title || '',
                 poster_path: content.poster_path || null,
                 backdrop_path: content.backdrop_path || null,
                 type: resolvedType,
@@ -507,17 +564,14 @@ export const ProfileProvider = ({ children }) => {
         }
     }, [currentProfile, currentUser]);
 
-    const removeFromHistory = useCallback(async (contentId) => {
+    const removeFromHistory = useCallback(async (contentId, contentType = null) => {
         if (!currentProfile || !currentUser) return;
         try {
             const localKey = `altyflix_history_${currentProfile.id}`;
             const historyRef = doc(db, 'users', currentUser.uid, 'profiles', currentProfile.id, 'history', 'main');
 
             const currentHistory = watchHistory || storage.get(localKey) || [];
-            const updatedHistory = currentHistory.filter(item => {
-                const itemId = item.contentId || item.id;
-                return String(itemId) !== String(contentId);
-            });
+            const updatedHistory = currentHistory.filter(item => !matchesContent(item, contentId, contentType));
 
             setWatchHistory(updatedHistory);
             storage.set(localKey, updatedHistory);
@@ -570,10 +624,11 @@ export const ProfileProvider = ({ children }) => {
 
     const markAsWatched = useCallback(async (content, season = null, episode = null) => {
         const contentId = content.id || content.contentId;
-        const isWatched = watchHistory.some(h => String(h.contentId) === String(contentId) && h.progress >= 90);
+        const targetType = getContentType(content, 'movie');
+        const isWatched = watchHistory.some(h => matchesContent(h, contentId, targetType) && h.progress >= 90);
         if (isWatched) {
             // If already watched, we just remove it from history to "unmark" it
-            await removeFromHistory(contentId);
+            await removeFromHistory(contentId, targetType);
         } else {
             // Mark as watched (100% progress)
             const s = season ?? content.season ?? (content.number_of_seasons ? 1 : null);

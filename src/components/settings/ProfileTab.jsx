@@ -45,7 +45,12 @@ export default function ProfileTab({
                         onClick={() => { playHaptic(); setShowAvatarSelector(true); }}
                     >
                         <span className="block h-28 w-28 overflow-hidden rounded-[26%] bg-[#101016] ring-1 ring-white/10 transition-shadow group-hover:ring-2 group-hover:ring-white">
-                            <img src={selectedAvatar} alt="" className="h-full w-full object-cover" />
+                            <img
+                                src={selectedAvatar || '/avatars/netflix/users-1.png'}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                onError={(e) => { e.currentTarget.src = '/avatars/netflix/users-1.png'; }}
+                            />
                         </span>
                         <span className="absolute -bottom-1.5 -right-1.5 grid h-9 w-9 place-items-center rounded-full bg-white text-black shadow-lg">
                             <Icon name="edit" className="h-4 w-4" strokeWidth={2.2} />

@@ -110,6 +110,7 @@ export const EmptyState = ({ icon, title, children, action, tone = 'neutral' }) 
 
 const BUTTON_STYLES = {
     primary: 'bg-white text-black hover:bg-white/85',
+    secondary: 'bg-white/[0.12] text-white border border-white/15 hover:bg-white/20 backdrop-blur-xl',
     accent: 'bg-[#E50914] text-white hover:bg-[#f6121d]',
     glass: 'bg-white/[0.12] text-white border border-white/15 hover:bg-white/20 backdrop-blur-xl',
     ghost: 'text-white/70 hover:text-white hover:bg-white/10',
@@ -121,7 +122,7 @@ export const Button = ({ variant = 'primary', size = 'md', className = '', child
         {...props}
         className={`inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50
             ${size === 'lg' ? 'h-12 px-6 text-base sm:h-[52px] sm:px-7 sm:text-lg' : size === 'sm' ? 'h-9 px-4 text-[13px]' : 'h-11 px-5 text-sm'}
-            ${BUTTON_STYLES[variant]} ${className}`}
+            ${BUTTON_STYLES[variant] || BUTTON_STYLES.primary} ${className}`}
     >
         {children}
     </button>

@@ -49,8 +49,11 @@ if (!existsSync(source)) {
   const response = await fetch(SOURCE_URL);
   if (!response.ok) throw new Error(`Téléchargement impossible (${response.status}). Placez vous-même le film dans ${source}`);
   await pipeline(Readable.fromWeb(response.body), createWriteStream(zip));
-  // bsdtar (Windows 10+, macOS) sait lire les .zip ; sous Linux on utilise unzip.
-  const unzip = process.platform === 'linux' ? spawnSync('unzip', ['-o', zip, '-d', work], { stdio: 'inherit' }) : spawnSync('tar', ['-xf', zip, '-C', work], { stdio: 'inherit' });
+  // bsdtar (Windows System32\tar.exe, macOS) sait lire les .zip ; sous Linux on utilise unzip.
+  const winTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+  const unzip = process.platform === 'linux'
+    ? spawnSync('unzip', ['-o', zip, '-d', work], { stdio: 'inherit' })
+    : spawnSync(process.platform === 'win32' ? winTar : 'tar', ['-xf', zip, '-C', work], { stdio: 'inherit' });
   if (unzip.status !== 0) throw new Error(`Décompression impossible : extrayez ${zip} à la main dans ${work}`);
   await rename(path.join(work, SOURCE_FILE), source);
   await rm(zip, { force: true });

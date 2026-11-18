@@ -296,11 +296,20 @@ const SearchPage = () => {
             setDidYouMean(data.didYouMean || null);
 
             if (isAppend) {
-                setResults(prev => {
-                    const existingKeys = new Set(prev.map(p => `${p.type || getContentType(p)}_${p.id}`));
-                    const newItems = (data.results || []).filter(item => !existingKeys.has(`${item.type || getContentType(item)}_${item.id}`));
-                    return [...prev, ...newItems];
-                });
+                const incoming = data.results || [];
+                if (incoming.length === 0) {
+                    setTotalPages(targetPage);
+                } else {
+                    setResults(prev => {
+                        const existingKeys = new Set(prev.map(p => `${p.type || getContentType(p)}_${p.id}`));
+                        const newItems = incoming.filter(item => !existingKeys.has(`${item.type || getContentType(item)}_${item.id}`));
+                        if (newItems.length === 0) {
+                            queueMicrotask(() => setTotalPages(targetPage));
+                            return prev;
+                        }
+                        return [...prev, ...newItems];
+                    });
+                }
             } else {
                 setResults(data.results || []);
                 setPage(1);
@@ -388,18 +397,28 @@ const SearchPage = () => {
         return () => observer.disconnect();
     }, [loading, loadingMore, page, totalPages, debouncedQuery, filter, executeMediaSearch]);
 
-    // Load genre results when a genre chip is clicked
+    // Load genre results when a genre chip is clicked (enforcing Kids Mode when active)
     useEffect(() => {
         if (!selectedGenre) { setGenreResults([]); return; }
+        const isKid = Boolean(currentProfile?.isKid);
+        const genre = GENRE_CHIPS.find(g => g.id === selectedGenre);
+        if (isKid && !genre?.kidSafe) {
+            setSelectedGenre(null);
+            setGenreResults([]);
+            return;
+        }
         const controller = new AbortController();
         (async () => {
             setLoading(true);
             try {
-                const genre = GENRE_CHIPS.find(g => g.id === selectedGenre);
                 const mediaType = genre?.type === 'tv' ? 'tv' : 'movie';
                 const data = await getContentByGenre(mediaType, selectedGenre);
                 if (controller.signal.aborted) return;
-                setGenreResults(data.results?.slice(0, 18) || []);
+                const raw = data.results || [];
+                const filtered = isKid
+                    ? raw.filter(item => !item.adult && !(item.genre_ids || []).some(gid => [27, 80, 53, 10752].includes(gid)))
+                    : raw;
+                setGenreResults(filtered.slice(0, 18));
             } catch (_) {
                 if (!controller.signal.aborted) setGenreResults([]);
             } finally {
@@ -407,7 +426,7 @@ const SearchPage = () => {
             }
         })();
         return () => controller.abort();
-    }, [selectedGenre]);
+    }, [selectedGenre, currentProfile?.isKid]);
 
     useEffect(() => {
         const goOnline = () => {
@@ -483,7 +502,7 @@ const SearchPage = () => {
                     {avatar ? (
                         <img src={avatar} alt="" loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                     ) : (
-                        <span className="grid h-full w-full place-items-center font-display text-xl font-bold text-white/30">{person.name.charAt(0)}</span>
+                        <span className="grid h-full w-full place-items-center font-display text-xl font-bold text-white/30">{(person.name || '?').charAt(0)}</span>
                     )}
                 </span>
                 <span className="w-full truncate text-[13px] font-semibold text-white/85 transition-colors group-hover:text-white">{person.name}</span>
@@ -522,6 +541,7 @@ const SearchPage = () => {
 
                 <SearchFilterChips
                     isSearching={isSearching}
+                    isKid={Boolean(currentProfile?.isKid)}
                     recentSearches={recentSearches}
                     setQuery={setQuery}
                     setDebouncedQuery={setDebouncedQuery}

@@ -76,16 +76,34 @@ async function fetchJson(url, options = {}) {
 // Per-process protection. A shared CDN/WAF limit is still needed at deployment.
 function createRateLimiter(max = 120, windowMs = 60000) {
   const clients = new Map();
+  let lastSweep = Date.now();
   return key => {
     const now = Date.now();
-    for (const [id, entry] of clients) if (entry.reset <= now) clients.delete(id);
-    if (!clients.has(key)) {
-      if (clients.size >= 10000) return false;
-      clients.set(key, { count: 0, reset: now + windowMs });
+    if (now - lastSweep >= windowMs || clients.size >= 5000) {
+      for (const [id, entry] of clients) if (entry.reset <= now) clients.delete(id);
+      lastSweep = now;
     }
-    return ++clients.get(key).count <= max;
+    let entry = clients.get(key);
+    if (!entry || entry.reset <= now) {
+      if (!entry && clients.size >= 10000) return false;
+      entry = { count: 0, reset: now + windowMs };
+      clients.set(key, entry);
+    }
+    return ++entry.count <= max;
   };
 }
+
+const DOCUMENTARY_CATEGORIES = [
+  { id: 'all', name: 'Tous les Documentaires', icon: '🎬' },
+  { id: 'nature', name: 'Nature & Environnement', icon: '🌿' },
+  { id: 'history', name: 'Histoire & Civilisations', icon: '📜' },
+  { id: 'science', name: 'Science & Espace', icon: '🚀' },
+  { id: 'truecrime', name: 'Crime & Enquêtes (True Crime)', icon: '🔍' },
+  { id: 'society', name: 'Société & Géopolitique', icon: '🌍' },
+  { id: 'music', name: 'Musique & Art', icon: '🎨' },
+  { id: 'sports', name: 'Sport & Aventure Extrême', icon: '⚽' }
+];
+
 const ALLOWED_SUBTITLE_HOSTS = [
   'dl.opensubtitles.org',
   'rest.opensubtitles.org',
@@ -95,15 +113,20 @@ const ALLOWED_SUBTITLE_HOSTS = [
   'strem.io'
 ];
 
-function isAllowedSubtitleUrl(urlStr) {
+function normalizeAllowedSubtitleUrl(urlStr) {
+  if (typeof urlStr !== 'string' || !urlStr || /[\x00-\x1f\x7f]/.test(urlStr)) return null;
   try {
     const u = new URL(urlStr);
-    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return false;
+    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return null;
     const host = u.hostname.toLowerCase();
-    return ALLOWED_SUBTITLE_HOSTS.some(h => host === h || host.endsWith('.' + h));
+    return ALLOWED_SUBTITLE_HOSTS.some(h => host === h || host.endsWith('.' + h)) ? u.href : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isAllowedSubtitleUrl(urlStr) {
+  return normalizeAllowedSubtitleUrl(urlStr) !== null;
 }
 
 async function readBoundedBuffer(response, maxBytes = 2 * 1024 * 1024) {
@@ -153,16 +176,18 @@ function decodeSubtitleBuffer(buf) {
 
 function cleanSubtitleToVtt(rawText) {
   let text = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-  // Normaliser les timestamps SRT (00:01:02,345 ou 0:01:02,345 -> 00:01:02.345)
-  text = text.replace(/\b(\d{1,2}):(\d{2}:\d{2}),(\d{3})\b/g, (_m, h, rest, ms) => `${h.padStart(2, '0')}:${rest}.${ms}`);
-  const blocks = text.split(/\n{2,}/);
+  // Normaliser les timestamps SRT/VTT (virgule ou point, heure sur 1 ou 2 chiffres -> HH:MM:SS.mmm)
+  text = text.replace(/\b(\d{1,2}):(\d{2}:\d{2})[,.](\d{3})\b/g, (_m, h, rest, ms) => `${h.padStart(2, '0')}:${rest}.${ms}`);
+  const blocks = text.split(/\n[ \t]*\n+/);
   const kept = [];
-  const timeRe = /^\d{1,2}:\d{2}(?::\d{2})?\.\d{3}\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?\.\d{3}/;
+  const timeRe = /^\d{2}:\d{2}(?::\d{2})?\.\d{3}\s*-->\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}/;
+  let hadTimestamp = false;
 
   for (const rawBlock of blocks) {
     const lines = rawBlock.split('\n').map(l => l.trimEnd());
     const timeIdx = lines.findIndex(l => timeRe.test(l.trim()));
     if (timeIdx === -1) continue;
+    hadTimestamp = true;
     const payload = lines.slice(timeIdx + 1).filter(l => l.trim().length > 0);
     if (payload.length === 0) continue;
     if (payload.some(l => SUBTITLE_AD_PATTERN.test(l))) continue;
@@ -170,6 +195,8 @@ function cleanSubtitleToVtt(rawText) {
   }
 
   if (kept.length === 0) {
+    // Si tous les repères étaient des pubs, renvoyer un VTT vide propre plutôt que le texte brut contenant les pubs
+    if (hadTimestamp) return 'WEBVTT\n\n';
     const fallback = text.trim();
     return fallback.startsWith('WEBVTT') ? fallback : `WEBVTT\n\n${fallback}`;
   }
@@ -223,7 +250,7 @@ function rankOpenSubtitles(osList, { filename = '', limit = 4 } = {}) {
     let score = 0;
 
     // Popularité et note OpenSubtitles
-    const downloads = parseInt(s.SubDownloadsCnt || '0', 10) || 0;
+    const downloads = Math.max(0, parseInt(s.SubDownloadsCnt || '0', 10) || 0);
     score += Math.min(1500, Math.log10(downloads + 1) * 400);
     score += (parseFloat(s.SubRating) || 0) * 40;
     if (String(s.SubHearingImpaired) === '1') score -= 1200;
@@ -281,6 +308,7 @@ function rankOpenSubtitles(osList, { filename = '', limit = 4 } = {}) {
 
 module.exports = {
   SECURITY_HEADERS,
+  DOCUMENTARY_CATEGORIES,
   HttpError,
   positiveInteger,
   validateStreams,
@@ -289,6 +317,7 @@ module.exports = {
   BoundedCache,
   fetchJson,
   createRateLimiter,
+  normalizeAllowedSubtitleUrl,
   isAllowedSubtitleUrl,
   readBoundedBuffer,
   decodeSubtitleBuffer,

@@ -73,6 +73,7 @@ function createRouter(providers, check = probe, timeout = 2200) {
           const until=Math.min(Date.now()+(failed?1000:sources.length?45000:5000),
             ...sources.filter(s=>s.expiresAt).map(s=>Date.parse(s.expiresAt)-5000));
           const record={sources,until,failed};
+          if(cache.has(cacheKey))cache.delete(cacheKey);
           if(cache.size>=500)cache.delete(cache.keys().next().value);
           cache.set(cacheKey,record);
           return record;

@@ -10,7 +10,7 @@ html.tv-app :focus-visible {
   box-shadow: none !important;
 }
 
-html.tv-app button:focus-visible:not(:has(img)) {
+html.tv-app button:focus-visible:not(:has(img)):not([role="radio"]):not([role="switch"]) {
   outline: none;
   background-color: #fff !important;
   color: #000 !important;

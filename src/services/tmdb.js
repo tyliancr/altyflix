@@ -163,7 +163,7 @@ const apiRequest = async (endpoint, params = {}, options = {}) => {
             body = await response.text();
         } catch (error) {
             cleanup();
-            if (error.name !== 'AbortError') {
+            if (!options.signal?.aborted) {
                 const fbData = await tryDirectFallback();
                 if (fbData) return fbData;
             }
@@ -806,16 +806,12 @@ export const getValentineMovies = async (page = 1) => {
 export const findByImdbId = async (imdbId) => {
     if (!imdbId) return null;
     const clean = String(imdbId).trim();
-    if (!clean.startsWith('tt')) return null;
+    if (!/^tt\d{5,10}$/i.test(clean)) return null;
 
     try {
-        const url = `https://api.themoviedb.org/3/find/${clean}?api_key=a0819950449844817a0942ca79a4ccb0&external_source=imdb_id`;
-        const res = await fetch(url);
-        if (res.ok) {
-            const data = await res.json();
-            if (data?.tv_results?.length > 0) return { ...data.tv_results[0], media_type: 'tv' };
-            if (data?.movie_results?.length > 0) return { ...data.movie_results[0], media_type: 'movie' };
-        }
+        const data = await apiRequest(`/find/${clean}`, { external_source: 'imdb_id' });
+        if (data?.tv_results?.length > 0) return { ...data.tv_results[0], media_type: 'tv' };
+        if (data?.movie_results?.length > 0) return { ...data.movie_results[0], media_type: 'movie' };
     } catch { /* ignore */ }
     return null;
 };

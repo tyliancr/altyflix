@@ -15,6 +15,7 @@ const chip = (active) => `flex-none whitespace-nowrap rounded-full border px-4 p
 
 export default function SearchFilterChips({
     isSearching,
+    isKid = false,
     recentSearches,
     setQuery,
     setDebouncedQuery,
@@ -74,11 +75,15 @@ export default function SearchFilterChips({
             )}
 
             <div className="no-scrollbar -mx-4 mb-9 flex gap-2 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
-                {GENRE_CHIPS.map(genre => {
+                {(isKid ? GENRE_CHIPS.filter(g => g.kidSafe) : GENRE_CHIPS).map(genre => {
                     const active = genre.id === null ? selectedGenre === null : selectedGenre === genre.id;
+                    const translated = genre.labelKey === 'all'
+                        ? t('search.filters.all')
+                        : t(`search.genres.${genre.labelKey}`);
+                    const label = translated && !translated.startsWith('search.') ? translated : genre.fallback;
                     return (
                         <button key={genre.id ?? 'all'} type="button" aria-pressed={active} onClick={() => setSelectedGenre(genre.id)} className={chip(active)}>
-                            {genre.label}
+                            {label}
                         </button>
                     );
                 })}

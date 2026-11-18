@@ -114,16 +114,16 @@ const MovieCard = memo(({
         clearTimeout(collapseTimeout.current);
     }, []);
 
-    const handlePlay = useCallback((e) => { e?.stopPropagation(); play(content); }, [play, content]);
+    const handlePlay = useCallback((e) => { e?.stopPropagation(); play({ ...content, media_type: actualType }); }, [play, content, actualType]);
     const handleNavigate = useCallback(() => { navigate(`/${actualType}/${contentId}`); }, [navigate, actualType, contentId]);
     const handleToggleList = useCallback((e) => {
         e?.stopPropagation();
         if (inList) {
-            onRemoveFromList ? onRemoveFromList(contentId) : removeFromMyList(contentId);
+            onRemoveFromList ? onRemoveFromList(contentId) : removeFromMyList(contentId, actualType);
         } else {
-            onAddToList ? onAddToList(content) : addToMyList(content);
+            onAddToList ? onAddToList({ ...content, media_type: actualType }) : addToMyList({ ...content, media_type: actualType });
         }
-    }, [inList, onRemoveFromList, onAddToList, contentId, content, removeFromMyList, addToMyList]);
+    }, [inList, onRemoveFromList, onAddToList, contentId, content, actualType, removeFromMyList, addToMyList]);
 
     // ── Fetch trailer + details only when expanded (with memory cache) ───
     useEffect(() => {
@@ -183,12 +183,13 @@ const MovieCard = memo(({
         }
 
         const handleMsg = (event) => {
-            if (!event.origin?.includes('youtube')) return;
+            if (event.origin !== 'https://www.youtube-nocookie.com' && event.origin !== 'https://www.youtube.com') return;
             if (trailerIframeRef.current && event.source !== trailerIframeRef.current.contentWindow) return;
             try {
                 const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
                 if (!data) return;
-                if (data.event === 'onError' || (data.info && [2, 5, 100, 101, 150, 153].includes(data.info))) {
+                // Only treat actual onError events as errors (onStateChange emits info: 2=PAUSED, 5=CUED which collide with error codes 2 & 5)
+                if (data.event === 'onError') {
                     setTrailerLoaded(false);
                     setTrailerKey(null);
                     return;

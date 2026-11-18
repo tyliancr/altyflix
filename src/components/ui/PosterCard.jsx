@@ -25,14 +25,14 @@ const PosterCard = memo(({ item, type: typeHint, badge, caption, onRemove, showT
     const title = item.title || item.name;
     const year = (item.release_date || item.first_air_date || '').slice(0, 4);
     const score = item.vote_average > 0 ? Math.round(item.vote_average * 10) : null;
-    const inList = isInMyList(item);
+    const inList = isInMyList({ ...item, id, media_type: type });
     const facts = caption ?? [year, showType ? (type === 'tv' ? 'Série' : 'Film') : null].filter(Boolean).join(' · ');
 
     const toggleList = (e) => {
         e.preventDefault();
-        if (onRemove) onRemove(id);
-        else if (inList) removeFromMyList(id);
-        else addToMyList(item);
+        if (onRemove) onRemove(id, type);
+        else if (inList) removeFromMyList(id, type);
+        else addToMyList({ ...item, id, media_type: type });
     };
 
     return (
@@ -68,10 +68,10 @@ const PosterCard = memo(({ item, type: typeHint, badge, caption, onRemove, showT
                     </span>
                 )}
 
-                <div className="absolute inset-x-2.5 bottom-2.5 flex translate-y-2 items-center gap-2 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100">
+                <div className={`absolute inset-x-2.5 bottom-2.5 flex items-center gap-2 transition-all duration-300 ${onRemove ? 'opacity-100 sm:pointer-events-none sm:translate-y-2 sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:translate-y-0 sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:translate-y-0 sm:group-focus-within:opacity-100' : 'pointer-events-none translate-y-2 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100'}`}>
                     <button
                         type="button"
-                        onClick={(e) => { e.preventDefault(); play(item); }}
+                        onClick={(e) => { e.preventDefault(); play({ ...item, id, media_type: type }); }}
                         aria-label={`Lire ${title}`}
                         className="grid h-9 w-9 place-items-center rounded-full bg-white text-black transition-transform hover:scale-110 active:scale-95"
                     >

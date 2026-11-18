@@ -28,9 +28,14 @@ const isVisible = (el) => {
     if (el.closest('[aria-hidden="true"], [inert]')) return false;
     const rect = el.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) return false;
-    const style = getComputedStyle(el);
-    // Fully transparent controls (row arrows, hover-only buttons) are mouse affordances: skip them
-    return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+    // Walk ancestors so children inside opacity-0 / hidden hover bars are skipped too
+    let node = el;
+    while (node && node !== document.documentElement) {
+        const style = getComputedStyle(node);
+        if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return false;
+        node = node.parentElement;
+    }
+    return true;
 };
 
 // When a dialog is open, keep focus inside the top-most one
@@ -182,7 +187,10 @@ if (IN_TV_APP && typeof document !== 'undefined' && /AltyflixTV/.test(navigator.
 // as soon as it is rendered, so the remote works without a first "wake up" press.
 const focusPage = () => {
     let tries = 0;
+    let timerId = null;
+    let cancelled = false;
     const attempt = () => {
+        if (cancelled) return;
         const active = document.activeElement;
         if (active && active !== document.body && isVisible(active) && !active.closest('nav')) return;
         const el = candidates().find(c => {
@@ -191,21 +199,33 @@ const focusPage = () => {
             return r.top >= 0 && r.bottom <= window.innerHeight && !c.closest('nav, header') && !TYPING.has(c.tagName);
         });
         if (el) el.focus({ preventScroll: true });
-        else if (++tries < 20) setTimeout(attempt, 150);
+        else if (++tries < 20) timerId = setTimeout(attempt, 150);
     };
-    setTimeout(attempt, 250);
+    timerId = setTimeout(attempt, 250);
+    return () => {
+        cancelled = true;
+        clearTimeout(timerId);
+    };
 };
 
 const useTVNavigation = () => {
     // Page changes (the hook runs above the router, so watch the address itself)
     useEffect(() => {
         if (!IN_TV_APP) return undefined;
-        let last = window.location.pathname;
-        focusPage();
+        let last = window.location.pathname + window.location.search;
+        let cancelFocus = focusPage();
         const timer = setInterval(() => {
-            if (window.location.pathname !== last) { last = window.location.pathname; focusPage(); }
+            const current = window.location.pathname + window.location.search;
+            if (current !== last) {
+                last = current;
+                cancelFocus();
+                cancelFocus = focusPage();
+            }
         }, 300);
-        return () => clearInterval(timer);
+        return () => {
+            clearInterval(timer);
+            cancelFocus();
+        };
     }, []);
 
     useEffect(() => {
@@ -222,6 +242,11 @@ const useTVNavigation = () => {
             const typing = active && TYPING.has(active.tagName) && active.type !== 'checkbox' && active.type !== 'radio';
 
             if (e.key === 'Backspace' && !typing) {
+                if (scope() !== document) {
+                    e.preventDefault();
+                    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                    return;
+                }
                 if (window.history.length > 1) { e.preventDefault(); window.history.back(); }
                 return;
             }

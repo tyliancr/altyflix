@@ -105,13 +105,13 @@ export default function NetflixPlayer({
     const panelRef = useRef(panel);
     panelRef.current = panel;
     const { currentProfile, updateProfile } = useProfile?.() || {};
-    const subsPrefKey = currentProfile?.id ? `altyflix_subtitles_always_on_${currentProfile.id}` : 'altyflix_subtitles_always_on';
+    const subsPrefKey = currentProfile?.id ? `altyflix_subtitles_default_on_${currentProfile.id}` : 'altyflix_subtitles_default_on';
     const [subtitlesAlwaysOn, setSubtitlesAlwaysOn] = useState(() => {
         try {
             const local = typeof localStorage !== 'undefined' ? localStorage.getItem(subsPrefKey) : null;
             if (local !== null) return local === 'true';
         } catch { /* ignore */ }
-        return currentProfile?.subtitlesAlwaysOn !== false;
+        return currentProfile?.subtitlesDefaultOn === true;
     });
     const subtitlesAlwaysOnRef = useRef(subtitlesAlwaysOn);
     subtitlesAlwaysOnRef.current = subtitlesAlwaysOn;
@@ -1110,7 +1110,7 @@ export default function NetflixPlayer({
         setSubtitlesAlwaysOn(next);
         try { localStorage.setItem(subsPrefKey, next ? 'true' : 'false'); } catch { /* stockage indisponible */ }
         if (currentProfile?.id && updateProfile) {
-            updateProfile(currentProfile.id, { subtitlesAlwaysOn: next });
+            updateProfile(currentProfile.id, { subtitlesDefaultOn: next, subtitlesAlwaysOn: next });
         }
     }, [currentProfile?.id, updateProfile, subsPrefKey]);
 

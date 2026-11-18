@@ -48,11 +48,11 @@ const Settings = () => {
     const [autoplayNext, setAutoplayNext] = useState(() => currentProfile?.autoplayNext !== false);
     const [subtitlesAlwaysOn, setSubtitlesAlwaysOn] = useState(() => {
         try {
-            const key = currentProfile?.id ? `altyflix_subtitles_always_on_${currentProfile.id}` : 'altyflix_subtitles_always_on';
+            const key = currentProfile?.id ? `altyflix_subtitles_default_on_${currentProfile.id}` : 'altyflix_subtitles_default_on';
             const local = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
             if (local !== null) return local === 'true';
         } catch { /* ignore */ }
-        return currentProfile?.subtitlesAlwaysOn !== false;
+        return currentProfile?.subtitlesDefaultOn === true;
     });
     const [subtitlesSize, setSubtitlesSize] = useState(() => currentProfile?.subtitlesSize || 'medium');
     const [subtitlesColor, setSubtitlesColor] = useState(() => currentProfile?.subtitlesColor || 'white');
@@ -90,11 +90,11 @@ const Settings = () => {
             setAutoplayNext(currentProfile.autoplayNext !== false);
             setSubtitlesAlwaysOn(() => {
                 try {
-                    const key = `altyflix_subtitles_always_on_${currentProfile.id}`;
+                    const key = `altyflix_subtitles_default_on_${currentProfile.id}`;
                     const local = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
                     if (local !== null) return local === 'true';
                 } catch { /* ignore */ }
-                return currentProfile.subtitlesAlwaysOn !== false;
+                return currentProfile.subtitlesDefaultOn === true;
             });
             setSubtitlesSize(currentProfile.subtitlesSize || 'medium');
             setSubtitlesColor(currentProfile.subtitlesColor || 'white');
@@ -215,6 +215,7 @@ const Settings = () => {
             const result = await updateProfile(currentProfile.id, {
                 autoplayTrailers,
                 autoplayNext,
+                subtitlesDefaultOn: subtitlesAlwaysOn,
                 subtitlesAlwaysOn,
                 subtitlesSize,
                 subtitlesColor,
@@ -223,7 +224,7 @@ const Settings = () => {
             });
             try {
                 if (typeof localStorage !== 'undefined' && currentProfile?.id) {
-                    localStorage.setItem(`altyflix_subtitles_always_on_${currentProfile.id}`, subtitlesAlwaysOn ? 'true' : 'false');
+                    localStorage.setItem(`altyflix_subtitles_default_on_${currentProfile.id}`, subtitlesAlwaysOn ? 'true' : 'false');
                 }
             } catch { /* ignore */ }
             saveGatewayConfig({

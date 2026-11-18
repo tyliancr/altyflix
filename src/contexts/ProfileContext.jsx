@@ -292,6 +292,7 @@ export const ProfileProvider = ({ children }) => {
             storage.remove(`altyflix_favorites_${profileId}`);
             storage.remove(`altyflix_history_${profileId}`);
             storage.remove(`altyflix_subtitles_always_on_${profileId}`);
+            storage.remove(`altyflix_subtitles_default_on_${profileId}`);
             storage.remove(`recent_searches_${profileId}`);
 
             const result = await deleteProfileDB(profileId);

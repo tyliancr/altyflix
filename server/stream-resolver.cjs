@@ -236,9 +236,12 @@ function parseStreamDetails(stream) {
 /**
  * Système de score et curation des flux vidéo
  */
-function curateStreams(rawStreams, provider, { enableAviTranscode = true, preferredLang = 'vf' } = {}) {
+function curateStreams(rawStreams, provider, { enableAviTranscode = true, preferredLang = 'vf', contentType = 'movie' } = {}) {
   const preferVo = String(preferredLang || '').toLowerCase() === 'vo' || String(preferredLang || '').toLowerCase() === 'vostfr';
-  const valid = rawStreams
+  const isMovie = String(contentType || 'movie').toLowerCase() !== 'tv';
+  const isHd1080Plus = (s) => s.tierKey === '1080p' || s.tierKey === '4k';
+
+  const validAll = rawStreams
     .filter(s => typeof s.url === 'string' && normalizeAllowedUrl(s.url) !== null && !isTorrentioErrorStream(s))
     .map((s, idx) => {
       const normalizedUrl = normalizeAllowedUrl(s.url);
@@ -267,6 +270,10 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
       };
     });
 
+  // Pour les films, imposer 1080p minimum (1080p / 4K) dès qu'au moins une source >= 1080p existe
+  const movieHdPool = isMovie ? validAll.filter(isHd1080Plus) : [];
+  const valid = (isMovie && movieHdPool.length > 0) ? movieHdPool : validAll;
+
   if (valid.length === 0) {
     return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };
   }
@@ -279,11 +286,17 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
     if (st.isCached) score += 100000;
     if (st.isDownloading) score -= 50000;
 
-    // 2. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
+    // 2. Qualité vidéo : 1080p / 4K fortement privilégiés (1080p minimum sur les films)
+    if (st.tierKey === '1080p') score += 45000;
+    else if (st.tierKey === '4k') score += 42000;
+    else if (st.tierKey === '720p') score += isMovie ? -40000 : 10000;
+    else score += isMovie ? -80000 : 0;
+
+    // 3. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
     if (st.isWebAudioSafe) score += 25000;
     if (st.hasUnsupportedAudio) score -= 35000;
 
-    // 3. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
+    // 4. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
     if (preferVo) {
       if (!st.isFrench) score += 15000;
       else score += 500;
@@ -292,11 +305,11 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
       else if (st.isVostfr) score += 500;
     }
 
-    // 4. Format MP4 universel (et forte pénalité AVI si le serveur ne peut pas transcoder, ex. Netlify)
+    // 5. Format MP4 universel (et forte pénalité AVI si le serveur ne peut pas transcoder, ex. Netlify)
     if (st.isMp4) score += 3000;
     if (st.isAvi && !enableAviTranscode) score -= 45000;
 
-    // 5. Poids adapté à la bande passante
+    // 6. Poids adapté à la bande passante
     const gb = st.sizeBytes / (1024 * 1024 * 1024);
     if (st.tierKey === '1080p') {
       if (gb >= 0.7 && gb <= 4.5) score += 400;
@@ -306,7 +319,7 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
       else if (gb > 25) score -= 2000;
     }
 
-    // 6. Seeders
+    // 7. Seeders
     score += Math.min(100, Math.round(st.seeds / 2));
     return score;
   };
@@ -318,18 +331,25 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, prefer
   const anyCached = scored.some(s => s.isCached);
   const allDownloading = !anyCached && scored.every(s => s.isDownloading);
 
-  // Détermination du meilleur flux actif
-  // S'il y a de la VF en cache, priorité absolue à la VF en cache !
+  // Détermination du meilleur flux actif (priorité langue demandée + 1080p/4K en cache)
+  const matchesPrefLang = (s) => (preferVo ? !s.isFrench : s.isFrench);
   let defaultActive = null;
   if (anyCached) {
-    const cachedVf = scored.find(s => s.isCached && s.isFrench && s.tierKey === '1080p') ||
-                     scored.find(s => s.isCached && s.isFrench) ||
-                     scored.find(s => s.isCached && s.tierKey === '1080p') ||
-                     scored.find(s => s.isCached);
-    defaultActive = cachedVf || scored[0];
+    const cachedPreferred =
+      scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '1080p') ||
+      scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '4k') ||
+      scored.find(s => s.isCached && matchesPrefLang(s)) ||
+      scored.find(s => s.isCached && s.tierKey === '1080p') ||
+      scored.find(s => s.isCached && s.tierKey === '4k') ||
+      scored.find(s => s.isCached);
+    defaultActive = cachedPreferred || scored[0];
   } else {
-    // Si aucun n'est en cache, on prend le meilleur disponible (VF prioritaire)
-    defaultActive = scored.find(s => s.isFrench) || scored[0];
+    // Si aucun n'est en cache, on prend le meilleur disponible (langue préférée + 1080p/4K prioritaire)
+    defaultActive =
+      scored.find(s => matchesPrefLang(s) && s.tierKey === '1080p') ||
+      scored.find(s => matchesPrefLang(s) && s.tierKey === '4k') ||
+      scored.find(s => matchesPrefLang(s)) ||
+      scored[0];
   }
 
   // Sélection intelligente par palier de qualité (4K, 1080p, 720p, 480p) et langue (VF / VO)
@@ -922,7 +942,15 @@ async function resolveStreamsServer({
       try {
         const hashRegex = /\/resolve\/torbox\/[^/]+\/([a-fA-F0-9]{40})\//i;
         const hashesSet = new Set();
-        for (const s of rawStreams) {
+        // Pour les films, vérifier d'abord les hashes 1080p/4K dans le quota de 35 hashes
+        const orderedForCacheCheck = type === 'tv'
+          ? rawStreams
+          : [...rawStreams].sort((a, b) => {
+              const aHd = /2160p|4k|uhd|1080p/i.test(`${a.name || ''} ${a.title || ''}`) ? 1 : 0;
+              const bHd = /2160p|4k|uhd|1080p/i.test(`${b.name || ''} ${b.title || ''}`) ? 1 : 0;
+              return bHd - aHd;
+            });
+        for (const s of orderedForCacheCheck) {
           if (s.isTorboxLibrary) continue;
           const m = (s.url || '').match(hashRegex);
           if (m && m[1]) hashesSet.add(m[1].toLowerCase());
@@ -960,7 +988,7 @@ async function resolveStreamsServer({
       }
     }
 
-    const curated = curateStreams(rawStreams, provider, { enableAviTranscode, preferredLang: normalizedLang });
+    const curated = curateStreams(rawStreams, provider, { enableAviTranscode, preferredLang: normalizedLang, contentType: type });
 
     if (!curated.streams || curated.streams.length === 0) {
       return {
@@ -1026,20 +1054,28 @@ async function resolveStreamsServer({
       const wantVo = normalizedLang === 'vo';
       const matchesLang = (s) => (wantVo ? !s.isFrench : s.isFrench);
       const isPlayableFormat = (s) => !s.isAvi || enableAviTranscode;
+      const isHd1080 = (s) => s.tierKey === '1080p' || s.tierKey === '4k';
+      const movieHdReady = type !== 'tv' ? readyStreams.filter(isHd1080) : [];
+      const eligibleReady = (type !== 'tv' && movieHdReady.length > 0) ? movieHdReady : readyStreams;
+
       const pickBestReady = (list) =>
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+        (enableAudioRemux ? (list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') || list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k')) : null) ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
-        (enableAudioRemux ? (list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') || list.find(s => isPlayableFormat(s) && matchesLang(s))) : null) ||
+        (enableAudioRemux ? list.find(s => isPlayableFormat(s) && matchesLang(s)) : null) ||
         list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
         list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
         list.find(s => isPlayableFormat(s)) ||
         list[0];
 
-      active = pickBestReady(readyStreams);
+      active = pickBestReady(eligibleReady);
       // Ne montrer que les qualités réellement prêtes dans le menu : zéro écran vert au changement de qualité !
-      finalStreams = readyStreams;
+      finalStreams = eligibleReady;
       initialStatus = 'ready';
     } else {
       // Aucune source en cache : on lance le débridage proprement avec l'écran de chargement

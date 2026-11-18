@@ -195,3 +195,32 @@ test('Debrid Stream Resolver: regressions DD+, HDR10+DV cache, CRLF et titres av
   assert.equal(serverlessCurated.activeStream.isTranscoded, false);
   assert.ok(serverlessCurated.activeStream.url.startsWith('https://torrentio.strem.fun/'));
 });
+
+test('Debrid Stream Resolver: 1080p minimum impose sur les films (avec fallback series conserve)', () => {
+  const mixedStreams = [
+    {
+      name: '[TB+] Torrentio\n720p',
+      title: 'Film.2024.FRENCH.720p.WEB.AAC.mp4\n👤 50 💾 1.1 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/hash720/film720.mp4'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Film.2024.FRENCH.1080p.WEB.AC3.mkv\n👤 10 💾 3.5 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/hash1080/film1080.mkv'
+    },
+    {
+      name: '[TB+] Torrentio\n4k',
+      title: 'Film.2024.FRENCH.2160p.WEB.AAC.mp4\n👤 8 💾 11.0 GB',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/hash4k/film4k.mp4'
+    }
+  ];
+
+  // Film : 720p ecarte, uniquement 1080p et 4K conserves, 1080p/4K selectionne par defaut
+  const movieCurated = curateStreams(mixedStreams, 'torbox', { contentType: 'movie' });
+  assert.ok(movieCurated.streams.every(s => s.tierKey === '1080p' || s.tierKey === '4k'));
+  assert.equal(movieCurated.activeStream.tierKey, '1080p');
+
+  // Serie : 720p reste propose dans les options de qualite
+  const tvCurated = curateStreams(mixedStreams, 'torbox', { contentType: 'tv' });
+  assert.ok(tvCurated.streams.some(s => s.tierKey === '720p'));
+});

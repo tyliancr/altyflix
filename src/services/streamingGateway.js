@@ -270,8 +270,9 @@ function parseStreamDetails(stream) {
  * - Évite les fichiers géants de 80 GB qui font ramer la 4K
  * - 1080p Full HD sélectionné par défaut pour un démarrage instantané sans freeze
  */
-function curateStreams(rawStreams, provider) {
-    const valid = rawStreams
+function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
+    const isMovie = String(contentType || 'movie').toLowerCase() !== 'tv';
+    const validAll = rawStreams
         .filter(s => typeof s.url === 'string' && s.url.startsWith('http') && !isTorrentioErrorStream(s))
         .map((s, idx) => {
             const details = parseStreamDetails(s);
@@ -299,6 +300,9 @@ function curateStreams(rawStreams, provider) {
                 provider
             };
         });
+
+    const movieHdPool = isMovie ? validAll.filter(s => s.tierKey === '1080p' || s.tierKey === '4k') : [];
+    const valid = (isMovie && movieHdPool.length > 0) ? movieHdPool : validAll;
 
     if (valid.length === 0) return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false, anyCached: false };
 
@@ -666,7 +670,7 @@ export async function resolvePlaybackStreams({
             };
         }
 
-        const curated = curateStreams(rawStreams, config.provider);
+        const curated = curateStreams(rawStreams, config.provider, { contentType: type });
 
         if (!curated.streams || curated.streams.length === 0) {
             return {

@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import AltyflixLogo from '../components/common/AltyflixLogo';
 import Icon from '../components/ui/Icons';
+import { IN_TV_APP } from '../hooks/useTVNavigation';
 
 const Navbar = () => {
     const [isScrolled, setIsScrolled] = useState(false);
@@ -164,7 +165,8 @@ const Navbar = () => {
                                 )}
                             </AnimatePresence>
                             <button
-                                onClick={() => setIsSearchOpen(!isSearchOpen)}
+                                // TV : la page Recherche (grand champ + résultats) au lieu du petit champ dépliant
+                                onClick={() => (IN_TV_APP ? navigate('/search') : setIsSearchOpen(!isSearchOpen))}
                                 title="Rechercher (Ctrl + K)"
                                 aria-label="Recherche"
                                 className={`flex items-center gap-2 px-3 py-2 rounded-full transition-all duration-300 z-30 ${isSearchOpen ? 'text-white/40' : 'text-white/80 hover:text-white bg-white/[0.04] hover:bg-white/10 border border-white/10 hover:border-white/20 shadow-sm'}`}
@@ -186,6 +188,7 @@ const Navbar = () => {
                     <div
                         className="relative hidden md:block"
                         onMouseEnter={() => {
+                            if (IN_TV_APP) return;
                             setIsProfileMenuOpen(true);
                             import('../pages/Settings');
                             import('../pages/ProfileSelector');
@@ -197,7 +200,8 @@ const Navbar = () => {
                             aria-label="Menu du profil"
                             aria-haspopup="menu"
                             aria-expanded={isProfileMenuOpen}
-                            onClick={() => setIsProfileMenuOpen(open => !open)}
+                            // TV : l'avatar mène directement à « Qui regarde ? » (pas de menu, pas de déconnexion par erreur)
+                            onClick={() => (IN_TV_APP ? navigate('/profiles') : setIsProfileMenuOpen(open => !open))}
                             className="flex items-center gap-2 group"
                         >
                             <div className="w-9 h-9 rounded-md overflow-hidden ring-1 ring-white/20 group-hover:ring-white/70 transition-all flex-shrink-0">

@@ -3,6 +3,7 @@ import { getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
 import { resolvePlaybackStreams, pollStreamStatus, getGatewayConfig, saveGatewayConfig, fetchSubtitlesForContent, fetchSubtitleCues, DEFAULT_PROVIDER, DEFAULT_TOKEN } from '../../services/streamingGateway';
 import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon, formatClock } from './PlayerPanels';
+import { IN_TV_APP, moveFocusWithin } from '../../hooks/useTVNavigation';
 import { UnifiedStreamingEngine } from './engine/UnifiedStreamingEngine';
 import { useProfile } from '../../contexts/ProfileContext';
 import { SUBTITLE_SIZE_MAP, SUBTITLE_COLOR_MAP } from '../settings/SettingsConstants';
@@ -68,6 +69,9 @@ export default function NetflixPlayer({
     const [episode, setEpisode] = useState(initialEpisode);
     const [tvDetails, setTvDetails] = useState(content);
     const [currentEpTitle, setCurrentEpTitle] = useState('');
+    const [currentEpOverview, setCurrentEpOverview] = useState('');
+    // Écran « Vous regardez » affiché après quelques secondes de pause (comme Netflix)
+    const [showPauseInfo, setShowPauseInfo] = useState(false);
     const [nextEpAvailable, setNextEpAvailable] = useState(false);
 
     // Stream state
@@ -160,7 +164,8 @@ export default function NetflixPlayer({
             getSeasonDetails(id, season).then(data => {
                 if (!live) return;
                 const ep = data?.episodes?.find(e => e.episode_number === episode);
-                if (ep && ep.name) setCurrentEpTitle(ep.name);
+                setCurrentEpTitle(ep?.name || '');
+                setCurrentEpOverview(ep?.overview || '');
                 const hasNext = data?.episodes?.some(e => e.episode_number > episode);
                 setNextEpAvailable(hasNext);
             }).catch(() => {});
@@ -449,6 +454,8 @@ export default function NetflixPlayer({
         };
         const onPause = () => {
             setIsPlaying(false);
+            // En pause, plus rien ne charge : on retire l'indicateur (il pouvait rester bloqué)
+            setIsBuffering(false);
             saveCurrentProgressRef.current?.();
         };
 
@@ -529,6 +536,8 @@ export default function NetflixPlayer({
         video.addEventListener('waiting', onWaiting);
         video.addEventListener('playing', onPlaying);
         video.addEventListener('error', onVideoError);
+        const onSeeked = () => updateSubtitleLinesRef.current?.();
+        video.addEventListener('seeked', onSeeked);
 
         return () => {
             saveCurrentProgressRef.current?.();
@@ -542,6 +551,7 @@ export default function NetflixPlayer({
             video.removeEventListener('waiting', onWaiting);
             video.removeEventListener('playing', onPlaying);
             video.removeEventListener('error', onVideoError);
+            video.removeEventListener('seeked', onSeeked);
             engine.destroy();
         };
     }, [activeStream?.url, activeStream?.isTranscoded, streamState, id, isTv, season, episode]);
@@ -569,7 +579,10 @@ export default function NetflixPlayer({
 
     // Affiche les contrôles puis les masque après quelques secondes de lecture (style Netflix).
     // Ils restent affichés tant qu'un panneau est ouvert ou que la vidéo est en pause.
+    const lastInteractRef = useRef(0);
     const handleMouseMove = useCallback(() => {
+        lastInteractRef.current = Date.now();
+        setShowPauseInfo(false);
         setControlsVisible(true);
         if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
         hideTimeoutRef.current = setTimeout(() => {
@@ -907,8 +920,19 @@ export default function NetflixPlayer({
         if (!sub) return;
 
         try {
-            const cues = await fetchSubtitleCues(sub.url, sub.encoding);
-            if (reqId !== activeSubRequestIdRef.current || !videoRef.current) return;
+            // Fichier vide ou injoignable : on essaie les autres pistes de la même langue
+            const candidates = [sub, ...list.filter(s => s.id !== sub.id && s.lang === sub.lang)];
+            let cues = [];
+            let chosen = sub;
+            for (const cand of candidates) {
+                cues = await fetchSubtitleCues(cand.url, cand.encoding);
+                if (reqId !== activeSubRequestIdRef.current || !videoRef.current) return;
+                if (cues.length > 0) { chosen = cand; break; }
+            }
+            if (chosen.id !== subId) {
+                setSelectedSubtitleId(chosen.id);
+                selectedSubtitleIdRef.current = chosen.id;
+            }
             cuesRef.current = cues;
             if (updateSubtitleLinesRef.current) updateSubtitleLinesRef.current();
         } catch (err) {
@@ -994,16 +1018,76 @@ export default function NetflixPlayer({
         }
     };
 
-    // Raccourcis clavier complets Netflix
+    // Clavier et télécommande.
+    // Télécommande (pensée pour être utilisable par un enfant) :
+    //  - OK = lecture / pause, gauche / droite = -10 s / +10 s
+    //  - haut / bas = afficher les boutons, puis les flèches passent d'un bouton à l'autre
+    //  - Retour = fermer le panneau ouvert, sinon quitter le lecteur
     useEffect(() => {
+        const ARROWS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+        const BACK = ['Escape', 'Backspace', 'GoBack', 'BrowserBack'];
         const onKeyDown = (e) => {
-            // Ignorer si l'utilisateur écrit dans un input
-            if (['input', 'textarea', 'select'].includes(e.target.tagName.toLowerCase())) return;
+            const tag = e.target?.tagName?.toLowerCase();
+            if (tag === 'input' || tag === 'textarea') return;
             if (e.ctrlKey || e.metaKey || e.altKey) return;
+            const { key } = e;
+            const root = containerRef.current;
+            const active = document.activeElement;
+            const panelEl = root?.querySelector('[data-player-panel]');
+            const controlsEl = root?.querySelector('[data-player-controls]');
+
+            // Touches multimédia des télécommandes
+            if (key === 'MediaPlayPause' || key === 'MediaPlay' || key === 'MediaPause') { e.preventDefault(); togglePlay(); return; }
+            if (key === 'MediaFastForward') { e.preventDefault(); seekRelative(10); handleMouseMove(); return; }
+            if (key === 'MediaRewind') { e.preventDefault(); seekRelative(-10); handleMouseMove(); return; }
+
+            // Panneau ouvert : les flèches circulent dans le panneau, Retour le ferme
+            if (panelEl) {
+                if (BACK.includes(key)) { e.preventDefault(); closePanel(); return; }
+                if (ARROWS.includes(key) && tag !== 'select') { e.preventDefault(); moveFocusWithin(panelEl, key); }
+                return;
+            }
+            if (tag === 'select') return;
+
+            if (BACK.includes(key)) {
+                e.preventDefault();
+                if (key === 'Escape' && document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                    setIsFullscreen(false);
+                } else {
+                    handleClose();
+                }
+                return;
+            }
+
+            const focusInControls = controlsVisibleRef.current && controlsEl && active && controlsEl.contains(active);
+            const onSlider = active?.getAttribute?.('role') === 'slider';
             handleMouseMove();
 
-            switch (e.key.toLowerCase()) {
+            if (focusInControls && !onSlider) {
+                if (key === 'Enter' || key === ' ') return; // le bouton focalisé s'active tout seul
+                if (ARROWS.includes(key)) { e.preventDefault(); moveFocusWithin(controlsEl, key); return; }
+            }
+            if (focusInControls && onSlider) {
+                if (key === 'ArrowDown') { e.preventDefault(); moveFocusWithin(controlsEl, key); return; }
+                if (key === 'ArrowUp') { e.preventDefault(); return; }
+                if (key === 'Enter' || key === ' ') { e.preventDefault(); togglePlay(); return; }
+            }
+
+            // Boutons masqués : haut / bas les affichent et placent le focus sur Lecture
+            if ((key === 'ArrowUp' || key === 'ArrowDown') && IN_TV_APP) {
+                e.preventDefault();
+                setControlsVisible(true);
+                requestAnimationFrame(() => {
+                    const target = root?.querySelector('[data-play-button]') || controlsEl?.querySelector('button');
+                    target?.focus({ preventScroll: true });
+                });
+                return;
+            }
+
+            switch (key.toLowerCase()) {
                 case ' ':
+                case 'enter':
                 case 'k':
                     e.preventDefault();
                     togglePlay();
@@ -1034,15 +1118,6 @@ export default function NetflixPlayer({
                     e.preventDefault();
                     toggleFullscreen();
                     break;
-                case 'escape':
-                    e.preventDefault();
-                    if (document.fullscreenElement) {
-                        document.exitFullscreen().catch(() => {});
-                        setIsFullscreen(false);
-                    } else {
-                        handleClose();
-                    }
-                    break;
                 case 'c':
                 case 's':
                     e.preventDefault();
@@ -1061,7 +1136,7 @@ export default function NetflixPlayer({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, handleMouseMove]);
+    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, handleMouseMove, closePanel]);
 
     // Fin de l'épisode : enchaîne automatiquement sur le suivant
     useEffect(() => {
@@ -1086,6 +1161,29 @@ export default function NetflixPlayer({
         setSeason(s);
         setEpisode(e);
     }, [season, episode]);
+
+    // Contrôles masqués : aucun bouton invisible ne garde le focus de la télécommande
+    useEffect(() => {
+        if (controlsVisible) return;
+        const active = document.activeElement;
+        if (active && containerRef.current?.querySelector('[data-player-controls]')?.contains(active)) active.blur();
+    }, [controlsVisible]);
+
+    // Pause prolongée (sans panneau ouvert ni chargement) : écran « Vous regardez »
+    useEffect(() => {
+        setShowPauseInfo(false);
+        if (isPlaying || panel || streamState !== 'playing') return undefined;
+        lastInteractRef.current = Date.now();
+        const t = setInterval(() => {
+            const video = videoRef.current;
+            // Position réelle (le décalage de transcodage compte) et vidéo réellement en pause
+            if (video?.paused && Date.now() - lastInteractRef.current > (IN_TV_APP ? 8000 : 5000) && (currentTimeRef.current || 0) > 1) {
+                setShowPauseInfo(true);
+                setControlsVisible(false);
+            }
+        }, 500);
+        return () => clearInterval(t);
+    }, [isPlaying, panel, isBuffering, streamState]);
 
     // Synchronisation permanente de l'état plein écran (Desktop, iOS Safari et Android)
     useEffect(() => {
@@ -1128,7 +1226,7 @@ export default function NetflixPlayer({
         ? `S${season}:É${episode}${currentEpTitle ? ` « ${currentEpTitle} »` : ''}`
         : title;
 
-    const iconBtn = 'grid place-items-center rounded p-2 text-white transition-transform duration-150 hover:scale-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white';
+    const iconBtn = 'grid place-items-center rounded-full p-2.5 text-white transition-[transform,background-color,color] duration-150 hover:scale-110 active:scale-95';
 
     const VolumeIcon = isMuted || volume === 0
         ? NetflixVolumeMuteIcon
@@ -1137,6 +1235,7 @@ export default function NetflixPlayer({
     return (
         <div
             ref={containerRef}
+            data-player-root=""
             className={`fixed inset-0 z-[99999] select-none overflow-hidden bg-black text-white ${
                 isPlayingView && !controlsVisible ? 'cursor-none' : ''
             }`}
@@ -1219,8 +1318,30 @@ export default function NetflixPlayer({
                         </div>
                     )}
 
+                    {/* Pause prolongée : « Vous regardez » */}
+                    {showPauseInfo && (
+                        <div className="player-fade-in pointer-events-none absolute inset-0 z-[25] flex items-center bg-gradient-to-r from-black/90 via-black/55 to-transparent">
+                            <div className="max-w-2xl px-8 md:px-16">
+                                <p className="text-sm font-medium text-white/60 md:text-lg">Vous regardez</p>
+                                <h2 className="mt-2 text-3xl font-bold leading-tight md:text-5xl">{title}</h2>
+                                {isTv && (
+                                    <p className="mt-4 text-lg font-semibold md:text-2xl">
+                                        Saison {season} : Épisode {episode}{currentEpTitle ? ` « ${currentEpTitle} »` : ''}
+                                    </p>
+                                )}
+                                {(isTv ? currentEpOverview : content?.overview) && (
+                                    <p className="mt-3 line-clamp-4 text-sm leading-relaxed text-white/70 md:text-lg">
+                                        {isTv ? currentEpOverview : content.overview}
+                                    </p>
+                                )}
+                            </div>
+                            <p className="absolute bottom-[28%] right-10 text-sm font-medium uppercase tracking-[0.2em] text-white/50 md:right-16">En pause</p>
+                        </div>
+                    )}
+
                     {/* Interface */}
                     <div
+                        data-player-controls=""
                         className={`pointer-events-none absolute inset-0 z-30 transition-opacity duration-300 ${
                             controlsVisible ? 'opacity-100' : 'opacity-0'
                         }`}
@@ -1256,7 +1377,7 @@ export default function NetflixPlayer({
                                         {isBuffering ? (
                                             <span className="h-14 w-14 animate-spin rounded-full border-4 border-[#e50914] border-t-transparent" />
                                         ) : (
-                                            <button type="button" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Lecture'} className={`${interactive} p-2 active:scale-90`}>
+                                            <button type="button" data-play-button="" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Lecture'} className={`${interactive} p-2 active:scale-90`}>
                                                 {isPlaying
                                                     ? <NetflixPauseIcon className="h-16 w-16" />
                                                     : <NetflixPlayIcon className="h-16 w-16" />}
@@ -1321,7 +1442,7 @@ export default function NetflixPlayer({
                                     </div>
 
                                     <div className={`mt-1 flex items-center gap-3 lg:gap-5 ${interactive}`}>
-                                        <button type="button" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Lecture'} title={isPlaying ? 'Pause (Espace)' : 'Lecture (Espace)'} className={iconBtn}>
+                                        <button type="button" data-play-button="" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Lecture'} title={isPlaying ? 'Pause (Espace)' : 'Lecture (Espace)'} className={iconBtn}>
                                             {isPlaying ? <NetflixPauseIcon className="h-9 w-9" /> : <NetflixPlayIcon className="h-9 w-9" />}
                                         </button>
                                         <button type="button" onClick={() => seekRelative(-10)} aria-label="Reculer de 10 secondes" title="Reculer de 10 s (←)" className={iconBtn}>
@@ -1422,6 +1543,7 @@ export default function NetflixPlayer({
                             show={tvDetails?.id ? tvDetails : { ...tvDetails, id }}
                             season={season}
                             episode={episode}
+                            progress={duration > 0 ? currentTime / duration : 0}
                             onSelect={goToEpisode}
                         />
                     )}

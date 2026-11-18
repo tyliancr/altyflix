@@ -953,35 +953,65 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
 /**
  * Parse le texte brut SRT ou WebVTT en un tableau de repères temporels structurés
  */
+const CUE_TIME_RE = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?/;
+
+function cueTimeToSec(h, min, s, ms) {
+    const frac = ms ? parseInt(ms.padEnd(3, '0'), 10) / 1000 : 0;
+    return (h ? parseInt(h, 10) * 3600 : 0) + parseInt(min, 10) * 60 + parseInt(s, 10) + frac;
+}
+
+/**
+ * Lecture ligne par ligne : tol\u00E8re les fichiers sans ligne vide entre deux rep\u00E8res,
+ * les millisecondes sur 1 ou 2 chiffres, les lignes vides dans un texte et les en-t\u00EAtes WebVTT.
+ */
 export function parseVttCues(rawText) {
     if (!rawText) return [];
-    const text = String(rawText).replace(/^\uFEFF/, '').replace(/\r\n|\r/g, '\n');
+    const lines = String(rawText).replace(/^\uFEFF/, '').replace(/\r\n|\r/g, '\n').split('\n');
     const cues = [];
-    const blocks = text.split(/\n\s*\n/);
+    let current = null;
 
-    for (const block of blocks) {
-        const lines = block.trim().split('\n');
-        for (let i = 0; i < lines.length; i++) {
-            const m = lines[i].match(/(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})/);
-            if (m) {
-                const toSec = (h, min, s, ms) =>
-                    (h ? parseInt(h, 10) * 3600 : 0) +
-                    parseInt(min, 10) * 60 +
-                    parseInt(s, 10) +
-                    parseInt(ms, 10) / 1000;
-                const start = toSec(m[1], m[2], m[3], m[4]);
-                const end = toSec(m[5], m[6], m[7], m[8]);
-                const rawContent = lines.slice(i + 1).join('\n')
-                    .replace(/<[^>]+>/g, '')
-                    .replace(/\{[^}]+\}/g, '')
-                    .trim();
-                if (rawContent && end > start) {
-                    cues.push({ start, end, text: rawContent });
-                }
-                break;
-            }
+    const flush = () => {
+        if (!current) return;
+        // Retire le num\u00E9ro du rep\u00E8re SRT suivant, rest\u00E9 en fin de texte
+        while (current.text.length && /^\s*(\d+)?\s*$/.test(current.text[current.text.length - 1])) {
+            current.text.pop();
         }
+        const text = current.text.join('\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/\{[^}]+\}/g, '')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/\n\s*\n+/g, '\n')
+            .trim();
+        if (text && current.end > current.start) {
+            cues.push({ start: current.start, end: current.end, text });
+        }
+        current = null;
+    };
+
+    for (const line of lines) {
+        const m = line.match(CUE_TIME_RE);
+        if (m) {
+            flush();
+            current = {
+                start: cueTimeToSec(m[1], m[2], m[3], m[4]),
+                end: cueTimeToSec(m[5], m[6], m[7], m[8]),
+                text: []
+            };
+            continue;
+        }
+        if (!current) continue;
+        if (/^(NOTE|STYLE|REGION)\b/.test(line.trim())) {
+            flush();
+            continue;
+        }
+        current.text.push(line);
     }
+    flush();
+
+    cues.sort((a, b) => a.start - b.start);
     return cues;
 }
 

@@ -1,25 +1,51 @@
-/* Remote-control mode: the focused element must be obvious from the sofa. */
-html.tv-nav :focus-visible,
-html.tv-nav :focus {
-  outline: 3px solid #fff !important;
-  outline-offset: 4px !important;
+/*
+ * Application TV (télécommande) : le focus se voit depuis le canapé, sans halo ni lueur.
+ *  - boutons : fond blanc, texte noir (comme Netflix sur TV)
+ *  - jaquettes : bord blanc net et léger agrandissement
+ *  - liens du menu : texte blanc souligné
+ */
+html.tv-app :focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  box-shadow: none !important;
 }
 
-/* Cards grow a little when focused, as they do on mouse hover */
-html.tv-nav [role="link"]:focus,
-html.tv-nav article a:focus {
-  transform: scale(1.06);
-  transition: transform 180ms ease;
+html.tv-app button:focus-visible:not(:has(img)) {
+  outline: none;
+  background-color: #fff !important;
+  color: #000 !important;
+  border-color: #fff !important;
+}
+
+html.tv-app nav a:focus-visible,
+html.tv-app header a:focus-visible {
+  outline: none;
+  color: #fff !important;
+  text-decoration: underline;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 8px;
+}
+
+html.tv-app [role="link"]:focus-visible,
+html.tv-app article:has(a:focus-visible) > div:first-child {
+  outline: 3px solid #fff;
+  outline-offset: 0;
+  transform: scale(1.07);
+  transition: transform 160ms ease-out;
   z-index: 5;
 }
 
-html.tv-nav article:focus-within h3 {
+html.tv-app article:focus-within h3 {
   color: #fff;
 }
 
-/* Inside the Android TV app: TV boxes have weak GPUs. Blur behind menus and
-   panels is the most expensive effect to draw, so it is replaced by the
-   panel's own (already dark) background. No pointer on a TV either. */
+/* Lecteur sur TV : bouton focalisé = rond blanc, icône noire */
+html.tv-app [data-player-root] button:focus-visible {
+  border-radius: 9999px;
+}
+
+/* Les box TV ont un GPU faible : le flou d'arrière-plan est remplacé par le fond
+   (déjà sombre) des panneaux. Pas de pointeur sur une TV. */
 html.tv-app *,
 html.tv-app *::before,
 html.tv-app *::after {

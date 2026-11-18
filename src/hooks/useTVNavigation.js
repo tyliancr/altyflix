@@ -39,7 +39,7 @@ const scope = () => {
     return dialogs.at(-1) || document;
 };
 
-const candidates = () => [...scope().querySelectorAll(FOCUSABLE)].filter(isVisible);
+const candidates = (root = scope()) => [...root.querySelectorAll(FOCUSABLE)].filter(isVisible);
 
 const center = (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
 
@@ -62,13 +62,13 @@ const rowMemory = new WeakMap();
  * Left/right: same line only, closest first. Up/down: the nearest line first, then the
  * element closest to the current column (so moving down never skips a row).
  */
-const findNext = (from, direction) => {
+const findNext = (from, direction, root) => {
     const a = from.getBoundingClientRect();
     const ac = center(a);
     const horizontal = direction === 'left' || direction === 'right';
     const found = [];
 
-    for (const el of candidates()) {
+    for (const el of candidates(root)) {
         if (el === from || from.contains(el) || el.contains(from)) continue;
         const b = el.getBoundingClientRect();
         const bc = center(b);
@@ -103,6 +103,22 @@ const findNext = (from, direction) => {
         if (remembered && remembered.isConnected && row.contains(remembered) && isVisible(remembered)) return remembered;
     }
     return best;
+};
+
+/**
+ * Déplace le focus dans `root` (lecteur, panneau…) dans la direction d'une flèche.
+ * Renvoie true si le focus a bougé.
+ */
+export const moveFocusWithin = (root, key) => {
+    const direction = DIRECTIONS[key];
+    if (!root || !direction) return false;
+    const active = document.activeElement;
+    const from = active && root.contains(active) && isVisible(active) ? active : null;
+    const next = from ? findNext(from, direction, root) : candidates(root)[0];
+    if (!next) return false;
+    next.focus({ preventScroll: true });
+    next.scrollIntoView?.({ block: 'nearest' });
+    return true;
 };
 
 const firstInView = () => {
@@ -154,7 +170,7 @@ const detectTvApp = () => {
     } catch { /* storage blocked: rely on the user agent */ }
     return /AltyflixTV/.test(navigator.userAgent);
 };
-const IN_TV_APP = detectTvApp();
+export const IN_TV_APP = detectTvApp();
 
 // TVs report 960×540 CSS pixels (1080p at density 2), a tablet layout with a collapsed
 // menu. Lay the page out at 1280×720, as TV apps do, and let the WebView scale it to the screen.
@@ -194,9 +210,14 @@ const useTVNavigation = () => {
 
     useEffect(() => {
         const root = document.documentElement;
+        // Sur ordinateur, les flèches gardent leur rôle normal (défiler la page) :
+        // la navigation spatiale est réservée à l'application TV.
+        if (!IN_TV_APP) return undefined;
 
         const onKeyDown = (e) => {
             if (e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented) return;
+            // Le lecteur gère lui-même la télécommande
+            if (document.querySelector('[data-player-root]')) return;
             const active = document.activeElement;
             const typing = active && TYPING.has(active.tagName) && active.type !== 'checkbox' && active.type !== 'radio';
 
@@ -227,17 +248,11 @@ const useTVNavigation = () => {
             }
         };
 
-        if (IN_TV_APP) root.classList.add('tv-nav', 'tv-app');
-
-        const onPointer = () => { if (!IN_TV_APP) root.classList.remove('tv-nav'); };
+        root.classList.add('tv-nav', 'tv-app');
 
         window.addEventListener('keydown', onKeyDown);
-        window.addEventListener('mousemove', onPointer, { passive: true });
-        window.addEventListener('pointerdown', onPointer, { passive: true });
         return () => {
             window.removeEventListener('keydown', onKeyDown);
-            window.removeEventListener('mousemove', onPointer);
-            window.removeEventListener('pointerdown', onPointer);
             root.classList.remove('tv-nav', 'tv-app');
         };
     }, []);

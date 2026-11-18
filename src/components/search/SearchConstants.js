@@ -23,10 +23,10 @@ export const SEARCH_TYPES = [
 ];
 
 export const MOODS = [
-    { id: 'action', label: '🔥 Action & Adrénaline', genre: 28 },
-    { id: 'comedy', label: '😂 Comédie & Détente', genre: 35 },
-    { id: 'scifi', label: '🚀 Aventure & Sci-Fi', genre: 878 },
-    { id: 'thriller', label: '🧠 Enquête & Suspense', genre: 53 },
-    { id: 'horror', label: '😨 Frissons & Horreur', genre: 27 },
-    { id: 'romance', label: '❤️ Romance & Émotion', genre: 10749 },
+    { id: 'action', label: 'Action & Adrénaline', genre: 28 },
+    { id: 'comedy', label: 'Comédie & Détente', genre: 35 },
+    { id: 'scifi', label: 'Aventure & Sci-Fi', genre: 878 },
+    { id: 'thriller', label: 'Enquête & Suspense', genre: 53 },
+    { id: 'horror', label: 'Frissons & Horreur', genre: 27 },
+    { id: 'romance', label: 'Romance & Émotion', genre: 10749 },
 ];

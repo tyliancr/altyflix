@@ -1,7 +1,7 @@
 ﻿import { useLocation, BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { useProfile } from './contexts/ProfileContext';
-import { lazy, Suspense, Component } from 'react';
+import { lazy, Suspense, Component, useEffect } from 'react';
 import useTVNavigation from './hooks/useTVNavigation';
 import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -382,8 +382,51 @@ const AppRoutes = () => {
   );
 };
 
+// Chaque page est téléchargée à la demande. Pour que les changements de page (et le
+// lancement d'une vidéo) soient instantanés, on les précharge dès que le navigateur
+// est au repos : les pages d'abord, le lecteur (plus lourd) ensuite.
+const PAGE_CHUNKS = [
+  () => import('./pages/Home'),
+  () => import('./pages/DetailPage'),
+  () => import('./pages/FilmsPage'),
+  () => import('./pages/SeriesPage'),
+  () => import('./pages/SearchPage'),
+  () => import('./pages/MyList'),
+  () => import('./pages/DocumentariesPage'),
+  () => import('./pages/UpcomingPage'),
+  () => import('./pages/CategoryPage'),
+  () => import('./pages/PersonPage'),
+  () => import('./pages/ProfileSelector'),
+  () => import('./pages/Settings'),
+];
+const PLAYER_CHUNKS = [
+  () => import('./pages/WatchPage'),
+  () => import('./components/player/VideoPlayer'),
+];
+
+function usePrefetchChunks() {
+  useEffect(() => {
+    // Connexion lente ou mode économie de données : on ne précharge rien
+    const conn = navigator.connection;
+    if (conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType || '')) return undefined;
+    const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 1200));
+    const cancel = window.cancelIdleCallback || clearTimeout;
+    const ids = [];
+    let i = 0;
+    const queue = [...PAGE_CHUNKS, ...PLAYER_CHUNKS];
+    const next = () => {
+      const load = queue[i++];
+      if (!load) return;
+      load().catch(() => {}).finally(() => ids.push(idle(next, { timeout: 4000 })));
+    };
+    ids.push(idle(next, { timeout: 4000 }));
+    return () => ids.forEach(id => cancel(id));
+  }, []);
+}
+
 function App() {
   useTVNavigation(); // Enable global spatial navigation logic for TV/Keyboard
+  usePrefetchChunks();
 
   return (
     <Router>

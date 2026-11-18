@@ -2,6 +2,10 @@
   command = "npm run build"
   publish = "dist"
 
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
 [build.environment]
   NODE_VERSION = "24"
   VITE_FIREBASE_API_KEY = "AIzaSyAsYvCQOr0cxPLEFrjd39UCnUirwihjgG4"
@@ -13,13 +17,6 @@
   VITE_FIREBASE_MEASUREMENT_ID = "G-FEPTB7QJRK"
   VITE_DEBRID_PROVIDER = "torbox"
 
-# Proxy transparent vers le backend Node.js hébergé sur Render
-[[redirects]]
-  from = "/api/*"
-  to = "https://altyflix-backend.onrender.com/api/:splat"
-  status = 200
-  force = true
-
 [[redirects]]
   from = "/avatars/Netflix/*"
   to = "/avatars/netflix/:splat"
@@ -29,6 +26,11 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
 
 [[headers]]
   for = "/*"

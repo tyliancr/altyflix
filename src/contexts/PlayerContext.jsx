@@ -60,7 +60,7 @@ export const PlayerProvider = ({ children }) => {
             {children}
 
             {playerState.isOpen && playerState.content && (
-                <Suspense fallback={<div role="status" className="fixed inset-0 z-[99999] grid place-items-center bg-black text-white">Chargement du lecteur…</div>}>
+                <Suspense fallback={<div role="status" className="fixed inset-0 z-[99999] grid place-items-center bg-black"><span className="h-14 w-14 animate-spin rounded-full border-4 border-[#e50914] border-t-transparent" aria-label="Chargement du lecteur" /></div>}>
                 <VideoPlayer
                     key={`${playerState.content?.id || playerState.content?.contentId || 'player'}-${playerState.initialSeason}-${playerState.initialEpisode}`}
                     content={playerState.content}

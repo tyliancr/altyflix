@@ -15,7 +15,7 @@ const requireAuth = () => {
     if (!isFirebaseConfigured) throw new Error('auth/configuration-not-found');
 };
 export const formatAuthErrorMessage = (error) => {
-    if (!error) return 'Une erreur est survenue. Veuillez réessayer.';
+    if (!error) return 'Une erreur est survenue. Veuillez rÃ©essayer.';
     const msg = typeof error === 'string' ? error : (error.code || error.message || '');
     if (msg.includes('Adresse e-mail') || msg.includes('mot de passe incorrect')) {
         return 'Adresse e-mail ou mot de passe incorrect.';
@@ -24,37 +24,37 @@ export const formatAuthErrorMessage = (error) => {
         return 'Adresse e-mail ou mot de passe incorrect.';
     }
     if (msg.includes('email-already-in-use')) {
-        return 'Cette adresse e-mail est déjà associée à un compte ALTYFLIX.';
+        return 'Cette adresse e-mail est dÃ©jÃ  associÃ©e Ã  un compte ALTYFLIX.';
     }
     if (msg.includes('invalid-email')) {
-        return 'Le format de l’adresse e-mail n’est pas valide.';
+        return 'Le format de lâ€™adresse e-mail nâ€™est pas valide.';
     }
-    if (msg.includes('weak-password') || msg.includes('6 caractères')) {
-        return 'Le mot de passe doit comporter au moins 6 caractères.';
+    if (msg.includes('weak-password') || msg.includes('6 caractÃ¨res')) {
+        return 'Le mot de passe doit comporter au moins 6 caractÃ¨res.';
     }
     if (msg.includes('too-many-requests')) {
         return 'Trop de tentatives infructueuses. Veuillez patienter un instant.';
     }
-    if (msg.includes('configuration-not-found')) return 'La connexion est indisponible : Firebase doit être configuré.';
+    if (msg.includes('configuration-not-found')) return 'La connexion est indisponible : Firebase doit Ãªtre configurÃ©.';
     if (msg.includes('network-request-failed')) {
-        return 'Erreur de connexion. Vérifiez votre connexion internet.';
+        return 'Erreur de connexion. VÃ©rifiez votre connexion internet.';
     }
     if (msg.includes('requires-recent-login')) {
         return 'Veuillez vous reconnecter pour effectuer cette action.';
     }
     if (msg.includes('popup-closed-by-user') || msg.includes('cancelled-popup-request')) {
-        return 'Connexion Google annulée.';
+        return 'Connexion Google annulÃ©e.';
     }
     if (msg.includes('popup-blocked')) {
-        return 'La fenêtre de connexion Google a été bloquée par le navigateur. Veuillez autoriser les fenêtres pop-up.';
+        return 'La fenÃªtre de connexion Google a Ã©tÃ© bloquÃ©e par le navigateur. Veuillez autoriser les fenÃªtres pop-up.';
     }
     if (msg.includes('unauthorized-domain')) {
-        return 'Ce domaine n’est pas autorisé dans Firebase Auth. Ajoutez-le dans Firebase Console > Authentification > Domaines autorisés.';
+        return 'Ce domaine nâ€™est pas autorisÃ© dans Firebase Auth. Ajoutez-le dans Firebase Console > Authentification > Domaines autorisÃ©s.';
     }
     if (typeof error === 'string' && error.length > 5 && !error.includes('auth/')) {
         return error;
     }
-    return 'Une erreur est survenue lors de l’authentification. Veuillez réessayer.';
+    return 'Une erreur est survenue lors de lâ€™authentification. Veuillez rÃ©essayer.';
 };
 
 

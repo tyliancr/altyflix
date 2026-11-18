@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import Toast from '../components/common/Toast';
 
@@ -13,29 +13,34 @@ export const useToast = () => {
     return context;
 };
 
+/**
+ * Notifications discrètes : seules les erreurs s'affichent (une à la fois).
+ * Les confirmations (« ajouté à Ma liste »…) se voient déjà sur le bouton lui-même,
+ * elles ne déclenchent plus de pop-up.
+ */
 export const ToastProvider = ({ children }) => {
-    const [toasts, setToasts] = useState([]);
+    const [toast, setToast] = useState(null);
+    const timerRef = useRef(null);
 
-    const addToast = useCallback((message, type = 'info') => {
-        const id = Date.now().toString();
-        setToasts((prev) => [...prev, { id, message, type }]);
-
-        // Auto remove after 3 seconds
-        setTimeout(() => {
-            setToasts((prev) => prev.filter((t) => t.id !== id));
-        }, 3000);
+    const removeToast = useCallback(() => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setToast(null);
     }, []);
 
-    const removeToast = useCallback((id) => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
+    const addToast = useCallback((message, type = 'info') => {
+        if (type !== 'error') return;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        const id = Date.now().toString();
+        setToast({ id, message, type });
+        timerRef.current = setTimeout(() => setToast(null), 3500);
     }, []);
 
     return (
         <ToastContext.Provider value={{ addToast, removeToast }}>
             {children}
-            <div className="fixed top-20 right-4 z-[60] flex flex-col space-y-2 pointer-events-none">
+            <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-[100001] flex justify-center px-4 md:bottom-8">
                 <AnimatePresence>
-                    {toasts.map((toast) => (
+                    {toast && (
                         <Toast
                             key={toast.id}
                             id={toast.id}
@@ -43,7 +48,7 @@ export const ToastProvider = ({ children }) => {
                             type={toast.type}
                             onClose={removeToast}
                         />
-                    ))}
+                    )}
                 </AnimatePresence>
             </div>
         </ToastContext.Provider>

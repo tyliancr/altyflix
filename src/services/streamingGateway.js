@@ -19,28 +19,30 @@ export const DEBRID_PROVIDERS = [
 export const DEFAULT_PROVIDER = 'torbox';
 export const DEFAULT_TOKEN = '';
 
-// Clé plateforme par défaut pour tous les visiteurs du site.
-// Permet à tous vos utilisateurs de profiter immédiatement du streaming haute vitesse VF/VO sans configuration.
-// Protégée : jamais affichée dans les champs de formulaire des Réglages.
+// Clé plateforme sécurisée côté serveur (DEBRID_TOKEN dans .env).
+// Les clés secrètes ne sont jamais exposées côté frontend pour protéger les quotas.
 const PLATFORM_DEFAULT_PROVIDER = 'torbox';
-const PLATFORM_DEFAULT_TOKEN = '0ee09dc1-1d3f-4cc4-b806-950e471df905';
 
 const STORAGE_KEY_PROVIDER = 'altyflix_stream_provider';
 const STORAGE_KEY_TOKEN = 'altyflix_stream_token';
+const STORAGE_KEY_FRENCHIO_URL = 'altyflix_frenchio_url';
 
 /**
  * Récupère la configuration actuelle de la passerelle
- * Priorité : LocalStorage utilisateur uniquement (la clé globale plateforme reste 100% sécurisée côté serveur)
+ * Priorité : LocalStorage utilisateur si configuré, sinon clé globale serveur
  */
 export function getGatewayConfig() {
     let provider = DEFAULT_PROVIDER;
     let customToken = '';
+    let frenchioUrl = '';
 
     if (typeof window !== 'undefined') {
         const storedProvider = localStorage.getItem(STORAGE_KEY_PROVIDER);
         const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
+        const storedFrenchio = localStorage.getItem(STORAGE_KEY_FRENCHIO_URL);
         if (storedProvider && storedProvider.trim()) provider = storedProvider.trim();
         if (storedToken && storedToken.trim().length > 3) customToken = storedToken.trim();
+        if (storedFrenchio && storedFrenchio.trim()) frenchioUrl = storedFrenchio.trim();
     }
 
     const hasCustomToken = Boolean(customToken);
@@ -48,15 +50,16 @@ export function getGatewayConfig() {
     return {
         provider: provider || DEFAULT_PROVIDER,
         token: customToken,
+        frenchioUrl,
         hasCustomToken,
-        hasToken: true // Le serveur fournit la clé plateforme de manière transparente
+        hasToken: true // Le serveur fournit la clé plateforme de manière 100% sécurisée
     };
 }
 
 /**
  * Enregistre la configuration de la passerelle
  */
-export function saveGatewayConfig({ provider, token }) {
+export function saveGatewayConfig({ provider, token, frenchioUrl }) {
     if (typeof window === 'undefined') return;
 
     if (provider) {
@@ -65,10 +68,17 @@ export function saveGatewayConfig({ provider, token }) {
     if (typeof token === 'string') {
         localStorage.setItem(STORAGE_KEY_TOKEN, token.trim());
     }
+    if (typeof frenchioUrl === 'string') {
+        localStorage.setItem(STORAGE_KEY_FRENCHIO_URL, frenchioUrl.trim());
+    }
 
     // Déclenche un événement personnalisé pour notifier l'UI
     window.dispatchEvent(new CustomEvent('altyflix-gateway-updated', {
-        detail: { provider, token: (token || '').trim() }
+        detail: {
+            provider,
+            token: (token || '').trim(),
+            frenchioUrl: (frenchioUrl || '').trim()
+        }
     }));
 }
 
@@ -84,6 +94,9 @@ export function isTorrentioErrorStream(stream) {
     if (url.includes('failed_access') || url.includes('/videos/failed_')) return true;
     if (name.toLowerCase().includes('error') || name.toLowerCase().includes('tb error') || name.toLowerCase().includes('rd error')) return true;
     if (title.toLowerCase().includes('invalid') || title.toLowerCase().includes('failed') || title.toLowerCase().includes('rate limit')) return true;
+
+    // Filtre les vidéos de téléchargement Torrentio : ne jamais les considérer comme une vidéo de film valide
+    if (url.includes('downloading_') || url.includes('/videos/downloading') || url.includes('downloading.mp4')) return true;
 
     return false;
 }
@@ -112,6 +125,10 @@ function parseStreamDetails(stream) {
     const nameText = stream.name || '';
     const filename = stream.behaviorHints?.filename || titleText.split('\n')[0] || '';
     const fullText = (titleText + ' ' + nameText + ' ' + filename).toLowerCase();
+
+    // Détection Debrid : flux en cache ([TB+], [RD+], etc.) vs flux en cours de téléchargement
+    const isCached = /\[(tb|rd|ad|pm|dl)\+\]/i.test(nameText) || /\[\+\]/.test(nameText) || /\b\+\b/.test(nameText);
+    const isDownloading = !isCached && (/\[(tb|rd|ad|pm|dl)\s+download\]/i.test(nameText) || /download/i.test(nameText));
 
     // Décomposition des lignes Torrentio pour isoler le nom de la release des métadonnées
     const titleLines = titleText.split('\n');
@@ -174,6 +191,7 @@ function parseStreamDetails(stream) {
     const hasBadAudio = (hasDts || hasAc3 || hasDdp) && !hasAac && !hasMp3;
     const isPureFrench = /\b(truefrench|vff)\b/i.test(fullText);
     const isMp4 = /\.mp4(\?|$)/i.test(stream?.url || '') || /\.mp4/i.test(filename);
+    const isAvi = /\.avi(\?|$)/i.test(stream?.url || '') || /\.avi/i.test(filename) || /xvid|divx/i.test(fullText);
 
     // Extraction de la taille du fichier (ex: 2.1 GB)
     const sizeMatch = titleText.match(/💾\s*([\d.]+\s*[KMGT]B)/i);
@@ -194,12 +212,15 @@ function parseStreamDetails(stream) {
     return {
         resolution,
         tierKey,
+        isCached,
+        isDownloading,
         isFrench,
         isVostfr,
         isWebAudioSafe,
         hasBadAudio,
         isPureFrench,
         isMp4,
+        isAvi,
         hasDdp,
         hasDts,
         hasAc3,
@@ -229,12 +250,15 @@ function curateStreams(rawStreams, provider) {
                 url: s.url,
                 quality: details.resolution,
                 tierKey: details.tierKey,
+                isCached: details.isCached,
+                isDownloading: details.isDownloading,
                 isFrench: details.isFrench,
                 isVostfr: details.isVostfr,
                 isWebAudioSafe: details.isWebAudioSafe,
                 hasBadAudio: details.hasBadAudio,
                 isPureFrench: details.isPureFrench,
                 isMp4: details.isMp4,
+                isAvi: details.isAvi,
                 languageLabel: details.languageLabel,
                 size: details.size,
                 sizeBytes: details.sizeBytes,
@@ -245,14 +269,22 @@ function curateStreams(rawStreams, provider) {
             };
         });
 
-    if (valid.length === 0) return { streams: [], activeStream: null, hasTrueVf: false };
+    if (valid.length === 0) return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false, anyCached: false };
 
     // Y a-t-il au moins un flux avec de la vraie VF ?
     const hasTrueVf = valid.some(s => s.isFrench);
 
-    // Fonction de score pour chaque flux dans sa catégorie : PRIORITÉ ABSOLUE AU SON FONCTIONNEL (+25000) ET À LA VF (+15000)
+    // Fonction de score : PRIORITÉ ABSOLUE AUX FLUX EN CACHE (+100 000), SON FONCTIONNEL (+25000) ET VF (+15000)
     const scoreStream = (st) => {
         let score = 0;
+
+        // 0. PRIORITÉ ABSOLUE AU STREAM EN CACHE PRÊT INSTANTANÉMENT
+        if (st.isCached) {
+            score += 100000;
+        }
+        if (st.isDownloading) {
+            score -= 50000;
+        }
 
         // 1. Son 100% garanti dans le navigateur (AAC / MP3 / Opus) : CRITIQUE pour ne jamais avoir de vidéo muette
         if (st.isWebAudioSafe) {
@@ -300,15 +332,18 @@ function curateStreams(rawStreams, provider) {
 
     const curated = [];
 
+    const anyCached = scored.some(s => s.isCached);
+    const allDownloading = !anyCached && scored.every(s => s.isDownloading);
+
     // Palier 1080p FHD (Le cœur de l'expérience : ultra fluide, VF prioritaire)
     if (tiers['1080p'].length > 0) {
         tiers['1080p'].sort((a, b) => b.score - a.score);
         const best1080p = tiers['1080p'][0];
         
         let label1080 = '1080p FHD';
-        if (best1080p.isFrench) label1080 = '1080p FHD · VF (Français)';
-        else if (best1080p.isVostfr) label1080 = '1080p FHD · VOSTFR (Sous-titres FR)';
-        else label1080 = '1080p FHD · VO (Original)';
+        if (best1080p.isFrench) label1080 = '1080p FHD · VF';
+        else if (best1080p.isVostfr) label1080 = '1080p FHD · VOSTFR';
+        else label1080 = '1080p FHD · VO';
 
         curated.push({
             ...best1080p,
@@ -321,7 +356,7 @@ function curateStreams(rawStreams, provider) {
             if (altVo) {
                 curated.push({
                     ...altVo,
-                    qualityLabel: `1080p FHD · ${altVo.isVostfr ? 'VOSTFR' : 'VO (Original)'}`
+                    qualityLabel: `1080p FHD · ${altVo.isVostfr ? 'VOSTFR' : 'VO'}`
                 });
             }
         } else if (hasTrueVf) {
@@ -330,7 +365,7 @@ function curateStreams(rawStreams, provider) {
             if (altVf) {
                 curated.unshift({
                     ...altVf,
-                    qualityLabel: '1080p FHD · VF (Français)'
+                    qualityLabel: '1080p FHD · VF'
                 });
             }
         }
@@ -343,7 +378,7 @@ function curateStreams(rawStreams, provider) {
         const langTag = best4k.isFrench ? 'VF' : (best4k.isVostfr ? 'VOSTFR' : 'VO');
         curated.push({
             ...best4k,
-            qualityLabel: `4K Ultra HD (${langTag})`
+            qualityLabel: `4K Ultra HD · ${langTag}`
         });
     }
 
@@ -354,7 +389,7 @@ function curateStreams(rawStreams, provider) {
         const langTag = best720.isFrench ? 'VF' : (best720.isVostfr ? 'VOSTFR' : 'VO');
         curated.push({
             ...best720,
-            qualityLabel: `720p HD (${langTag})`
+            qualityLabel: `720p HD · ${langTag}`
         });
     }
 
@@ -367,17 +402,48 @@ function curateStreams(rawStreams, provider) {
         });
     }
 
-    const finalStreams = curated.length > 0 ? curated : scored.sort((a, b) => b.score - a.score).slice(0, 4);
+    const rawList = curated.length > 0 ? curated : scored.sort((a, b) => b.score - a.score).slice(0, 4);
+    const finalStreams = rawList.map(s => {
+        if (s.isAvi && !s.url.startsWith('/api/video-stream')) {
+            return {
+                ...s,
+                url: `/api/video-stream?url=${encodeURIComponent(s.url)}`,
+                originalUrl: s.url,
+                isTranscoded: true
+            };
+        }
+        return s;
+    });
     
-    // Sélection par défaut : flux VF prioritaire au lancement !
-    const defaultActive = (hasTrueVf
-        ? (finalStreams.find(s => s.isFrench && s.tierKey === '1080p') || finalStreams.find(s => s.isFrench))
-        : null) || finalStreams.find(s => s.tierKey === '1080p') || finalStreams[0];
+    // Sélection par défaut : flux en cache en priorité absolue !
+    let defaultActive = null;
+    if (anyCached) {
+        defaultActive = finalStreams.find(s => s.isCached && s.isFrench && s.tierKey === '1080p') ||
+                        finalStreams.find(s => s.isCached && s.isFrench) ||
+                        finalStreams.find(s => s.isCached && s.tierKey === '1080p') ||
+                        finalStreams.find(s => s.isCached);
+    }
+    if (!defaultActive) {
+        defaultActive = (hasTrueVf
+            ? (finalStreams.find(s => s.isFrench && s.tierKey === '1080p') || finalStreams.find(s => s.isFrench))
+            : null) || finalStreams.find(s => s.tierKey === '1080p') || finalStreams[0];
+    }
+
+    if (defaultActive && defaultActive.isAvi && !defaultActive.url.startsWith('/api/video-stream')) {
+        defaultActive = {
+            ...defaultActive,
+            url: `/api/video-stream?url=${encodeURIComponent(defaultActive.url)}`,
+            originalUrl: defaultActive.url,
+            isTranscoded: true
+        };
+    }
 
     return {
         streams: finalStreams,
         activeStream: defaultActive,
-        hasTrueVf
+        hasTrueVf,
+        anyCached,
+        allDownloading
     };
 }
 
@@ -405,7 +471,8 @@ export async function resolvePlaybackStreams({
     imdbId: initialImdbId,
     type = 'movie',
     season = 1,
-    episode = 1
+    episode = 1,
+    title = ''
 }) {
     const config = getGatewayConfig();
     const isTv = type === 'tv';
@@ -425,43 +492,101 @@ export async function resolvePlaybackStreams({
         };
     }
 
-    const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
+    // 1. PRIORITÉ ABSOLUE : Résolution via le backend sécurisé (Zero exposition de clé)
+    try {
+        const queryParams = new URLSearchParams({
+            id: String(id || ''),
+            imdbId: String(imdbId),
+            type: isTv ? 'tv' : 'movie',
+            season: String(season || 1),
+            episode: String(episode || 1)
+        });
+        if (title) {
+            queryParams.set('title', String(title));
+        }
 
-    // Détermination du fournisseur et de la clé (clé perso utilisateur si présente, sinon clé globale plateforme)
+        const headers = { 'Accept': 'application/json' };
+        if (config.hasCustomToken) {
+            headers['x-debrid-token'] = config.token;
+            headers['x-debrid-provider'] = config.provider;
+        }
+        if (config.frenchioUrl) {
+            headers['x-frenchio-url'] = config.frenchioUrl;
+        }
+
+        console.log(`[Altyflix Stream Resolver] Résolution sécurisée via backend pour ${type} ${imdbId}...`);
+        const serverRes = await fetch(`/api/stream-resolve?${queryParams.toString()}`, {
+            headers,
+            cache: 'no-store',
+            signal: AbortSignal.timeout(9000)
+        });
+
+        if (serverRes.ok) {
+            const serverData = await serverRes.json();
+            if (serverData.success && Array.isArray(serverData.streams) && serverData.streams.length > 0) {
+                console.log(`[Altyflix Stream Resolver] Résolution backend réussie : statut=${serverData.status}, ${serverData.streams.length} flux.`);
+                return {
+                    success: true,
+                    status: serverData.status || 'ready',
+                    imdbId: serverData.imdbId || imdbId,
+                    streams: serverData.streams,
+                    activeStream: serverData.activeStream,
+                    hasTrueVf: Boolean(serverData.hasTrueVf)
+                };
+            }
+        }
+    } catch (backendErr) {
+        console.warn('[Altyflix Stream Resolver] Backend non disponible, tentative directe...', backendErr.message);
+    }
+
+    // 2. FALLBACK DIRECT CLIENT : Utilisé si le backend est momentanément inaccessible
+    const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
     const activeProvider = config.provider || PLATFORM_DEFAULT_PROVIDER;
-    const activeToken = config.hasCustomToken ? config.token : (PLATFORM_DEFAULT_TOKEN || '');
+    const activeToken = config.token || '';
 
     if (!activeToken) {
         return {
             success: false,
             reason: 'NO_STREAMS_AVAILABLE',
-            message: 'Aucun flux direct disponible pour ce titre actuellement.',
+            message: 'Connexion au serveur de streaming en cours... Réessayez dans un instant.',
             imdbId,
             streams: []
         };
     }
 
     try {
-        const options = `providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,torrent9|sort=qualitysize|language=french|${activeProvider}=${encodeURIComponent(activeToken)}`;
+        const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,torrent9,rutracker,rutor,cinemaz';
+        const options = `providers=${ALL_PROVIDERS}|sort=qualitysize|language=french|${activeProvider}=${encodeURIComponent(activeToken)}`;
         const endpoint = `https://torrentio.strem.fun/${options}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 
-        const res = await fetch(endpoint, {
+        let res = await fetch(endpoint, {
             headers: { 'Accept': 'application/json' },
-            cache: 'no-store'
+            cache: 'no-store',
+            signal: AbortSignal.timeout(8000)
         });
 
-        if (!res.ok) {
-            return {
-                success: false,
-                reason: 'GATEWAY_ERROR',
-                message: `La passerelle a répondu avec le statut ${res.status}.`,
-                imdbId,
-                streams: []
-            };
+        let rawStreams = [];
+        if (res.ok) {
+            const data = await res.json();
+            rawStreams = Array.isArray(data?.streams) ? data.streams : [];
         }
 
-        const data = await res.json();
-        const rawStreams = Array.isArray(data?.streams) ? data.streams : [];
+        // Si aucun flux en VF, élargir au catalogue mondial
+        if (!rawStreams || rawStreams.length === 0 || rawStreams.every(isTorrentioErrorStream)) {
+            const optionsGlobal = `providers=${ALL_PROVIDERS}|sort=qualitysize|${activeProvider}=${encodeURIComponent(activeToken)}`;
+            const endpointGlobal = `https://torrentio.strem.fun/${optionsGlobal}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
+
+            const resGlobal = await fetch(endpointGlobal, {
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-store',
+                signal: AbortSignal.timeout(8000)
+            });
+
+            if (resGlobal.ok) {
+                const dataGlobal = await resGlobal.json();
+                rawStreams = Array.isArray(dataGlobal?.streams) ? dataGlobal.streams : [];
+            }
+        }
 
         // Détection explicite des erreurs d'authentification ou de clé retournées par Torrentio
         const errorStream = rawStreams.find(isTorrentioErrorStream);
@@ -476,7 +601,6 @@ export async function resolvePlaybackStreams({
             };
         }
 
-        // Sélection et curation intelligente des flux (3 à 4 options propres max, son AAC garanti, pas de lag 4K)
         const curated = curateStreams(rawStreams, config.provider);
 
         if (!curated.streams || curated.streams.length === 0) {
@@ -491,8 +615,11 @@ export async function resolvePlaybackStreams({
             };
         }
 
+        const initialStatus = (curated.activeStream?.isDownloading) ? 'downloading' : 'ready';
+
         return {
             success: true,
+            status: initialStatus,
             imdbId,
             streams: curated.streams,
             activeStream: curated.activeStream,
@@ -507,6 +634,72 @@ export async function resolvePlaybackStreams({
             streams: []
         };
     }
+}
+
+/**
+ * Surveille en continu l'état d'un flux en cours de débridage (Polling intelligent avec backoff et timeout)
+ */
+export async function pollStreamStatus({
+    streamUrl,
+    signal,
+    maxAttempts = 40,
+    intervalMs = 2500,
+    onProgress = () => {}
+}) {
+    if (!streamUrl) throw new Error('URL de flux manquante pour le polling.');
+
+    console.log(`[Altyflix Stream Poll] Démarrage de la surveillance du débridage...`);
+    let attempts = 0;
+    const startTime = Date.now();
+
+    while (attempts < maxAttempts) {
+        if (signal?.aborted) {
+            console.log(`[Altyflix Stream Poll] Surveillance interrompue par l'utilisateur.`);
+            return { ready: false, aborted: true };
+        }
+
+        attempts++;
+        const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+        onProgress({ attempt: attempts, maxAttempts, elapsedSec });
+
+        try {
+            const res = await fetch(`/api/stream-poll?url=${encodeURIComponent(streamUrl)}`, {
+                signal,
+                cache: 'no-store'
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+
+                if (data.ready && data.playbackUrl) {
+                    console.log(`[Altyflix Stream Poll] ✅ Flux PRÊT après ${elapsedSec}s (${attempts} vérifications) !`);
+                    return {
+                        ready: true,
+                        playbackUrl: data.playbackUrl,
+                        elapsedSec
+                    };
+                }
+
+                if (data.status === 'downloading') {
+                    console.log(`[Altyflix Stream Poll] ⏳ En cours de téléchargement vers le debrid (${elapsedSec}s)...`);
+                }
+            }
+        } catch (err) {
+            if (signal?.aborted) return { ready: false, aborted: true };
+            console.warn(`[Altyflix Stream Poll] Échec de la vérification #${attempts} :`, err.message);
+        }
+
+        // Pause avec backoff raisonnable
+        const waitTime = Math.min(intervalMs + (attempts * 100), 4000);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+
+    console.warn(`[Altyflix Stream Poll] Timeout dépassé après ${maxAttempts} vérifications.`);
+    return {
+        ready: false,
+        timeout: true,
+        message: 'Le téléchargement sur le service de débridage prend trop de temps.'
+    };
 }
 
 /**
@@ -857,6 +1050,7 @@ export default {
     getGatewayConfig,
     saveGatewayConfig,
     resolvePlaybackStreams,
+    pollStreamStatus,
     getImdbIdForContent,
     testGatewayToken,
     fetchSubtitlesForContent,

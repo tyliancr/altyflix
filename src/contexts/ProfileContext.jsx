@@ -185,7 +185,7 @@ export const ProfileProvider = ({ children }) => {
 
     // Update profile with Optimistic UI
     const updateProfile = useCallback(async (profileId, updates) => {
-        if (!currentUser || !profiles.some(p => p.id === profileId && p.userId === currentUser.uid) || ('userId' in updates && updates.userId !== currentUser.uid)) return { success: false, error: 'Profil non autorisé.' };
+        if (!currentUser || !profiles.some(p => p.id === profileId && p.userId === currentUser.uid) || ('userId' in updates && updates.userId !== currentUser.uid)) return { success: false, error: 'Profil non autorisÃ©.' };
         try {
             // Optimistically update
             setProfiles(prev => {
@@ -316,7 +316,7 @@ export const ProfileProvider = ({ children }) => {
                 const updatedList = [...currentList, itemToSave];
                 setMyList(updatedList);
                 storage.set(localKey, updatedList);
-                addToast('Ajouté à Ma Liste', 'success');
+                addToast('AjoutÃ© Ã  Ma Liste', 'success');
 
                 if (isFirebaseConfigured) {
                     try {
@@ -327,7 +327,7 @@ export const ProfileProvider = ({ children }) => {
                     }
                 }
             } else {
-                addToast('Déjà dans votre liste', 'info');
+                addToast('DÃ©jÃ  dans votre liste', 'info');
             }
             return true;
         } catch (error) {
@@ -346,7 +346,7 @@ export const ProfileProvider = ({ children }) => {
             const updatedList = (myList || []).filter(item => String(item.id || item.contentId) !== String(contentId));
             setMyList(updatedList);
             storage.set(localKey, updatedList);
-            addToast('Retiré de Ma Liste', 'success');
+            addToast('RetirÃ© de Ma Liste', 'success');
 
             if (isFirebaseConfigured) {
                 try {
@@ -450,7 +450,7 @@ export const ProfileProvider = ({ children }) => {
                 content.first_air_date ||
                 content.number_of_seasons ||
                 content.seasons ||
-                // Only use season/episode > 1 as TV signals — default params are season=1, episode=1
+                // Only use season/episode > 1 as TV signals â€” default params are season=1, episode=1
                 // which is also valid for movies and would cause false TV classification.
                 (season != null && season > 1) ||
                 (episode != null && episode > 1) ||
@@ -508,7 +508,7 @@ export const ProfileProvider = ({ children }) => {
 
             setWatchHistory(updatedHistory);
             storage.set(localKey, updatedHistory);
-            addToast('Retiré de "Reprendre la lecture"', 'success');
+            addToast('RetirÃ© de "Reprendre la lecture"', 'success');
 
             if (isFirebaseConfigured) {
                 try {
@@ -566,7 +566,7 @@ export const ProfileProvider = ({ children }) => {
             const s = season ?? content.season ?? (content.number_of_seasons ? 1 : null);
             const e = episode ?? content.episode ?? (content.number_of_seasons ? 1 : null);
             await addToHistory(content, s, e, 100, 0);
-            addToast('Marqué comme vu', 'success');
+            addToast('MarquÃ© comme vu', 'success');
         }
     }, [watchHistory, removeFromHistory, addToHistory, addToast]);
 
@@ -577,7 +577,7 @@ export const ProfileProvider = ({ children }) => {
             const historyRef = doc(db, 'users', currentUser.uid, 'profiles', currentProfile.id, 'history', 'main');
             setWatchHistory([]);
             storage.set(localKey, []);
-            addToast('Historique de visionnage vidé !', 'success');
+            addToast('Historique de visionnage vidÃ© !', 'success');
 
             if (isFirebaseConfigured) {
                 try {

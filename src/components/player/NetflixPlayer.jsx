@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import EpisodeDrawer from '../common/EpisodeDrawer';
 import { getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
-import { resolvePlaybackStreams, getGatewayConfig, saveGatewayConfig, fetchSubtitlesForContent, fetchSubtitleCues, DEFAULT_PROVIDER, DEFAULT_TOKEN } from '../../services/streamingGateway';
+import { resolvePlaybackStreams, pollStreamStatus, getGatewayConfig, saveGatewayConfig, fetchSubtitlesForContent, fetchSubtitleCues, DEFAULT_PROVIDER, DEFAULT_TOKEN } from '../../services/streamingGateway';
+import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon, formatClock } from './PlayerPanels';
 import { UnifiedStreamingEngine } from './engine/UnifiedStreamingEngine';
 import { useProfile } from '../../contexts/ProfileContext';
 import { SUBTITLE_SIZE_MAP, SUBTITLE_COLOR_MAP } from '../settings/SettingsConstants';
@@ -22,28 +22,30 @@ import {
     NetflixSubtitlesIcon
 } from './NetflixIcons';
 
-function formatRemainingTime(seconds) {
-    if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
-    const s = Math.floor(seconds);
-    const hrs = Math.floor(s / 3600);
-    const mins = Math.floor((s % 3600) / 60);
-    const secs = s % 60;
-    if (hrs > 0) {
-        return `-${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-    return `-${mins}:${String(secs).padStart(2, '0')}`;
+// Téléphone / tablette tactile : interface Netflix mobile. Souris : interface Netflix PC.
+const COMPACT_QUERY = '(max-width: 767px), (hover: none) and (pointer: coarse)';
+function useCompactLayout() {
+    const get = () => typeof window !== 'undefined' && window.matchMedia?.(COMPACT_QUERY).matches;
+    const [compact, setCompact] = useState(get);
+    useEffect(() => {
+        const mq = window.matchMedia?.(COMPACT_QUERY);
+        if (!mq) return undefined;
+        const onChange = () => setCompact(mq.matches);
+        mq.addEventListener?.('change', onChange);
+        return () => mq.removeEventListener?.('change', onChange);
+    }, []);
+    return compact;
 }
 
-function formatCurrentTime(seconds) {
-    if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
-    const s = Math.floor(seconds);
-    const hrs = Math.floor(s / 3600);
-    const mins = Math.floor((s % 3600) / 60);
-    const secs = s % 60;
-    if (hrs > 0) {
-        return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-    return `${mins}:${String(secs).padStart(2, '0')}`;
+function getShortQualityBadge(stream) {
+    if (!stream) return 'HD';
+    let q = 'HD';
+    if (stream.tierKey === '4k' || stream.quality?.includes('4K')) q = '4K';
+    else if (stream.tierKey === '1080p' || stream.quality?.includes('1080p')) q = '1080p';
+    else if (stream.tierKey === '720p' || stream.quality?.includes('720p')) q = '720p';
+
+    const lang = stream.isFrench ? 'VF' : (stream.isVostfr ? 'VOSTFR' : 'VO');
+    return `${q} · ${lang}`;
 }
 
 export default function NetflixPlayer({
@@ -51,7 +53,7 @@ export default function NetflixPlayer({
     type: initialType,
     initialSeason = 1,
     initialEpisode = 1,
-    preferredLang = 'VF',
+    preferredLang: _preferredLang = 'VF',
     onClose,
     onNext,
     watchHistory = [],
@@ -69,16 +71,14 @@ export default function NetflixPlayer({
     const [nextEpAvailable, setNextEpAvailable] = useState(false);
 
     // Stream state
-    // 'resolving' | 'playing' | 'no_token' | 'error'
+    // 'resolving' | 'downloading' | 'ready' | 'playing' | 'no_token' | 'error'
     const [streamState, setStreamState] = useState('resolving');
     const [errorMessage, setErrorMessage] = useState('');
     const [availableStreams, setAvailableStreams] = useState([]);
     const [activeStream, setActiveStream] = useState(null);
+    const [downloadProgress, setDownloadProgress] = useState({ attempt: 0, elapsedSec: 0 });
 
-    // Quick Gateway Input States
-    const [quickProvider, setQuickProvider] = useState('realdebrid');
-    const [quickToken, setQuickToken] = useState('');
-    const [quickTesting, setQuickTesting] = useState(false);
+    const compact = useCompactLayout();
 
     // Playback state
     const [isPlaying, setIsPlaying] = useState(false);
@@ -93,42 +93,29 @@ export default function NetflixPlayer({
 
     // Overlays & Menus
     const [controlsVisible, setControlsVisible] = useState(true);
-    const [showDrawer, setShowDrawer] = useState(false);
-    const [showQualityMenu, setShowQualityMenu] = useState(false);
-    const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+    const controlsVisibleRef = useRef(controlsVisible);
+    controlsVisibleRef.current = controlsVisible;
+    // Panneau ouvert : 'episodes' | 'audio' | 'speed' | null
+    const [panel, setPanel] = useState(null);
+    const panelRef = useRef(panel);
+    panelRef.current = panel;
     const { currentProfile, updateProfile } = useProfile?.() || {};
     const [subtitlesAlwaysOn, setSubtitlesAlwaysOn] = useState(() => {
         const local = typeof localStorage !== 'undefined' ? localStorage.getItem('altyflix_subtitles_always_on') : null;
         if (local !== null) return local === 'true';
         return currentProfile?.subtitlesAlwaysOn !== false;
     });
-    const [subToast, setSubToast] = useState(null);
-    const subToastTimeoutRef = useRef(null);
 
-    const triggerSubToast = useCallback((msg) => {
-        if (subToastTimeoutRef.current) clearTimeout(subToastTimeoutRef.current);
-        setSubToast(msg);
-        subToastTimeoutRef.current = setTimeout(() => {
-            setSubToast(null);
-        }, 2200);
-    }, []);
-
-    const [showAudioSubsMenu, setShowAudioSubsMenu] = useState(false);
     const [availableSubtitles, setAvailableSubtitles] = useState([]);
     const [selectedSubtitleId, setSelectedSubtitleId] = useState('off');
     const [currentAudioLang, setCurrentAudioLang] = useState('vf');
     const [centerAction, setCenterAction] = useState(null); // 'play' | 'pause' | null
-    const [resumeToast, setResumeToast] = useState(null); // { time: 742, formatted: '12:22' }
     const [isAutoplayMuted, setIsAutoplayMuted] = useState(false);
     const [hasTrueVf, setHasTrueVf] = useState(false);
     const [rippleEffect, setRippleEffect] = useState(null); // { side: 'left' | 'right', delta: -10 | 10 }
-    const [showShortcutsModal, setShowShortcutsModal] = useState(false);
-    const [timeDisplayMode, setTimeDisplayMode] = useState('remaining'); // 'remaining' | 'elapsed'
     const lastTapRef = useRef({ time: 0, x: 0 });
-
-    // Hover timeline state
-    const [hoverTime, setHoverTime] = useState(null);
-    const [hoverPos, setHoverPos] = useState(0);
+    const tapTimerRef = useRef(null);
+    const rippleTimerRef = useRef(null);
 
     // References
     const containerRef = useRef(null);
@@ -149,6 +136,8 @@ export default function NetflixPlayer({
     const loadedUrlRef = useRef(null);
     const resolvedKeyRef = useRef('');
     const resolvedImdbIdRef = useRef('');
+    const pollingAbortControllerRef = useRef(null);
+    const transcodeOffsetRef = useRef(0);
     const currentTimeRef = useRef(currentTime);
     currentTimeRef.current = currentTime;
     const volumeRef = useRef(volume);
@@ -162,13 +151,6 @@ export default function NetflixPlayer({
     const selectedSubtitleIdRef = useRef(selectedSubtitleId);
     selectedSubtitleIdRef.current = selectedSubtitleId;
     const updateSubtitleLinesRef = useRef(() => {});
-
-    // Synchronisation de la configuration de streaming au montage
-    useEffect(() => {
-        const config = getGatewayConfig();
-        if (config.provider) setQuickProvider(config.provider);
-        if (config.token) setQuickToken(config.token);
-    }, []);
 
     // Récupération des détails de la série
     useEffect(() => {
@@ -194,11 +176,66 @@ export default function NetflixPlayer({
         }
     }, [id, isTv]);
 
+    // Nettoyage de toute surveillance / polling actif au démontage du composant
+    useEffect(() => {
+        return () => {
+            if (pollingAbortControllerRef.current) {
+                pollingAbortControllerRef.current.abort();
+            }
+        };
+    }, []);
+
+    // Démarre la surveillance en continu d'un flux en cours de débridage
+    const startStreamPolling = useCallback((targetUrl) => {
+        if (!targetUrl) return;
+        if (pollingAbortControllerRef.current) {
+            pollingAbortControllerRef.current.abort();
+        }
+        const controller = new AbortController();
+        pollingAbortControllerRef.current = controller;
+        setDownloadProgress({ attempt: 0, elapsedSec: 0 });
+
+        console.log('[Altyflix Player] Démarrage du polling pour le débridage...');
+        pollStreamStatus({
+            streamUrl: targetUrl,
+            signal: controller.signal,
+            onProgress: (prog) => {
+                setDownloadProgress(prog);
+            }
+        }).then(result => {
+            if (result.aborted) return;
+            if (result.ready && result.playbackUrl) {
+                console.log('[Altyflix Player] ✅ Débridage terminé avec succès ! URL reçue :', result.playbackUrl);
+                loadedUrlRef.current = null;
+                setActiveStream(prev => ({
+                    ...(prev || {}),
+                    url: result.playbackUrl,
+                    isDownloading: false,
+                    isCached: true
+                }));
+                setStreamState('playing');
+            } else if (result.timeout) {
+                console.warn('[Altyflix Player] Timeout de débridage atteint.');
+                setErrorMessage('Le téléchargement vers le cloud haute vitesse prend plus de temps que prévu. Essayez une autre source ou réessayez.');
+                setStreamState('error');
+            }
+        }).catch(err => {
+            if (controller.signal.aborted) return;
+            console.error('[Altyflix Player] Erreur de polling :', err);
+            setErrorMessage('Erreur lors de la vérification de la source : ' + err.message);
+            setStreamState('error');
+        });
+    }, []);
+
     // Résolution automatique du flux streaming (uniquement sur changement de média/saison/épisode)
     const resolveStream = useCallback(async (force = false) => {
         if (!id) return;
         const streamKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}`;
         if (!force && resolvedKeyRef.current === streamKey) return;
+
+        if (pollingAbortControllerRef.current) {
+            pollingAbortControllerRef.current.abort();
+        }
 
         setStreamState('resolving');
         setErrorMessage('');
@@ -220,15 +257,23 @@ export default function NetflixPlayer({
                 resolvedKeyRef.current = streamKey;
                 if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
                 setAvailableStreams(res.streams || []);
-                // Priorité absolue à la VF avec son compatible navigateur au lancement
-                const vfStream = res.streams?.find(s => s.isFrench && s.isWebAudioSafe) || res.streams?.find(s => s.isFrench);
-                const selectedStream = (res.hasTrueVf && vfStream) ? vfStream : res.activeStream;
+                // Utiliser directement activeStream (déjà optimisé VF 1080p en cache + pré-résolu côté serveur)
+                const selectedStream = res.activeStream;
                 setActiveStream(selectedStream);
                 setHasTrueVf(Boolean(res.hasTrueVf));
-                setCurrentAudioLang(res.hasTrueVf ? 'vf' : 'vo');
-                setStreamState('playing');
+                setCurrentAudioLang(selectedStream.isFrench ? 'vf' : 'vo');
+
+                // Si le flux nécessite un débridage en cours, passer à l'état 'downloading' et surveiller
+                if (res.status === 'downloading' || selectedStream.isDownloading) {
+                    console.log('[Altyflix Player] Flux non encore en cache, passage à l\'état downloading...');
+                    setStreamState('downloading');
+                    startStreamPolling(selectedStream.originalUrl || selectedStream.url);
+                } else {
+                    console.log('[Altyflix Player] Flux prêt immédiatement (en cache), lancement direct !');
+                    setStreamState('playing');
+                }
             } else if (res.reason === 'NO_TOKEN' || !config.hasToken) {
-                // Fallback transparent : injecter le token officiel et réessayer immédiatement sans bloquer l'utilisateur
+                // Fallback transparent : injecter le provider par défaut et réessayer
                 saveGatewayConfig({ provider: DEFAULT_PROVIDER, token: DEFAULT_TOKEN });
                 const retry = await resolvePlaybackStreams({
                     id,
@@ -242,12 +287,17 @@ export default function NetflixPlayer({
                     resolvedKeyRef.current = streamKey;
                     if (retry.imdbId) resolvedImdbIdRef.current = retry.imdbId;
                     setAvailableStreams(retry.streams || []);
-                    const vfStream = retry.streams?.find(s => s.isFrench);
-                    const selectedStream = (retry.hasTrueVf && vfStream) ? vfStream : retry.activeStream;
+                    const selectedStream = retry.activeStream;
                     setActiveStream(selectedStream);
                     setHasTrueVf(Boolean(retry.hasTrueVf));
-                    setCurrentAudioLang(retry.hasTrueVf ? 'vf' : 'vo');
-                    setStreamState('playing');
+                    setCurrentAudioLang(selectedStream.isFrench ? 'vf' : 'vo');
+
+                    if (retry.status === 'downloading' || selectedStream.isDownloading) {
+                        setStreamState('downloading');
+                        startStreamPolling(selectedStream.originalUrl || selectedStream.url);
+                    } else {
+                        setStreamState('playing');
+                    }
                 } else {
                     setErrorMessage(retry.message || 'Connexion au serveur de streaming en cours...');
                     setStreamState('error');
@@ -260,7 +310,7 @@ export default function NetflixPlayer({
             setErrorMessage(err.message || 'Erreur lors de la résolution du flux direct.');
             setStreamState('error');
         }
-    }, [id, isTv, season, episode]);
+    }, [id, isTv, season, episode, startStreamPolling]);
 
     useEffect(() => {
         resolveStream();
@@ -289,11 +339,32 @@ export default function NetflixPlayer({
         });
     }, [activeStream?.url]);
 
-    // Sauvegarde immédiate de la progression exacte dans le compte utilisateur
-    const saveCurrentProgress = useCallback(() => {
+    // Durée réelle connue depuis TMDB (utilisée pour fiabiliser la timeline et le transcodage)
+    const tmdbDuration = (contentRef.current?.runtime ? Number(contentRef.current.runtime) * 60 : 0) ||
+                         (contentRef.current?.episode_run_time?.[0] ? Number(contentRef.current.episode_run_time[0]) * 60 : 0);
+    const durationRef = useRef(duration);
+    durationRef.current = duration;
+    const tmdbDurationRef = useRef(tmdbDuration);
+    tmdbDurationRef.current = tmdbDuration;
+    const handleStreamErrorRef = useRef(handleStreamError);
+    handleStreamErrorRef.current = handleStreamError;
+
+    // Sauvegarde immédiate de la progression exacte dans le compte utilisateur (stable via refs)
+    // Garantit l'apparition systématique dans « Reprendre la lecture » dès le démarrage
+    const saveCurrentProgress = useCallback((forceInitial = false) => {
         const video = videoRef.current;
-        if (!video || !rememberRef.current || !video.duration || video.duration <= 0) return;
-        const progressPct = Math.min(100, Math.round((video.currentTime / video.duration) * 100));
+        if (!rememberRef.current || !id) return;
+        const currentOffset = transcodeOffsetRef.current || 0;
+        const realCurrent = (video ? video.currentTime || 0 : 0) + currentOffset;
+        if (!forceInitial && realCurrent < 1) return;
+
+        const fallbackDur = isTv ? 2700 : 6000;
+        const effDur = durationRef.current > 60
+            ? durationRef.current
+            : (tmdbDurationRef.current > 60 ? tmdbDurationRef.current : fallbackDur);
+
+        const rawPct = Math.round((realCurrent / effDur) * 100);
+        const progressPct = Math.max(1, Math.min(100, rawPct));
         const c = contentRef.current || {};
         rememberRef.current(
             {
@@ -301,16 +372,18 @@ export default function NetflixPlayer({
                 contentId: id,
                 title: titleRef.current,
                 type: isTv ? 'tv' : 'movie',
-                poster_path: c.poster_path || c.backdrop_path,
-                backdrop_path: c.backdrop_path
+                poster_path: c.poster_path || c.backdrop_path || null,
+                backdrop_path: c.backdrop_path || c.poster_path || null
             },
             isTv ? season : 1,
             isTv ? episode : 1,
             progressPct,
-            Math.round(video.currentTime)
+            Math.round(realCurrent)
         );
         lastSaveRef.current = Date.now();
     }, [id, isTv, season, episode]);
+    const saveCurrentProgressRef = useRef(saveCurrentProgress);
+    saveCurrentProgressRef.current = saveCurrentProgress;
 
     // Initialisation du moteur de streaming HTML5 sur <video>
     useEffect(() => {
@@ -338,10 +411,21 @@ export default function NetflixPlayer({
             }
         }
 
+        const isTranscoded = Boolean(activeStream?.isTranscoded || streamUrl.includes('/api/video-stream'));
+        if (isTranscoded && startPos > 5) {
+            transcodeOffsetRef.current = startPos;
+        } else {
+            transcodeOffsetRef.current = 0;
+        }
+
+        const effectiveLoadUrl = (isTranscoded && startPos > 5)
+            ? `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}t=${startPos}`
+            : streamUrl;
+
         engine.load({
             videoElement: video,
-            url: streamUrl,
-            startPosition: startPos,
+            url: effectiveLoadUrl,
+            startPosition: isTranscoded ? 0 : startPos,
             callbacks: {
                 onBufferingChange: (buffering) => setIsBuffering(buffering),
                 onAutoplayMuted: (muted) => {
@@ -350,20 +434,35 @@ export default function NetflixPlayer({
                 },
                 onError: (err) => {
                     console.warn('[Altyflix Player] Erreur signalée par le moteur :', err);
-                    handleStreamError();
+                    handleStreamErrorRef.current?.();
                 }
             }
         });
 
-        const onPlay = () => setIsPlaying(true);
+        let hasInitialSaved = false;
+        const onPlay = () => {
+            setIsPlaying(true);
+            if (!hasInitialSaved) {
+                hasInitialSaved = true;
+                saveCurrentProgressRef.current?.(true);
+            }
+        };
         const onPause = () => {
             setIsPlaying(false);
-            saveCurrentProgress();
+            saveCurrentProgressRef.current?.();
         };
 
         const onTimeUpdate = () => {
-            setCurrentTime(video.currentTime);
-            setDuration(video.duration || 0);
+            const currentOffset = transcodeOffsetRef.current || 0;
+            const realCurrent = (video.currentTime || 0) + currentOffset;
+            setCurrentTime(realCurrent);
+
+            let dur = video.duration;
+            const knownTmdbDur = tmdbDurationRef.current || 0;
+            if (!Number.isFinite(dur) || dur <= 60 || isTranscoded || currentOffset > 0) {
+                if (knownTmdbDur > 60) dur = knownTmdbDur;
+            }
+            if (dur > 0) setDuration(dur);
 
             // Synchronisation permanente des sous-titres
             if (updateSubtitleLinesRef.current) {
@@ -372,26 +471,27 @@ export default function NetflixPlayer({
 
             // Buffer
             if (video.buffered && video.buffered.length > 0) {
-                setBuffered(video.buffered.end(video.buffered.length - 1));
+                setBuffered(video.buffered.end(video.buffered.length - 1) + currentOffset);
             }
 
             // Sauvegarde automatique toutes les 5 secondes
             const now = Date.now();
             if (now - lastSaveRef.current > 5000) {
-                saveCurrentProgress();
+                saveCurrentProgressRef.current?.();
             }
         };
 
         const onLoadedMetadata = () => {
-            setDuration(video.duration || 0);
+            let dur = video.duration;
+            const knownTmdbDur = tmdbDurationRef.current || 0;
+            if (!Number.isFinite(dur) || dur <= 60 || isTranscoded) {
+                if (knownTmdbDur > 60) dur = knownTmdbDur;
+            }
+            if (dur > 0) setDuration(dur);
             setIsBuffering(false);
-            if (startPos > 5 && Number.isFinite(video.duration) && startPos < video.duration - 15) {
+
+            if (startPos > 5 && !isTranscoded && Number.isFinite(video.duration) && startPos < video.duration - 15) {
                 video.currentTime = startPos;
-                setResumeToast({
-                    time: startPos,
-                    formatted: formatCurrentTime(startPos)
-                });
-                setTimeout(() => setResumeToast(null), 7000);
             }
             // Tentative de lecture avec son natif
             video.muted = false;
@@ -413,11 +513,11 @@ export default function NetflixPlayer({
         const onPlaying = () => setIsBuffering(false);
         const onVideoError = () => {
             console.warn('[Altyflix Player] Erreur de lecture vidéo native :', video.error);
-            handleStreamError();
+            handleStreamErrorRef.current?.();
         };
 
         const onBeforeUnload = () => {
-            saveCurrentProgress();
+            saveCurrentProgressRef.current?.();
         };
         window.addEventListener('beforeunload', onBeforeUnload);
 
@@ -431,7 +531,8 @@ export default function NetflixPlayer({
         video.addEventListener('error', onVideoError);
 
         return () => {
-            saveCurrentProgress();
+            saveCurrentProgressRef.current?.();
+            loadedUrlRef.current = null;
             window.removeEventListener('beforeunload', onBeforeUnload);
             video.removeEventListener('play', onPlay);
             video.removeEventListener('pause', onPause);
@@ -443,7 +544,7 @@ export default function NetflixPlayer({
             video.removeEventListener('error', onVideoError);
             engine.destroy();
         };
-    }, [activeStream?.url, streamState, id, isTv, season, episode, handleStreamError, saveCurrentProgress]);
+    }, [activeStream?.url, activeStream?.isTranscoded, streamState, id, isTv, season, episode]);
 
     // Fermeture du lecteur avec sauvegarde immédiate de l'exacte seconde
     const handleClose = useCallback(() => {
@@ -457,20 +558,44 @@ export default function NetflixPlayer({
             onNext();
             return;
         }
+        // Repartir de zéro : sinon l'épisode suivant reprendrait à la position de l'actuel
+        currentTimeRef.current = 0;
+        setCurrentTime(0);
+        setDuration(0);
+        setBuffered(0);
+        setPanel(null);
         setEpisode(ep => ep + 1);
     }, [onNext]);
 
-    // Gestion du masquage automatique des contrôles ET du curseur souris (style Netflix)
+    // Affiche les contrôles puis les masque après quelques secondes de lecture (style Netflix).
+    // Ils restent affichés tant qu'un panneau est ouvert ou que la vidéo est en pause.
     const handleMouseMove = useCallback(() => {
         setControlsVisible(true);
         if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
         hideTimeoutRef.current = setTimeout(() => {
             const video = videoRef.current;
-            if (video && !video.paused) {
+            if (video && !video.paused && !panelRef.current) {
                 setControlsVisible(false);
             }
-        }, 2500);
+        }, 3000);
     }, []);
+
+    // Au lancement (et à chaque reprise), les contrôles s'effacent seuls après quelques secondes
+    useEffect(() => {
+        if (isPlaying) handleMouseMove();
+        else setControlsVisible(true);
+    }, [isPlaying, handleMouseMove]);
+
+    const openPanel = useCallback((name) => {
+        setPanel(prev => (prev === name ? null : name));
+        setControlsVisible(true);
+        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    }, []);
+
+    const closePanel = useCallback(() => {
+        setPanel(null);
+        handleMouseMove();
+    }, [handleMouseMove]);
 
     // Son coupé par le navigateur au démarrage : le premier geste (clic, touche, toucher)
     // le réactive, sans afficher de bandeau.
@@ -516,64 +641,94 @@ export default function NetflixPlayer({
 
         if (centerTimeoutRef.current) clearTimeout(centerTimeoutRef.current);
         centerTimeoutRef.current = setTimeout(() => setCenterAction(null), 600);
-    }, [handleMouseMove, isAutoplayMuted, volume]);
+    }, [handleMouseMove, volume]);
 
-    // Saut relatif de +/- 10 secondes (évite le blocage à 0 si duration n'est pas encore finie)
-    const seekRelative = useCallback((deltaSec) => {
+    // Déplacement direct et précis dans la vidéo (compatible HTTP 206 et transcodage à la volée)
+    const seekToTime = useCallback((targetSec) => {
         const video = videoRef.current;
         if (!video) return;
-        const curr = video.currentTime || 0;
-        const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Infinity;
-        const target = Math.max(0, Math.min(dur, curr + deltaSec));
-        video.currentTime = target;
-        setCurrentTime(target);
+
+        const effDur = (duration > 0 ? duration : (tmdbDuration || Infinity));
+        const target = Math.max(0, Math.min(effDur, targetSec));
+
+        const isTranscoded = Boolean(activeStream?.isTranscoded || activeStream?.url?.includes('/api/video-stream'));
+
+        if (isTranscoded) {
+            const base = (activeStream?.url || '').replace(/([&?])t=\d+/, '');
+            const sep = base.includes('?') ? '&' : '?';
+            const seekUrl = `${base}${sep}t=${Math.floor(target)}`;
+
+            transcodeOffsetRef.current = Math.floor(target);
+            setCurrentTime(target);
+            video.src = seekUrl;
+            video.currentTime = 0;
+            video.play().catch(() => {});
+        } else {
+            video.currentTime = target;
+            setCurrentTime(target);
+        }
+    }, [activeStream, duration, tmdbDuration]);
+
+    // Saut relatif de +/- 10 secondes (compatible transcodage dynamique)
+    const seekRelative = useCallback((deltaSec) => {
+        const curr = currentTimeRef.current || 0;
+        const effDur = (duration > 0 ? duration : (tmdbDuration || Infinity));
+        const target = Math.max(0, Math.min(effDur, curr + deltaSec));
+        seekToTime(target);
+    }, [seekToTime, duration, tmdbDuration]);
+
+    const showRipple = useCallback((side, delta) => {
+        setRippleEffect({ side, delta, key: Date.now() });
+        if (rippleTimerRef.current) clearTimeout(rippleTimerRef.current);
+        rippleTimerRef.current = setTimeout(() => setRippleEffect(null), 650);
     }, []);
 
-
-    // Gestion du clic (Lecture/Pause) et du double-clic (-10s à gauche / +10s à droite style Netflix)
-    const handleVideoClick = useCallback((e) => {
-        setShowQualityMenu(false);
-        setShowAudioSubsMenu(false);
-        setShowSpeedMenu(false);
-
-        const now = Date.now();
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const x = e.clientX - rect.left;
-        const isLeft = x < rect.width / 2;
-
-        if (now - lastTapRef.current.time < 320) {
-            // Double tap / double click
-            if (isLeft) {
-                seekRelative(-10);
-                setRippleEffect({ side: 'left', delta: -10 });
-            } else {
-                seekRelative(10);
-                setRippleEffect({ side: 'right', delta: 10 });
-            }
-            if (centerTimeoutRef.current) clearTimeout(centerTimeoutRef.current);
-            centerTimeoutRef.current = setTimeout(() => setRippleEffect(null), 650);
-            lastTapRef.current = { time: 0, x: 0 };
+    // Gestes sur la vidéo :
+    //  - souris : clic = lecture/pause, double-clic = plein écran
+    //  - tactile : toucher = afficher/masquer les contrôles, double toucher à gauche/droite = -10 s / +10 s
+    const handleSurfacePointerUp = useCallback((e) => {
+        if (panelRef.current) {
+            setPanel(null);
+            return;
+        }
+        if (e.pointerType === 'mouse') {
+            if (e.button !== 0) return;
+            togglePlay();
             return;
         }
 
-        lastTapRef.current = { time: now, x };
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const x = e.clientX - rect.left;
+        const side = x < rect.width / 2 ? 'left' : 'right';
+        const now = Date.now();
+        const last = lastTapRef.current;
 
-        setTimeout(() => {
-            if (Date.now() - lastTapRef.current.time >= 300 && lastTapRef.current.time !== 0) {
-                togglePlay();
-            }
-        }, 310);
-    }, [seekRelative, togglePlay]);
-
-    // Déplacement direct sur la barre de progression
-    const handleSeekChange = (e) => {
-        const newTime = parseFloat(e.target.value);
-        setCurrentTime(newTime);
-        if (videoRef.current) {
-            videoRef.current.currentTime = newTime;
+        if (now - last.time < 300 && last.side === side) {
+            if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+            const delta = side === 'left' ? -10 : 10;
+            seekRelative(delta);
+            showRipple(side, delta);
+            // Un troisième toucher rapide enchaîne un nouveau saut
+            lastTapRef.current = { time: now, side };
+            return;
         }
-    };
+
+        lastTapRef.current = { time: now, side };
+        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = setTimeout(() => {
+            if (controlsVisibleRef.current) {
+                if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+                setControlsVisible(false);
+            } else {
+                handleMouseMove();
+            }
+        }, 260);
+    }, [togglePlay, seekRelative, showRipple, handleMouseMove]);
+
+    useEffect(() => () => {
+        [tapTimerRef, rippleTimerRef, hideTimeoutRef, centerTimeoutRef].forEach(r => r.current && clearTimeout(r.current));
+    }, []);
 
     // Gestion du volume
     const handleVolumeChange = (newVol) => {
@@ -607,11 +762,6 @@ export default function NetflixPlayer({
         const container = containerRef.current;
         const video = videoRef.current;
         if (!container && !video) return;
-
-        // Fermer tous les menus pour une vue 100% propre
-        setShowQualityMenu(false);
-        setShowAudioSubsMenu(false);
-        setShowSpeedMenu(false);
 
         const isCurrentlyFs = Boolean(
             document.fullscreenElement ||
@@ -660,21 +810,39 @@ export default function NetflixPlayer({
     const handleSpeedChange = (rate) => {
         setPlaybackRate(rate);
         if (videoRef.current) videoRef.current.playbackRate = rate;
-        setShowSpeedMenu(false);
     };
+
+    // La vitesse choisie survit à un changement de source
+    useEffect(() => {
+        if (videoRef.current) videoRef.current.playbackRate = playbackRate;
+    }, [playbackRate, activeStream?.url, streamState]);
 
     // Changement de flux (qualité)
     const handleSelectStream = (st) => {
-        if (!st || st.url === activeStream?.url) return;
+        if (!st) return;
+        if (st.id === activeStream?.id && st.url === activeStream?.url) {
+            return;
+        }
+        if (pollingAbortControllerRef.current) {
+            pollingAbortControllerRef.current.abort();
+            pollingAbortControllerRef.current = null;
+        }
         loadedUrlRef.current = null;
+        transcodeOffsetRef.current = 0;
         setActiveStream(st);
         if (st.isFrench) {
             setCurrentAudioLang('vf');
         } else if (hasTrueVf && !st.isFrench) {
             setCurrentAudioLang('vo');
         }
-        setShowQualityMenu(false);
-        setIsBuffering(true);
+
+        if (st.isDownloading) {
+            setStreamState('downloading');
+            startStreamPolling(st.originalUrl || st.url);
+        } else {
+            setStreamState('playing');
+            setIsBuffering(true);
+        }
     };
 
     // Extraction et synchronisation des lignes de sous-titres actives (cues en mémoire JS, zéro doublon)
@@ -685,7 +853,7 @@ export default function NetflixPlayer({
             return;
         }
 
-        const t = video.currentTime;
+        const t = (video.currentTime || 0) + (transcodeOffsetRef.current || 0);
         const cues = cuesRef.current;
         if (!cues || cues.length === 0) {
             setCurrentSubtitleLines(lines => (lines.length === 0 ? lines : []));
@@ -714,7 +882,7 @@ export default function NetflixPlayer({
     updateSubtitleLinesRef.current = updateSubtitleLines;
 
     // Sélection d'une piste de sous-titres (sécurisée en mémoire pour éliminer les bugs d'empilement)
-    const handleSelectSubtitle = useCallback(async (subId, customList = null, showFeedback = false) => {
+    const handleSelectSubtitle = useCallback(async (subId, customList = null) => {
         const reqId = ++activeSubRequestIdRef.current;
         setSelectedSubtitleId(subId);
         selectedSubtitleIdRef.current = subId;
@@ -731,15 +899,12 @@ export default function NetflixPlayer({
         if (subId === 'off') {
             cuesRef.current = [];
             setCurrentSubtitleLines([]);
-            if (showFeedback) triggerSubToast('Sous-titres : Désactivés');
             return;
         }
 
         const list = customList || availableSubtitlesRef.current;
         const sub = list.find(s => s.id === subId);
         if (!sub) return;
-
-        if (showFeedback) triggerSubToast(`Sous-titres : ${sub.label}`);
 
         try {
             const cues = await fetchSubtitleCues(sub.url, sub.encoding);
@@ -749,21 +914,30 @@ export default function NetflixPlayer({
         } catch (err) {
             console.warn('[Altyflix Subtitles] Erreur chargement VTT :', err);
         }
-    }, [triggerSubToast]);
+    }, []);
 
     // Raccourci bascule rapide sous-titres (Touche C ou bouton direct)
     const toggleSubtitles = useCallback(() => {
         const subs = availableSubtitlesRef.current || [];
         if (selectedSubtitleIdRef.current !== 'off') {
-            handleSelectSubtitle('off', null, true);
+            handleSelectSubtitle('off');
         } else if (subs.length > 0) {
             const frSub = subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
             const target = frSub || subs[0];
-            handleSelectSubtitle(target.id, subs, true);
-        } else {
-            triggerSubToast('Aucun sous-titre disponible');
+            handleSelectSubtitle(target.id, subs);
         }
-    }, [handleSelectSubtitle, triggerSubToast]);
+    }, [handleSelectSubtitle]);
+
+    const toggleSubtitlesAlwaysOn = useCallback(() => {
+        setSubtitlesAlwaysOn(prev => {
+            const next = !prev;
+            try { localStorage.setItem('altyflix_subtitles_always_on', next ? 'true' : 'false'); } catch { /* stockage indisponible */ }
+            if (currentProfile?.id && updateProfile) {
+                updateProfile(currentProfile.id, { subtitlesAlwaysOn: next });
+            }
+            return next;
+        });
+    }, [currentProfile?.id, updateProfile]);
 
     // Chargement automatique des sous-titres disponibles
     useEffect(() => {
@@ -825,6 +999,8 @@ export default function NetflixPlayer({
         const onKeyDown = (e) => {
             // Ignorer si l'utilisateur écrit dans un input
             if (['input', 'textarea', 'select'].includes(e.target.tagName.toLowerCase())) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            handleMouseMove();
 
             switch (e.key.toLowerCase()) {
                 case ' ':
@@ -878,10 +1054,6 @@ export default function NetflixPlayer({
                         handleNextEpisode();
                     }
                     break;
-                case '?':
-                    e.preventDefault();
-                    setShowShortcutsModal(v => !v);
-                    break;
                 default:
                     break;
             }
@@ -889,7 +1061,31 @@ export default function NetflixPlayer({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles]);
+    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, handleMouseMove]);
+
+    // Fin de l'épisode : enchaîne automatiquement sur le suivant
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video) return undefined;
+        const onEnded = () => {
+            if (isTv && nextEpAvailable) handleNextEpisode();
+            else setControlsVisible(true);
+        };
+        video.addEventListener('ended', onEnded);
+        return () => video.removeEventListener('ended', onEnded);
+    }, [isTv, nextEpAvailable, handleNextEpisode]);
+
+    // Changement d'épisode : on repart de zéro
+    const goToEpisode = useCallback((s, e) => {
+        setPanel(null);
+        if (s === season && e === episode) return;
+        currentTimeRef.current = 0;
+        setCurrentTime(0);
+        setDuration(0);
+        setBuffered(0);
+        setSeason(s);
+        setEpisode(e);
+    }, [season, episode]);
 
     // Synchronisation permanente de l'état plein écran (Desktop, iOS Safari et Android)
     useEffect(() => {
@@ -904,830 +1100,412 @@ export default function NetflixPlayer({
             setIsFullscreen(isFs);
         };
 
+        const onBegin = () => setIsFullscreen(true);
+        const onEnd = () => setIsFullscreen(false);
         document.addEventListener('fullscreenchange', handleFsChange);
         document.addEventListener('webkitfullscreenchange', handleFsChange);
         const video = videoRef.current;
-        if (video) {
-            video.addEventListener('webkitbeginfullscreen', () => setIsFullscreen(true));
-            video.addEventListener('webkitendfullscreen', () => setIsFullscreen(false));
-        }
+        video?.addEventListener('webkitbeginfullscreen', onBegin);
+        video?.addEventListener('webkitendfullscreen', onEnd);
 
         return () => {
             document.removeEventListener('fullscreenchange', handleFsChange);
             document.removeEventListener('webkitfullscreenchange', handleFsChange);
-            if (video) {
-                video.removeEventListener('webkitbeginfullscreen', () => setIsFullscreen(true));
-                video.removeEventListener('webkitendfullscreen', () => setIsFullscreen(false));
-            }
+            video?.removeEventListener('webkitbeginfullscreen', onBegin);
+            video?.removeEventListener('webkitendfullscreen', onEnd);
         };
     }, []);
+
+    // ------------------------------------------------------------------
+    // Affichage
+    // ------------------------------------------------------------------
+    const remaining = Math.max(0, (duration || 0) - currentTime);
+    const interactive = controlsVisible ? 'pointer-events-auto' : 'pointer-events-none';
+    const isPlayingView = streamState === 'playing';
+    const subtitlesOn = selectedSubtitleId !== 'off' && currentSubtitleLines.length > 0;
+    const showNextUp = isPlayingView && isTv && nextEpAvailable && duration > 60 && remaining <= 40 && !panel;
+    const episodeLabel = isTv
+        ? `S${season}:É${episode}${currentEpTitle ? ` « ${currentEpTitle} »` : ''}`
+        : title;
+
+    const iconBtn = 'grid place-items-center rounded p-2 text-white transition-transform duration-150 hover:scale-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white';
+
+    const VolumeIcon = isMuted || volume === 0
+        ? NetflixVolumeMuteIcon
+        : (volume > 0.5 ? NetflixVolumeHighIcon : NetflixVolumeLowIcon);
 
     return (
         <div
             ref={containerRef}
-            className={`fixed inset-0 z-[99999] bg-black flex flex-col items-center justify-center select-none overflow-hidden ${
-                controlsVisible ? 'cursor-default' : 'player-idle cursor-none'
+            className={`fixed inset-0 z-[99999] select-none overflow-hidden bg-black text-white ${
+                isPlayingView && !controlsVisible ? 'cursor-none' : ''
             }`}
-            style={{ cursor: controlsVisible ? 'default' : 'none' }}
-            onMouseMove={handleMouseMove}
-            onTouchStart={handleMouseMove}
+            onPointerMove={(e) => { if (e.pointerType === 'mouse') handleMouseMove(); }}
             onMouseLeave={() => {
                 const video = videoRef.current;
-                if (video && !video.paused) setControlsVisible(false);
+                if (video && !video.paused && !panelRef.current) setControlsVisible(false);
             }}
         >
-            {/* VIEWPORT 1 : LECTEUR 100% NATIF ALTYFLIX (<video>) */}
-            <div className={`relative w-full h-full bg-black flex items-center justify-center ${streamState === 'playing' ? 'block' : 'hidden'} ${controlsVisible ? '' : 'player-idle cursor-none'}`}>
-                <video
-                    ref={videoRef}
-                    className="w-full h-full object-contain bg-black"
-                    style={{ cursor: controlsVisible ? 'pointer' : 'none' }}
-                    playsInline
-                    onClick={handleVideoClick}
-                    onDoubleClick={toggleFullscreen}
-                />
+            <video
+                ref={videoRef}
+                className={`absolute inset-0 h-full w-full bg-black object-contain ${isPlayingView ? '' : 'invisible'}`}
+                playsInline
+            />
 
-                {/* SOUS-TITRES OFFICIELS NETFLIX : Toujours nets, au-dessus des contrôles */}
-                {currentSubtitleLines.length > 0 && selectedSubtitleId !== 'off' && (
+            {isPlayingView && (
+                <>
+                    {/* Surface de gestes (clic, toucher, double toucher) */}
                     <div
-                        className={`absolute inset-x-0 z-30 flex flex-col items-center gap-1.5 px-6 pointer-events-none transition-all duration-300 ${
-                            controlsVisible ? 'bottom-28 sm:bottom-32 md:bottom-36' : 'bottom-10 sm:bottom-14'
-                        }`}
-                    >
-                        {currentSubtitleLines.map((line, idx) => (
-                            <span
-                                key={`${idx}-${line}`}
-                                className="max-w-[94%] sm:max-w-[82%] md:max-w-[72%] px-3.5 py-1.5 rounded-md bg-black/85 text-center font-bold leading-snug whitespace-pre-line shadow-2xl backdrop-blur-sm transition-all"
-                                style={{
-                                    fontFamily: 'Netflix Sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                                    fontSize: SUBTITLE_SIZE_MAP[currentProfile?.subtitlesSize]?.fontSize || '1.5rem',
-                                    color: SUBTITLE_COLOR_MAP[currentProfile?.subtitlesColor] || '#FFFFFF',
-                                    textShadow: '0 0 4px #000, 0 1px 3px rgba(0,0,0,0.9), 1px 1px 2px #000, -1px -1px 2px #000',
-                                    letterSpacing: '0.015em'
-                                }}
-                            >
-                                {line}
-                            </span>
-                        ))}
-                    </div>
-                )}
+                        className="absolute inset-0 z-10"
+                        onPointerUp={handleSurfacePointerUp}
+                        onDoubleClick={() => { if (!compact) toggleFullscreen(); }}
+                    />
 
-                {/* Effet visuel Ripple -10s / +10s au double clic gauche/droite */}
-                {rippleEffect && (
-                    <div
-                        className={`absolute inset-y-0 ${
-                            rippleEffect.side === 'left' ? 'left-0 w-1/3' : 'right-0 w-1/3'
-                        } flex items-center justify-center pointer-events-none z-30`}
-                    >
-                        <div className="flex flex-col items-center justify-center w-24 h-24 rounded-full bg-black/75 border border-white/20 backdrop-blur-md shadow-2xl scale-110 animate-out fade-out zoom-out duration-500">
-                            {rippleEffect.delta < 0 ? (
-                                <NetflixRewind10Icon className="w-10 h-10 text-white" />
-                            ) : (
-                                <NetflixForward10Icon className="w-10 h-10 text-white" />
-                            )}
-                            <span className="text-xs font-bold text-white mt-1">
-                                {rippleEffect.delta < 0 ? '-10s' : '+10s'}
-                            </span>
+                    {/* Sous-titres */}
+                    {subtitlesOn && (
+                        <div
+                            className={`pointer-events-none absolute inset-x-0 z-20 flex flex-col items-center gap-1 px-6 transition-[bottom] duration-300 ${
+                                controlsVisible ? (compact ? 'bottom-32' : 'bottom-36') : (compact ? 'bottom-8' : 'bottom-14')
+                            }`}
+                        >
+                            {currentSubtitleLines.map((line, idx) => (
+                                <span
+                                    key={`${idx}-${line}`}
+                                    className="max-w-[92%] whitespace-pre-line text-center font-semibold leading-snug md:max-w-[70%]"
+                                    style={{
+                                        fontSize: SUBTITLE_SIZE_MAP[currentProfile?.subtitlesSize]?.fontSize || (compact ? '1.15rem' : '1.6rem'),
+                                        color: SUBTITLE_COLOR_MAP[currentProfile?.subtitlesColor] || '#FFFFFF',
+                                        textShadow: '0 0 6px #000, 0 2px 3px #000, 1px 1px 2px #000, -1px -1px 2px #000'
+                                    }}
+                                >
+                                    {line}
+                                </span>
+                            ))}
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {/* Centre de l'écran : Indicateur animé Lecture / Pause */}
-                {centerAction && (
-                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-30">
-                        <div className="w-20 h-20 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white scale-125 transition-transform animate-out fade-out duration-500 shadow-2xl">
-                            {centerAction === 'play' ? (
-                                <NetflixPlayIcon className="w-10 h-10 fill-current translate-x-0.5" />
-                            ) : (
-                                <NetflixPauseIcon className="w-10 h-10 fill-current" />
-                            )}
-                        </div>
-                    </div>
-                )}
-
-
-                {/* Carte fin d'épisode : Épisode suivant (visible dans les 45 dernières secondes) */}
-                {isTv && duration > 60 && (duration - currentTime) <= 45 && nextEpAvailable && (
-                    <div className="absolute bottom-24 right-8 z-40 animate-in fade-in slide-in-from-bottom-3 duration-300 pointer-events-auto p-4 rounded-2xl bg-[#14141c]/95 border border-white/20 backdrop-blur-2xl shadow-2xl flex items-center gap-4 max-w-sm">
-                        <div className="flex-1 space-y-1">
-                            <div className="text-[10px] font-extrabold text-white/50 uppercase tracking-wider">Épisode suivant</div>
-                            <div className="text-xs sm:text-sm font-bold text-white truncate">
-                                Saison {season} · Épisode {episode + 1}
+                    {/* Double toucher : -10 s / +10 s */}
+                    {rippleEffect && (
+                        <div
+                            key={rippleEffect.key}
+                            className={`pointer-events-none absolute inset-y-0 z-20 flex w-2/5 items-center justify-center ${
+                                rippleEffect.side === 'left' ? 'left-0 rounded-r-[50%]' : 'right-0 rounded-l-[50%]'
+                            } bg-white/10`}
+                        >
+                            <div className="flex flex-col items-center gap-1">
+                                {rippleEffect.delta < 0
+                                    ? <NetflixRewind10Icon className="h-10 w-10" />
+                                    : <NetflixForward10Icon className="h-10 w-10" />}
+                                <span className="text-sm font-semibold">{rippleEffect.delta < 0 ? '-10 s' : '+10 s'}</span>
                             </div>
                         </div>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                handleNextEpisode();
-                            }}
-                            className="px-4 py-2 bg-white text-black hover:bg-gray-100 font-extrabold text-xs rounded-lg transition-all cursor-pointer shadow flex items-center gap-1.5"
-                        >
-                            <NetflixPlayIcon className="w-3.5 h-3.5 fill-black" />
-                            <span>Lancer</span>
-                        </button>
-                    </div>
-                )}
+                    )}
 
-                {/* Notification de Reprise de lecture (Style officiel Netflix) */}
-                {resumeToast && (
-                    <div className="absolute top-20 left-6 sm:left-10 z-50 flex items-center gap-3 bg-black/90 border border-white/20 backdrop-blur-xl px-4 py-2.5 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-top-4 duration-300">
-                        <div className="w-2.5 h-2.5 rounded-full bg-[#e50914] animate-pulse" />
-                        <span className="text-xs sm:text-sm text-white font-medium">
-                            Reprise à <strong className="text-white font-mono">{resumeToast.formatted}</strong>
-                        </span>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (videoRef.current) {
-                                    videoRef.current.currentTime = 0;
-                                }
-                                setResumeToast(null);
-                            }}
-                            className="ml-2 text-xs font-semibold px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-                        >
-                            Recommencer au début
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setResumeToast(null)}
-                            className="text-white/40 hover:text-white text-xs ml-1 cursor-pointer"
-                        >
-                            ✕
-                        </button>
-                    </div>
-                )}
-
-                {/* Notification Toast Sous-titres (Bascule touche C / changement rapide) */}
-                {subToast && (
-                    <div className="absolute top-20 right-6 sm:right-10 z-50 flex items-center gap-2.5 bg-black/90 border border-white/20 backdrop-blur-xl px-4 py-2 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none">
-                        <NetflixSubtitlesIcon className="w-4 h-4 text-[#e50914]" />
-                        <span className="text-xs sm:text-sm text-white font-medium">
-                            {subToast}
-                        </span>
-                    </div>
-                )}
-
-                {/* Spinner Netflix en cas de chargement / buffering */}
-                {isBuffering && (
-                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 z-20">
-                        <div className="w-16 h-16 border-4 border-[#e50914] border-t-transparent rounded-full animate-spin shadow-2xl" />
-                    </div>
-                )}
-            </div>
-
-            {/* VIEWPORT 2 : CHARGEMENT DU FLUX */}
-            {streamState === 'resolving' && (
-                <div className="flex flex-col items-center justify-center space-y-4 text-white z-20">
-                    <div className="w-16 h-16 border-4 border-[#e50914] border-t-transparent rounded-full animate-spin" />
-                    <p className="text-base font-semibold tracking-wide">Connexion au flux direct 4K/1080p...</p>
-                    <p className="text-xs text-white/50">{title} {isTv ? `· S${season} E${episode}` : ''}</p>
-                </div>
-            )}
-
-            {/* VIEWPORT 3 : PAS DE CLÉ CONFIGURÉE (Activation Rapide ou Secours) */}
-            {streamState === 'no_token' && (
-                <div className="relative z-30 max-w-lg mx-6 p-7 sm:p-8 rounded-3xl bg-[#111118]/95 border border-white/15 backdrop-blur-2xl text-center space-y-5 shadow-[0_20px_80px_rgba(0,0,0,0.9)]">
-                    <div className="w-14 h-14 mx-auto rounded-2xl bg-[#e50914]/20 border border-[#e50914]/40 flex items-center justify-center text-[#e50914]">
-                        <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                        </svg>
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <h3 className="text-xl font-bold text-white tracking-wide">Lecteur 100% Natif Altyflix</h3>
-                        <p className="text-xs sm:text-sm text-white/70 leading-relaxed">
-                            Pour lancer ce film en <strong>4K / 1080p Blu-Ray</strong> directement dans votre lecteur Altyflix (zéro pub, zéro iframe, barre rouge), connectez votre clé <strong>Torbox</strong> ou <strong>Real-Debrid</strong>.
-                        </p>
-                    </div>
-
-                    {/* Saisie rapide de la clé directement dans le lecteur */}
-                    <div className="space-y-3 pt-1 text-left">
-                        <div className="flex gap-2">
-                            <select
-                                value={quickProvider}
-                                onChange={(e) => setQuickProvider(e.target.value)}
-                                className="bg-[#181822] border border-white/15 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#e50914] cursor-pointer"
-                            >
-                                <option value="torbox">Torbox (Recommandé amis / multi-IP)</option>
-                                <option value="realdebrid">Real-Debrid</option>
-                                <option value="alldebrid">AllDebrid</option>
-                                <option value="debridlink">Debrid-Link</option>
-                            </select>
-
-                            <input
-                                type="password"
-                                value={quickToken}
-                                onChange={(e) => setQuickToken(e.target.value)}
-                                placeholder="Collez votre clé API..."
-                                className="flex-1 bg-[#181822] border border-white/15 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#e50914] font-mono"
-                            />
+                    {/* Clic souris : lecture / pause */}
+                    {!compact && centerAction && (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                            <div className="grid h-24 w-24 place-items-center rounded-full bg-black/50 player-flash">
+                                {centerAction === 'play'
+                                    ? <NetflixPlayIcon className="h-12 w-12 translate-x-0.5" />
+                                    : <NetflixPauseIcon className="h-12 w-12" />}
+                            </div>
                         </div>
+                    )}
 
-                        <button
-                            type="button"
-                            disabled={quickTesting || !quickToken.trim()}
-                            onClick={() => {
-                                setQuickTesting(true);
-                                saveGatewayConfig({ provider: quickProvider, token: quickToken.trim() });
-                                resolveStream(true);
-                            }}
-                            className="w-full py-2.5 rounded-xl bg-[#e50914] hover:bg-[#b80710] disabled:opacity-40 text-white font-semibold text-xs tracking-wide transition-all shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 cursor-pointer"
-                        >
-                            <span>Activer et Lancer la 4K</span>
-                        </button>
+                    {/* Chargement en cours de lecture */}
+                    {isBuffering && !(compact && controlsVisible) && (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                            <span className="h-14 w-14 animate-spin rounded-full border-4 border-[#e50914] border-t-transparent" />
+                        </div>
+                    )}
+
+                    {/* Interface */}
+                    <div
+                        className={`pointer-events-none absolute inset-0 z-30 transition-opacity duration-300 ${
+                            controlsVisible ? 'opacity-100' : 'opacity-0'
+                        }`}
+                    >
+                        {compact ? (
+                            <>
+                                <div className="absolute inset-0 bg-black/45" />
+
+                                {/* Haut : retour, épisode, plein écran */}
+                                <div className="absolute inset-x-0 top-0 flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] sm:px-5">
+                                    <button type="button" onClick={handleClose} aria-label="Retour" className={`${interactive} p-2`}>
+                                        <NetflixBackIcon className="h-7 w-7" />
+                                    </button>
+                                    <p className="min-w-0 flex-1 truncate text-center text-[15px] font-medium">{episodeLabel}</p>
+                                    <button
+                                        type="button"
+                                        onClick={toggleFullscreen}
+                                        aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+                                        className={`${interactive} p-2`}
+                                    >
+                                        {isFullscreen
+                                            ? <NetflixExitFullscreenIcon className="h-6 w-6" />
+                                            : <NetflixFullscreenIcon className="h-6 w-6" />}
+                                    </button>
+                                </div>
+
+                                {/* Centre : -10, lecture/pause, +10 */}
+                                <div className="absolute inset-0 flex items-center justify-center gap-[14vw]">
+                                    <button type="button" onClick={() => seekRelative(-10)} aria-label="Reculer de 10 secondes" className={`${interactive} p-2 active:scale-90`}>
+                                        <NetflixRewind10Icon className="h-12 w-12" />
+                                    </button>
+                                    <div className="grid h-20 w-20 place-items-center">
+                                        {isBuffering ? (
+                                            <span className="h-14 w-14 animate-spin rounded-full border-4 border-[#e50914] border-t-transparent" />
+                                        ) : (
+                                            <button type="button" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Lecture'} className={`${interactive} p-2 active:scale-90`}>
+                                                {isPlaying
+                                                    ? <NetflixPauseIcon className="h-16 w-16" />
+                                                    : <NetflixPlayIcon className="h-16 w-16" />}
+                                            </button>
+                                        )}
+                                    </div>
+                                    <button type="button" onClick={() => seekRelative(10)} aria-label="Avancer de 10 secondes" className={`${interactive} p-2 active:scale-90`}>
+                                        <NetflixForward10Icon className="h-12 w-12" />
+                                    </button>
+                                </div>
+
+                                {/* Bas : progression + actions */}
+                                <div className="absolute inset-x-0 bottom-0 px-5 pb-[max(8px,env(safe-area-inset-bottom))] sm:px-8">
+                                    <div className={`flex items-center gap-4 ${interactive}`}>
+                                        <Scrubber
+                                            compact
+                                            currentTime={currentTime}
+                                            duration={duration}
+                                            buffered={buffered}
+                                            onSeek={seekToTime}
+                                            onInteract={handleMouseMove}
+                                        />
+                                        <span className="flex-none text-sm font-semibold tabular-nums">{formatClock(remaining)}</span>
+                                    </div>
+                                    <div className={`flex items-center justify-center gap-6 pb-1 sm:gap-10 ${interactive}`}>
+                                        <MobileAction icon={<SpeedIcon className="h-6 w-6" />} label={`Vitesse (${playbackRate}x)`} onClick={() => openPanel('speed')} />
+                                        {isTv && (
+                                            <MobileAction icon={<NetflixEpisodesIcon className="h-6 w-6" />} label="Épisodes" onClick={() => openPanel('episodes')} />
+                                        )}
+                                        <MobileAction icon={<NetflixSubtitlesIcon className="h-6 w-6" />} label="Audio et sous-titres" onClick={() => openPanel('audio')} />
+                                        {isTv && nextEpAvailable && (
+                                            <MobileAction icon={<NetflixNextEpisodeIcon className="h-6 w-6" />} label="Épisode suivant" onClick={handleNextEpisode} />
+                                        )}
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/70 to-transparent" />
+                                <div className="absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
+
+                                <button
+                                    type="button"
+                                    onClick={handleClose}
+                                    aria-label="Retour"
+                                    title="Retour"
+                                    className={`${interactive} ${iconBtn} absolute left-5 top-5`}
+                                >
+                                    <NetflixBackIcon className="h-9 w-9" />
+                                </button>
+
+                                <div className="absolute inset-x-0 bottom-0 px-6 pb-4 lg:px-10">
+                                    <div className={`flex items-center gap-4 ${interactive}`}>
+                                        <Scrubber
+                                            currentTime={currentTime}
+                                            duration={duration}
+                                            buffered={buffered}
+                                            onSeek={seekToTime}
+                                            onInteract={handleMouseMove}
+                                        />
+                                        <span className="flex-none text-base font-medium tabular-nums">{formatClock(remaining)}</span>
+                                    </div>
+
+                                    <div className={`mt-1 flex items-center gap-3 lg:gap-5 ${interactive}`}>
+                                        <button type="button" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Lecture'} title={isPlaying ? 'Pause (Espace)' : 'Lecture (Espace)'} className={iconBtn}>
+                                            {isPlaying ? <NetflixPauseIcon className="h-9 w-9" /> : <NetflixPlayIcon className="h-9 w-9" />}
+                                        </button>
+                                        <button type="button" onClick={() => seekRelative(-10)} aria-label="Reculer de 10 secondes" title="Reculer de 10 s (←)" className={iconBtn}>
+                                            <NetflixRewind10Icon className="h-8 w-8" />
+                                        </button>
+                                        <button type="button" onClick={() => seekRelative(10)} aria-label="Avancer de 10 secondes" title="Avancer de 10 s (→)" className={iconBtn}>
+                                            <NetflixForward10Icon className="h-8 w-8" />
+                                        </button>
+                                        <div className="group/vol flex items-center">
+                                            <button type="button" onClick={toggleMute} aria-label={isMuted ? 'Activer le son' : 'Couper le son'} title="Son (M)" className={iconBtn}>
+                                                <VolumeIcon className="h-8 w-8" />
+                                            </button>
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={1}
+                                                step={0.05}
+                                                value={isMuted ? 0 : volume}
+                                                onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                                                aria-label="Volume"
+                                                className="h-1 w-0 cursor-pointer opacity-0 accent-[#e50914] transition-all duration-200 focus:w-24 focus:opacity-100 group-hover/vol:w-24 group-hover/vol:opacity-100"
+                                            />
+                                        </div>
+
+                                        <p className="min-w-0 flex-1 truncate px-4 text-center text-lg">
+                                            <span className="font-bold">{title}</span>
+                                            {isTv && (
+                                                <span className="ml-3 text-white/75">
+                                                    É{episode}{currentEpTitle ? ` ${currentEpTitle}` : ''}
+                                                </span>
+                                            )}
+                                        </p>
+
+                                        {isTv && nextEpAvailable && (
+                                            <button type="button" onClick={handleNextEpisode} aria-label="Épisode suivant" title="Épisode suivant (N)" className={iconBtn}>
+                                                <NetflixNextEpisodeIcon className="h-8 w-8" />
+                                            </button>
+                                        )}
+                                        {isTv && (
+                                            <button type="button" onClick={() => openPanel('episodes')} aria-label="Épisodes" title="Épisodes" aria-expanded={panel === 'episodes'} className={iconBtn}>
+                                                <NetflixEpisodesIcon className="h-8 w-8" />
+                                            </button>
+                                        )}
+                                        <button type="button" onClick={() => openPanel('audio')} aria-label="Audio et sous-titres" title="Audio et sous-titres (C)" aria-expanded={panel === 'audio'} className={iconBtn}>
+                                            <NetflixSubtitlesIcon className="h-8 w-8" />
+                                        </button>
+                                        <button type="button" onClick={() => openPanel('speed')} aria-label="Vitesse de lecture" title="Vitesse de lecture" aria-expanded={panel === 'speed'} className={iconBtn}>
+                                            <SpeedIcon className="h-8 w-8" />
+                                        </button>
+                                        <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'} title="Plein écran (F)" className={iconBtn}>
+                                            {isFullscreen ? <NetflixExitFullscreenIcon className="h-8 w-8" /> : <NetflixFullscreenIcon className="h-8 w-8" />}
+                                        </button>
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
 
-                    {/* Option secours gratuite sans clé */}
-                    <div className="pt-2 border-t border-white/10 flex flex-col gap-2">
+                    {/* Fin d'épisode */}
+                    {showNextUp && (
                         <button
                             type="button"
-                            onClick={handleClose}
-                            className="text-xs text-white/50 hover:text-white transition-colors cursor-pointer py-1"
+                            onClick={handleNextEpisode}
+                            className={`absolute z-40 flex items-center gap-2 rounded bg-white px-5 py-2.5 text-sm font-bold text-black shadow-lg hover:bg-white/85 ${
+                                compact ? 'bottom-24 right-5' : 'bottom-32 right-10'
+                            }`}
                         >
-                            Retour au catalogue
+                            <NetflixPlayIcon className="h-4 w-4" />
+                            Épisode suivant
                         </button>
-                    </div>
+                    )}
+
+                    {/* Panneaux */}
+                    {panel === 'audio' && (
+                        <AudioSubsPanel
+                            compact={compact}
+                            onClose={closePanel}
+                            hasTrueVf={hasTrueVf}
+                            currentAudioLang={currentAudioLang}
+                            onSelectAudio={handleSelectAudioLang}
+                            subtitles={availableSubtitles}
+                            selectedSubtitleId={selectedSubtitleId}
+                            onSelectSubtitle={(subId) => handleSelectSubtitle(subId)}
+                            streams={availableStreams}
+                            activeStream={activeStream}
+                            onSelectStream={handleSelectStream}
+                            subtitlesAlwaysOn={subtitlesAlwaysOn}
+                            onToggleAlwaysOn={toggleSubtitlesAlwaysOn}
+                        />
+                    )}
+                    {panel === 'speed' && (
+                        <SpeedPanel compact={compact} onClose={closePanel} rate={playbackRate} onSelect={handleSpeedChange} />
+                    )}
+                    {panel === 'episodes' && isTv && (
+                        <EpisodesPanel
+                            compact={compact}
+                            onClose={closePanel}
+                            show={tvDetails?.id ? tvDetails : { ...tvDetails, id }}
+                            season={season}
+                            episode={episode}
+                            onSelect={goToEpisode}
+                        />
+                    )}
+                </>
+            )}
+
+            {/* Préparation de la lecture */}
+            {(streamState === 'resolving' || streamState === 'downloading') && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black px-6 text-center">
+                    <button
+                        type="button"
+                        onClick={handleClose}
+                        aria-label="Retour"
+                        className="absolute left-3 top-[max(10px,env(safe-area-inset-top))] p-2 text-white md:left-5 md:top-5"
+                    >
+                        <NetflixBackIcon className="h-8 w-8" />
+                    </button>
+                    <span className="h-14 w-14 animate-spin rounded-full border-4 border-[#e50914] border-t-transparent" />
+                    <p className="mt-6 text-lg font-semibold">{title}</p>
+                    {isTv && <p className="mt-1 text-sm text-white/60">Saison {season} · Épisode {episode}</p>}
+                    {streamState === 'downloading' && downloadProgress.elapsedSec >= 12 && (
+                        <p className="mt-3 text-sm text-white/50">Préparation de la vidéo, encore quelques instants…</p>
+                    )}
+                    {streamState === 'downloading' && downloadProgress.elapsedSec >= 8 && availableStreams.length > 1 && (
+                        <div className="mt-6 flex max-w-md flex-wrap items-center justify-center gap-2">
+                            <span className="w-full text-xs text-white/40">Ou choisissez une autre source :</span>
+                            {availableStreams
+                                .filter(st => st.id !== activeStream?.id)
+                                .slice(0, 4)
+                                .map(st => (
+                                    <button
+                                        key={st.id || st.url}
+                                        type="button"
+                                        onClick={() => handleSelectStream(st)}
+                                        className="rounded border border-white/25 px-3 py-1.5 text-xs font-medium text-white/80 hover:border-white hover:text-white"
+                                    >
+                                        {getShortQualityBadge(st)}
+                                    </button>
+                                ))}
+                        </div>
+                    )}
                 </div>
             )}
 
-            {/* VIEWPORT 4 : ERREUR DE FLUX */}
+            {/* Erreur */}
             {streamState === 'error' && (
-                <div className="relative z-30 max-w-md mx-6 p-8 rounded-3xl bg-[#111118]/95 border border-white/15 backdrop-blur-2xl text-center space-y-5">
-                    <div className="text-4xl">⚠️</div>
-                    <div className="space-y-1">
-                        <h3 className="text-lg font-bold text-white">Flux momentanément inaccessible</h3>
-                        <p className="text-xs text-white/60">{errorMessage}</p>
-                    </div>
-                    <div className="flex gap-3 justify-center">
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black px-6 text-center">
+                    <button
+                        type="button"
+                        onClick={handleClose}
+                        aria-label="Retour"
+                        className="absolute left-3 top-[max(10px,env(safe-area-inset-top))] p-2 text-white md:left-5 md:top-5"
+                    >
+                        <NetflixBackIcon className="h-8 w-8" />
+                    </button>
+                    <h2 className="text-xl font-bold md:text-2xl">Lecture impossible</h2>
+                    <p className="mt-2 max-w-md text-sm text-white/60">{errorMessage || 'Ce titre ne peut pas être lu pour le moment.'}</p>
+                    <div className="mt-6 flex gap-3">
                         <button
+                            type="button"
                             onClick={() => resolveStream(true)}
-                            className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-semibold transition-all cursor-pointer"
+                            className="rounded bg-white px-6 py-2.5 text-sm font-bold text-black hover:bg-white/85"
                         >
                             Réessayer
                         </button>
                         <button
+                            type="button"
                             onClick={handleClose}
-                            className="px-5 py-2.5 rounded-xl bg-[#e50914] hover:bg-[#b80710] text-white text-sm font-semibold transition-all cursor-pointer"
+                            className="rounded bg-white/15 px-6 py-2.5 text-sm font-bold text-white hover:bg-white/25"
                         >
-                            Retour au catalogue
+                            Retour
                         </button>
                     </div>
                 </div>
             )}
-
-            {/* TOP BAR : RETOUR CATALOGUE, TITRE, ÉPISODES (Adapté PWA Mobile & Desktop) */}
-            <div
-                className={`absolute top-0 inset-x-0 pt-[max(1rem,env(safe-area-inset-top))] pb-12 px-4 sm:px-6 md:px-8 z-40 flex items-center justify-between transition-opacity duration-300 bg-gradient-to-b from-black/95 via-black/50 to-transparent pointer-events-none ${
-                    controlsVisible ? 'opacity-100' : 'opacity-0'
-                }`}
-            >
-                <div className="flex items-center space-x-2 sm:space-x-3 pointer-events-auto min-w-0">
-                    <button
-                        onClick={handleClose}
-                        className="text-white/80 hover:text-white p-2 rounded-full hover:bg-white/10 active:scale-90 transition-transform cursor-pointer flex items-center justify-center flex-shrink-0"
-                        title="Retour au catalogue"
-                        aria-label="Retour au catalogue"
-                    >
-                        <NetflixBackIcon className="w-6 h-6 sm:w-7 sm:h-7 drop-shadow" />
-                    </button>
-                    <div className="flex flex-col select-none text-white min-w-0 max-w-[200px] xs:max-w-[260px] sm:max-w-md md:max-w-lg">
-                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap min-w-0">
-                            <span className="font-black text-sm sm:text-base md:text-lg tracking-wide drop-shadow truncate">
-                                {title}
-                            </span>
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                                <span className="border border-white/40 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] font-bold text-white/90">
-                                    {isTv ? 'SÉRIE' : 'FILM'}
-                                </span>
-                                <span className="border border-white/40 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] font-bold text-white/90">
-                                    {activeStream?.quality?.includes('4K') ? '4K UHD' : 'HD'}
-                                </span>
-                            </div>
-                        </div>
-                        {isTv && (
-                            <span className="text-gray-300 text-[11px] sm:text-xs font-medium drop-shadow truncate pt-0.5">
-                                Saison {season} · Épisode {episode} {currentEpTitle ? `"${currentEpTitle}"` : ''}
-                            </span>
-                        )}
-                    </div>
-                </div>
-
-                <div className="flex items-center space-x-2 pointer-events-auto flex-shrink-0">
-                    {/* Bouton raccourcis clavier (?) style Netflix */}
-                    <button
-                        onClick={() => setShowShortcutsModal(true)}
-                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 text-white/80 hover:text-white text-xs font-bold transition-all flex items-center justify-center border border-white/15 cursor-pointer shadow"
-                        title="Raccourcis clavier (?)"
-                        aria-label="Raccourcis clavier"
-                    >
-                        ?
-                    </button>
-                </div>
-            </div>
-
-            {/* BOTTOM BAR : CONTRÔLES OFFICIELS NETFLIX (Barre rouge, scrub, audio, etc. 100% alignés) */}
-            {streamState === 'playing' && (
-                <div
-                    className={`absolute bottom-0 inset-x-0 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-16 px-4 sm:px-6 md:px-8 z-40 flex flex-col space-y-2 sm:space-y-3 bg-gradient-to-t from-black/95 via-black/60 to-transparent transition-opacity duration-300 pointer-events-auto ${
-                        controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                    }`}
-                >
-                    {/* 1. Scrubber Timeline Netflix (#e50914) avec zone tactile confortable */}
-                    <div className="relative group w-full py-3 cursor-pointer flex items-center touch-none">
-                        {/* Tooltip position sur hover / drag */}
-                        {hoverTime !== null && (
-                            <div
-                                className="absolute -top-8 -translate-x-1/2 px-2.5 py-1 rounded-md bg-black/90 text-white text-[11px] font-bold border border-white/20 pointer-events-none shadow-xl"
-                                style={{ left: `${hoverPos}%` }}
-                            >
-                                {formatCurrentTime(hoverTime)}
-                            </div>
-                        )}
-
-                        <div className="relative w-full h-1 sm:h-1.5 group-hover:h-2.5 bg-white/20 rounded-full overflow-hidden transition-all duration-150">
-                            {/* Buffer bar */}
-                            <div
-                                className="absolute top-0 bottom-0 left-0 bg-white/40 rounded-full"
-                                style={{ width: `${duration > 0 ? (buffered / duration) * 100 : 0}%` }}
-                            />
-                            {/* Played bar (Netflix Red #e50914) */}
-                            <div
-                                className="absolute top-0 bottom-0 left-0 bg-[#e50914] rounded-full"
-                                style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
-                            />
-                        </div>
-
-                        {/* Tête de lecture (Thumb rouge Netflix) */}
-                        <div
-                            className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-[#e50914] rounded-full shadow-md -translate-x-1/2 scale-100 sm:scale-0 sm:group-hover:scale-100 transition-transform duration-150"
-                            style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
-                        />
-
-                        {/* Input range transparent */}
-                        <input
-                            type="range"
-                            min={0}
-                            max={duration || 100}
-                            step={0.1}
-                            value={currentTime}
-                            onChange={handleSeekChange}
-                            onMouseMove={(e) => {
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                                setHoverTime(pct * (duration || 0));
-                                setHoverPos(pct * 100);
-                            }}
-                            onMouseLeave={() => setHoverTime(null)}
-                            onTouchMove={(e) => {
-                                const touch = e.touches[0];
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                if (rect.width > 0) {
-                                    const pct = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
-                                    setHoverTime(pct * (duration || 0));
-                                    setHoverPos(pct * 100);
-                                }
-                            }}
-                            onTouchEnd={() => setHoverTime(null)}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                            aria-label="Progression de la lecture"
-                        />
-                    </div>
-
-                    {/* 2. Boutons de contrôle (Play, Volume, Titre, Qualité, Plein écran) */}
-                    <div className="flex items-center justify-between text-white w-full">
-                        {/* Partie Gauche : Lecture, Recul 10s, Avance 10s, Volume (desktop), Temps */}
-                        <div className="flex items-center gap-1 sm:gap-3">
-                            <button
-                                onClick={togglePlay}
-                                className="p-2 sm:p-2.5 rounded-full hover:bg-white/10 active:scale-90 transition-transform cursor-pointer"
-                                title={isPlaying ? 'Pause' : 'Lecture'}
-                                aria-label={isPlaying ? 'Pause' : 'Lecture'}
-                            >
-                                {isPlaying ? (
-                                    <NetflixPauseIcon className="w-6 h-6 sm:w-8 sm:h-8" />
-                                ) : (
-                                    <NetflixPlayIcon className="w-6 h-6 sm:w-8 sm:h-8" />
-                                )}
-                            </button>
-
-                            <button
-                                onClick={() => seekRelative(-10)}
-                                className="p-2 sm:p-2.5 rounded-full hover:bg-white/10 active:scale-90 transition-transform cursor-pointer"
-                                title="Reculer de 10 secondes"
-                                aria-label="Reculer de 10 secondes"
-                            >
-                                <NetflixRewind10Icon className="w-5 h-5 sm:w-7 sm:h-7" />
-                            </button>
-
-                            <button
-                                onClick={() => seekRelative(10)}
-                                className="p-2 sm:p-2.5 rounded-full hover:bg-white/10 active:scale-90 transition-transform cursor-pointer"
-                                title="Avancer de 10 secondes"
-                                aria-label="Avancer de 10 secondes"
-                            >
-                                <NetflixForward10Icon className="w-5 h-5 sm:w-7 sm:h-7" />
-                            </button>
-
-                            {/* Volume : visible sur tablette/desktop, masqué sur téléphone (boutons physiques du mobile) */}
-                            <div className="hidden sm:flex items-center group/vol space-x-2">
-                                <button
-                                    onClick={toggleMute}
-                                    className="p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
-                                    title={isMuted ? 'Activer le son' : 'Couper le son'}
-                                    aria-label={isMuted ? 'Activer le son' : 'Couper le son'}
-                                >
-                                    {isMuted || volume === 0 ? (
-                                        <NetflixVolumeMuteIcon className="w-6 h-6" />
-                                    ) : volume > 0.5 ? (
-                                        <NetflixVolumeHighIcon className="w-6 h-6" />
-                                    ) : (
-                                        <NetflixVolumeLowIcon className="w-6 h-6" />
-                                    )}
-                                </button>
-                                <input
-                                    type="range"
-                                    min={0}
-                                    max={1}
-                                    step={0.05}
-                                    value={isMuted ? 0 : volume}
-                                    onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-                                    className="w-0 group-hover/vol:w-16 sm:group-hover/vol:w-20 transition-all duration-200 accent-[#e50914] h-1 bg-white/20 rounded-full cursor-pointer overflow-hidden"
-                                    aria-label="Volume"
-                                />
-                            </div>
-
-                            {/* Temps restant / écoulé officiel Netflix */}
-                            <button
-                                onClick={() => setTimeDisplayMode(m => m === 'remaining' ? 'elapsed' : 'remaining')}
-                                className="text-[11px] sm:text-xs md:text-sm font-semibold text-white/80 hover:text-white select-none pl-1 font-mono cursor-pointer transition-colors whitespace-nowrap"
-                                title="Cliquer pour basculer temps restant / temps écoulé"
-                            >
-                                {timeDisplayMode === 'remaining'
-                                    ? formatRemainingTime((duration || 0) - currentTime)
-                                    : `${formatCurrentTime(currentTime)} / ${formatCurrentTime(duration || 0)}`}
-                            </button>
-                        </div>
-
-                        {/* Partie Droite : Épisode suivant, Épisodes, Audio/Sous-titres, Vitesse, Qualité, Plein écran */}
-                        <div className="flex items-center gap-1 sm:gap-2 relative">
-                            {/* Bouton Épisode suivant officiel Netflix (Séries uniquement) */}
-                            {isTv && nextEpAvailable && (
-                                <button
-                                    onClick={handleNextEpisode}
-                                    className="p-2 rounded-full hover:bg-white/10 active:scale-90 transition-transform cursor-pointer"
-                                    title="Épisode suivant (N)"
-                                    aria-label="Épisode suivant"
-                                >
-                                    <NetflixNextEpisodeIcon className="w-5 h-5 sm:w-6 sm:h-6" />
-                                </button>
-                            )}
-
-                            {/* Bouton Liste des épisodes officiel Netflix (Séries uniquement) */}
-                            {isTv && (
-                                <button
-                                    onClick={() => setShowDrawer(true)}
-                                    className="p-2 rounded-full hover:bg-white/10 active:scale-90 transition-transform cursor-pointer"
-                                    title="Épisodes"
-                                    aria-label="Liste des épisodes"
-                                >
-                                    <NetflixEpisodesIcon className="w-5 h-5 sm:w-6 sm:h-6" />
-                                </button>
-                            )}
-
-                            {/* Sélecteur Audio et Sous-titres (Style officiel Netflix) */}
-                            <div className="relative">
-                                <button
-                                    onClick={() => {
-                                        setShowAudioSubsMenu(!showAudioSubsMenu);
-                                        setShowQualityMenu(false);
-                                        setShowSpeedMenu(false);
-                                    }}
-                                    className={`p-2 rounded-full hover:bg-white/10 active:scale-90 transition-all cursor-pointer ${
-                                        selectedSubtitleId !== 'off' || showAudioSubsMenu
-                                            ? 'text-[#e50914]'
-                                            : 'text-white'
-                                    }`}
-                                    title="Audio et Sous-titres"
-                                    aria-label="Audio et sous-titres"
-                                >
-                                    <NetflixSubtitlesIcon className="w-5 h-5 sm:w-6 sm:h-6" />
-                                </button>
-
-                                {showAudioSubsMenu && (
-                                    <div className="absolute bottom-full right-0 mb-3 w-72 sm:w-80 max-w-[calc(100vw-24px)] rounded-2xl bg-[#14141c]/95 border border-white/15 backdrop-blur-2xl p-4 shadow-2xl z-50">
-                                        <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
-                                            <span className="text-xs font-bold text-white uppercase tracking-wider">Audio et Sous-titres</span>
-                                            <button
-                                                onClick={() => setShowAudioSubsMenu(false)}
-                                                className="text-white/50 hover:text-white text-xs cursor-pointer p-1"
-                                                aria-label="Fermer"
-                                            >
-                                                ✕
-                                            </button>
-                                        </div>
-
-                                        <div className="grid grid-cols-2 gap-4 text-xs">
-                                            {/* Colonne 1 : Audio */}
-                                            <div className="space-y-1.5">
-                                                <div className="text-[11px] font-bold text-white/50 uppercase pb-1">Audio</div>
-                                                {hasTrueVf ? (
-                                                    <button
-                                                        onClick={() => handleSelectAudioLang('vf')}
-                                                        className={`w-full text-left px-2.5 py-1.5 rounded-lg font-medium transition-colors flex items-center justify-between cursor-pointer ${
-                                                            currentAudioLang === 'vf' ? 'bg-[#e50914] text-white' : 'text-white/80 hover:bg-white/10'
-                                                        }`}
-                                                    >
-                                                        <span>Français [VF]</span>
-                                                        {currentAudioLang === 'vf' && <span className="text-[10px]">✓</span>}
-                                                    </button>
-                                                ) : (
-                                                    <div
-                                                        className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/40 flex items-center justify-between select-none"
-                                                        title="Aucun doublage audio français officiel disponible pour ce fichier"
-                                                    >
-                                                        <span className="text-[11px]">Français (Non dispo)</span>
-                                                        <span className="text-[9px] bg-white/10 px-1 py-0.5 rounded text-white/60">VOSTFR</span>
-                                                    </div>
-                                                )}
-
-                                                <button
-                                                    onClick={() => handleSelectAudioLang('vo')}
-                                                    className={`w-full text-left px-2.5 py-1.5 rounded-lg font-medium transition-colors flex items-center justify-between cursor-pointer ${
-                                                        currentAudioLang === 'vo' ? 'bg-[#e50914] text-white' : 'text-white/80 hover:bg-white/10'
-                                                    }`}
-                                                >
-                                                    <span>Version Originale</span>
-                                                    {currentAudioLang === 'vo' && <span className="text-[10px]">✓</span>}
-                                                </button>
-                                            </div>
-
-                                            {/* Colonne 2 : Sous-titres */}
-                                            <div className="space-y-1.5 max-h-56 overflow-y-auto">
-                                                <div className="text-[11px] font-bold text-white/50 uppercase pb-1 flex items-center justify-between">
-                                                    <span>Sous-titres</span>
-                                                    <span className="text-[9px] font-mono text-white/40 font-normal">Touche C</span>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleSelectSubtitle('off', null, true)}
-                                                    className={`w-full text-left px-2.5 py-1.5 rounded-lg font-medium transition-colors flex items-center justify-between cursor-pointer ${
-                                                        selectedSubtitleId === 'off' ? 'bg-[#e50914] text-white' : 'text-white/80 hover:bg-white/10'
-                                                    }`}
-                                                >
-                                                    <span>Désactivés</span>
-                                                    {selectedSubtitleId === 'off' && <span className="text-[10px]">✓</span>}
-                                                </button>
-
-                                                {availableSubtitles.length > 0 ? (
-                                                    availableSubtitles.map((sub) => (
-                                                        <button
-                                                            key={sub.id}
-                                                            onClick={() => handleSelectSubtitle(sub.id, null, true)}
-                                                            className={`w-full text-left px-2.5 py-1.5 rounded-lg font-medium transition-colors flex items-center justify-between cursor-pointer ${
-                                                                selectedSubtitleId === sub.id ? 'bg-[#e50914] text-white' : 'text-white/80 hover:bg-white/10'
-                                                            }`}
-                                                        >
-                                                            <span className="truncate pr-1">{sub.label}</span>
-                                                            {selectedSubtitleId === sub.id && <span className="text-[10px]">✓</span>}
-                                                        </button>
-                                                    ))
-                                                ) : (
-                                                    <span className="block text-[11px] text-white/40 italic px-2 py-1">Sous-titres intégrés au flux</span>
-                                                )}
-
-                                                <div className="pt-2 mt-2 border-t border-white/10 flex items-center justify-between">
-                                                    <span className="text-[10px] text-white/70">Activer par défaut</span>
-                                                    <button
-                                                        type="button"
-                                                        title="Activer ou désactiver les sous-titres automatiques au début de chaque vidéo"
-                                                        onClick={() => {
-                                                            const next = !subtitlesAlwaysOn;
-                                                            setSubtitlesAlwaysOn(next);
-                                                            localStorage.setItem('altyflix_subtitles_always_on', next ? 'true' : 'false');
-                                                            if (currentProfile?.id && updateProfile) {
-                                                                updateProfile(currentProfile.id, { subtitlesAlwaysOn: next });
-                                                            }
-                                                            triggerSubToast(next ? 'Sous-titres par défaut : Activés' : 'Sous-titres par défaut : Désactivés');
-                                                        }}
-                                                        className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer p-0.5 ${
-                                                            subtitlesAlwaysOn ? 'bg-[#e50914]' : 'bg-white/20'
-                                                        }`}
-                                                    >
-                                                        <div className={`w-3 h-3 rounded-full bg-white transition-transform ${
-                                                            subtitlesAlwaysOn ? 'translate-x-3' : 'translate-x-0'
-                                                        }`} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Vitesse de lecture */}
-                            <div className="relative">
-                                <button
-                                    onClick={() => {
-                                        setShowSpeedMenu(!showSpeedMenu);
-                                        setShowAudioSubsMenu(false);
-                                        setShowQualityMenu(false);
-                                    }}
-                                    className="px-2 py-1.5 rounded-md hover:bg-white/10 text-xs font-bold transition-colors cursor-pointer"
-                                    title="Vitesse de lecture"
-                                    aria-label="Vitesse de lecture"
-                                >
-                                    {playbackRate}x
-                                </button>
-
-                                {showSpeedMenu && (
-                                    <div className="absolute bottom-full right-0 mb-3 w-28 rounded-2xl bg-[#14141c]/95 border border-white/15 backdrop-blur-xl p-2 shadow-2xl space-y-1 z-50">
-                                        {[0.5, 0.75, 1, 1.25, 1.5].map((rate) => (
-                                            <button
-                                                key={rate}
-                                                onClick={() => handleSpeedChange(rate)}
-                                                className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                                                    playbackRate === rate ? 'bg-[#e50914] text-white' : 'text-white/80 hover:bg-white/10'
-                                                }`}
-                                            >
-                                                {rate === 1 ? 'Normal (1x)' : `${rate}x`}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Sélecteur de qualité (4K, 1080p, etc.) */}
-                            {availableStreams.length > 1 && (
-                                <div className="relative">
-                                    <button
-                                        onClick={() => {
-                                            setShowQualityMenu(!showQualityMenu);
-                                            setShowAudioSubsMenu(false);
-                                            setShowSpeedMenu(false);
-                                        }}
-                                        className={`px-2 sm:px-2.5 py-1 rounded text-[11px] sm:text-xs font-bold border transition-all cursor-pointer whitespace-nowrap ${
-                                            activeStream?.quality?.includes('4K')
-                                                ? 'bg-[#e50914]/20 border-[#e50914] text-[#e50914]'
-                                                : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
-                                        }`}
-                                        title="Changer la qualité vidéo"
-                                        aria-label="Qualité vidéo"
-                                    >
-                                        <span className="sm:hidden">
-                                            {activeStream?.quality?.includes('4K') ? '4K' : (activeStream?.tierKey || 'HD')}
-                                        </span>
-                                        <span className="hidden sm:inline">
-                                            {activeStream?.qualityLabel || activeStream?.quality || 'HD'}
-                                        </span>
-                                    </button>
-
-                                    {showQualityMenu && (
-                                        <div className="absolute bottom-full right-0 mb-3 w-64 max-w-[calc(100vw-24px)] max-h-64 overflow-y-auto rounded-2xl bg-[#14141c]/95 border border-white/15 backdrop-blur-xl p-2 shadow-2xl space-y-1 z-50">
-                                            <div className="px-2 py-1 text-[11px] font-bold text-white/50 uppercase tracking-wider">Qualité & Source</div>
-                                            {availableStreams.map((st) => (
-                                                <button
-                                                    key={st.id}
-                                                    onClick={() => handleSelectStream(st)}
-                                                    className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-colors flex items-center justify-between cursor-pointer ${
-                                                        activeStream?.id === st.id ? 'bg-[#e50914] text-white shadow-md' : 'text-white/80 hover:bg-white/10'
-                                                    }`}
-                                                >
-                                                    <div className="flex flex-col">
-                                                        <span className="font-semibold">{st.qualityLabel || st.quality} {st.isFrench ? '🇫🇷' : ''}</span>
-                                                        <span className="text-[10px] text-white/60">
-                                                            {st.isWebAudioSafe ? '🔊 Son garanti (AAC)' : 'Audio standard'}
-                                                        </span>
-                                                    </div>
-                                                    {st.size && <span className="text-[10px] opacity-75 font-mono ml-2">{st.size}</span>}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Plein écran avec large zone tactile mobile */}
-                            <button
-                                onClick={(e) => toggleFullscreen(e)}
-                                className="min-w-[40px] min-h-[40px] sm:min-w-[44px] sm:min-h-[44px] p-2 flex items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition-transform cursor-pointer touch-manipulation"
-                                title={isFullscreen ? 'Quitter le plein écran (F)' : 'Plein écran (F)'}
-                                aria-label="Plein écran"
-                            >
-                                {isFullscreen ? (
-                                    <NetflixExitFullscreenIcon className="w-5 h-5 sm:w-6 sm:h-6" />
-                                ) : (
-                                    <NetflixFullscreenIcon className="w-5 h-5 sm:w-6 sm:h-6" />
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* DRAWER ÉPISODES POUR SÉRIES TV */}
-            {isTv && (
-                <EpisodeDrawer
-                    isOpen={showDrawer}
-                    onClose={() => setShowDrawer(false)}
-                    tvShow={tvDetails}
-                    season={season}
-                    episode={episode}
-                    onSelectEpisode={(newSeason, newEpisode) => {
-                        setSeason(newSeason);
-                        setEpisode(newEpisode);
-                        setShowDrawer(false);
-                    }}
-                />
-            )}
-
-            {/* MODAL RACCOURCIS CLAVIER OFFICIEL STYLE NETFLIX (?) */}
-            {showShortcutsModal && (
-                <div
-                    className="fixed inset-0 z-[100000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
-                    onClick={() => setShowShortcutsModal(false)}
-                >
-                    <div
-                        className="w-full max-w-md bg-[#14141f] border border-white/20 rounded-3xl p-6 sm:p-7 shadow-[0_20px_80px_rgba(0,0,0,0.9)] space-y-5"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                            <div className="flex items-center gap-2.5">
-                                <div className="w-7 h-7 rounded-full bg-[#e50914] text-white flex items-center justify-center font-bold text-xs shadow">
-                                    ?
-                                </div>
-                                <h3 className="text-base font-bold text-white tracking-wide">Raccourcis Clavier Altyflix</h3>
-                            </div>
-                            <button
-                                onClick={() => setShowShortcutsModal(false)}
-                                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className="space-y-2 text-xs">
-                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                <span className="text-white/80">Lecture / Pause</span>
-                                <div className="flex gap-1">
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">Espace</kbd>
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">K</kbd>
-                                </div>
-                            </div>
-                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                <span className="text-white/80">Reculer de 10 secondes</span>
-                                <div className="flex gap-1">
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">←</kbd>
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">J</kbd>
-                                </div>
-                            </div>
-                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                <span className="text-white/80">Avancer de 10 secondes</span>
-                                <div className="flex gap-1">
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">→</kbd>
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">L</kbd>
-                                </div>
-                            </div>
-                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                <span className="text-white/80">Volume +/-</span>
-                                <div className="flex gap-1">
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">↑</kbd>
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">↓</kbd>
-                                </div>
-                            </div>
-                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                <span className="text-white/80">Couper / Réactiver le son</span>
-                                <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">M</kbd>
-                            </div>
-                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                <span className="text-white/80">Plein écran</span>
-                                <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">F</kbd>
-                            </div>
-                            <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                <span className="text-white/80">Sous-titres (Activer / Désactiver)</span>
-                                <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">C</kbd>
-                            </div>
-                            {isTv && (
-                                <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                                    <span className="text-white/80">Épisode suivant</span>
-                                    <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">N</kbd>
-                                </div>
-                            )}
-                            <div className="flex items-center justify-between py-1.5">
-                                <span className="text-white/80">Quitter le lecteur / Plein écran</span>
-                                <kbd className="px-2 py-0.5 rounded bg-white/10 text-white font-mono font-semibold">Échap</kbd>
-                            </div>
-                        </div>
-
-                        <div className="pt-2 text-center">
-                            <button
-                                onClick={() => setShowShortcutsModal(false)}
-                                className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-colors cursor-pointer"
-                            >
-                                Fermer
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
+    );
+}
+
+function MobileAction({ icon, label, onClick }) {
+    return (
+        <button type="button" onClick={onClick} className="flex items-center gap-2 py-2 text-[13px] font-medium text-white active:opacity-60">
+            {icon}
+            <span className="hidden min-[420px]:inline">{label}</span>
+        </button>
     );
 }

@@ -7,6 +7,7 @@ process.on('unhandledRejection', reason => {
 
 const streamApi = require('./stream-api.cjs');
 const { resolveNativeStream, getDemoVtt } = require('./nativeStreamingEngine.cjs');
+const { resolveStreamsServer, checkStreamStatus } = require('./stream-resolver.cjs');
 const { SECURITY_HEADERS, HttpError, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter } = require('./security.cjs');
 /**
  * ALTYFLIX Backend Server - Node.js (Built-in HTTP, Zero Dependances External)
@@ -219,7 +220,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       ...SECURITY_HEADERS,
       'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url'
     });
     return res.end();
   }
@@ -230,7 +231,7 @@ const server = http.createServer(async (req, res) => {
   const pathname = parsedUrl.pathname;
   const query = Object.fromEntries(parsedUrl.searchParams);
 
-  if (pathname.startsWith('/api/') && pathname !== '/api/video-stream' && !allowRequest(req.socket.remoteAddress || 'local')) {
+  if (pathname.startsWith('/api/') && pathname !== '/api/video-stream' && pathname !== '/api/stream-poll' && !allowRequest(req.socket.remoteAddress || 'local')) {
     res.setHeader('Retry-After', '60');
     return sendJSON(res, 429, { error: 'Trop de requêtes. Réessayez dans une minute.' });
   }
@@ -255,6 +256,70 @@ const server = http.createServer(async (req, res) => {
         headers: upstreamHeaders,
         signal: abortCtrl.signal
       });
+
+      const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
+      const contentDisp = (upstreamRes.headers.get('content-disposition') || '').toLowerCase();
+      const finalUrl = upstreamRes.url || targetUrl;
+      const isAvi = targetUrl.toLowerCase().includes('.avi') || 
+                    finalUrl.toLowerCase().includes('.avi') || 
+                    contentType.includes('msvideo') || 
+                    contentType.includes('avi') ||
+                    contentDisp.includes('.avi');
+
+      // Si le format est un AVI ancien non décodé par HTML5, conversion dynamique à la volée vers fMP4
+      if (isAvi) {
+        console.log(`[Video Stream Proxy] Transcodage dynamique à la volée du flux AVI vers MP4 HTML5...`);
+        // Libère la connexion fetch initiale
+        try { abortCtrl.abort(); } catch {}
+
+        res.writeHead(200, {
+          'Content-Type': 'video/mp4',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Cache-Control': 'no-cache'
+        });
+
+        const { spawn } = require('child_process');
+        const ffmpegArgs = [
+          '-probesize', '2000000',
+          '-analyzeduration', '2000000'
+        ];
+
+        // Support du saut temporel (seek) si demandé
+        if (query.t || query.start) {
+          ffmpegArgs.push('-ss', String(query.t || query.start));
+        }
+
+        ffmpegArgs.push(
+          '-i', finalUrl,
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-tune', 'zerolatency',
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+          '-f', 'mp4',
+          'pipe:1'
+        );
+
+        const ffmpegProc = spawn('ffmpeg', ffmpegArgs, {
+          stdio: ['ignore', 'pipe', 'ignore']
+        });
+
+        req.on('close', () => {
+          try { ffmpegProc.kill(); } catch {}
+        });
+
+        ffmpegProc.stdout.on('error', () => {
+          try { res.destroy(); } catch {}
+        });
+        res.on('error', () => {
+          try { ffmpegProc.kill(); } catch {}
+        });
+
+        ffmpegProc.stdout.pipe(res);
+        return;
+      }
 
       const responseHeaders = {
         'Content-Type': upstreamRes.headers.get('content-type') || 'video/mp4',
@@ -468,6 +533,57 @@ const server = http.createServer(async (req, res) => {
         qualities: AUTHORIZED_STREAMS[k].qualities.map(q => q.label)
       }))
     });
+  }
+
+  // ALTYFLIX STREAM RESOLVER SECURISE (Torrentio / TorBox avec gestion de cache)
+  if (pathname === '/api/stream-resolve') {
+    const { id, imdbId, type = 'movie', season = 1, episode = 1, lang = 'vf', title = '' } = query;
+    const userProvider = req.headers['x-debrid-provider'];
+    const userToken = req.headers['x-debrid-token'];
+    const userFrenchioUrl = req.headers['x-frenchio-url'] || query.frenchioUrl;
+
+    try {
+      const result = await resolveStreamsServer({
+        id,
+        imdbId,
+        type,
+        season: parseInt(season, 10) || 1,
+        episode: parseInt(episode, 10) || 1,
+        lang,
+        title,
+        userProvider,
+        userToken,
+        userFrenchioUrl
+      });
+      return sendJSON(res, 200, result);
+    } catch (err) {
+      console.error('[Stream Resolver Endpoint] Error:', err);
+      return sendJSON(res, 500, {
+        success: false,
+        status: 'error',
+        error: 'Erreur lors de la résolution du flux : ' + err.message
+      });
+    }
+  }
+
+  // ALTYFLIX STREAM POLL (Vérifie si un flux en cours de débridage est devenu 'ready')
+  if (pathname === '/api/stream-poll') {
+    const targetUrl = query.url;
+    if (!targetUrl) {
+      return sendJSON(res, 400, { success: false, status: 'error', error: 'Paramètre url manquant.' });
+    }
+
+    try {
+      const statusData = await checkStreamStatus(targetUrl);
+      return sendJSON(res, 200, statusData);
+    } catch (err) {
+      console.error('[Stream Poll Endpoint] Error:', err);
+      return sendJSON(res, 500, {
+        success: false,
+        status: 'error',
+        error: 'Erreur lors de la vérification de l\'état : ' + err.message
+      });
+    }
   }
 
   // ALTYFLIX NATIVE STREAMING ENGINE (100% Natif HLS / DASH - Zéro iframe - Sources autorisées)

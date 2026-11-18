@@ -12,6 +12,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import tmdb from '../services/tmdb';
 import { useTranslation } from '../hooks/useTranslation';
 import Icon from '../components/ui/Icons';
+import { getGatewayConfig, saveGatewayConfig } from '../services/streamingGateway';
 
 // Modular Settings Components
 import { Toast, ConfirmModal } from '../components/settings/SettingsUI';
@@ -54,6 +55,11 @@ const Settings = () => {
     const [subtitlesColor, setSubtitlesColor] = useState(() => currentProfile?.subtitlesColor || 'white');
     const [videoQuality, setVideoQuality] = useState(() => currentProfile?.videoQuality || 'auto');
     const [preferredAudio, setPreferredAudio] = useState(() => currentProfile?.preferredAudio || (currentProfile?.language === 'en' ? 'VOST' : 'VF'));
+
+    // Debrid & Sources Streaming States
+    const [debridProvider, setDebridProvider] = useState(() => getGatewayConfig().provider || 'torbox');
+    const [debridToken, setDebridToken] = useState(() => getGatewayConfig().token || '');
+    const [frenchioUrl, setFrenchioUrl] = useState(() => getGatewayConfig().frenchioUrl || '');
 
     // Account & Security States
     const [emailForm, setEmailForm] = useState({ newEmail: '', password: '' });
@@ -202,6 +208,11 @@ const Settings = () => {
             if (typeof localStorage !== 'undefined') {
                 localStorage.setItem('altyflix_subtitles_always_on', subtitlesAlwaysOn ? 'true' : 'false');
             }
+            saveGatewayConfig({
+                provider: debridProvider,
+                token: debridToken,
+                frenchioUrl
+            });
             if (!result.success) throw new Error(result.error || 'Sauvegarde refusée.');
             triggerToast('success', t('settings.savePreferencesSuccess'));
         } catch {
@@ -407,6 +418,12 @@ const Settings = () => {
                                     setSubtitlesSize={setSubtitlesSize}
                                     subtitlesColor={subtitlesColor}
                                     setSubtitlesColor={setSubtitlesColor}
+                                    debridProvider={debridProvider}
+                                    setDebridProvider={setDebridProvider}
+                                    debridToken={debridToken}
+                                    setDebridToken={setDebridToken}
+                                    frenchioUrl={frenchioUrl}
+                                    setFrenchioUrl={setFrenchioUrl}
                                     loading={loading}
                                     t={t}
                                 />

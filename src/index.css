@@ -611,3 +611,7 @@ video::-webkit-media-text-track-container {
   opacity: 0 !important;
   visibility: hidden !important;
 }
+
+/* Lecteur : bref retour visuel lecture/pause */
+@keyframes player-flash { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.35); } }
+.player-flash { animation: player-flash 0.6s ease-out forwards; }

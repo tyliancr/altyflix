@@ -28,7 +28,6 @@ class ErrorBoundary extends Component {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-[#08080C] flex flex-col items-center justify-center gap-6 text-white p-8">
-          <div className="text-5xl">⚠️</div>
           <h2 className="text-2xl font-bold">Une erreur est survenue</h2>
           <p className="text-white/50 text-sm text-center max-w-sm">
             Cette page a rencontré un problème. Vous pouvez recharger ou revenir à l&apos;accueil.
@@ -36,13 +35,13 @@ class ErrorBoundary extends Component {
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
-              className="px-6 py-3 bg-[#E50914] text-white font-bold rounded-xl hover:bg-red-700 transition-colors"
+              className="px-6 py-3 bg-white text-black font-bold rounded hover:bg-white/85 transition-colors"
             >
               Recharger
             </button>
             <button
               onClick={() => { this.setState({ hasError: false, error: null }); window.location.href = '/'; }}
-              className="px-6 py-3 bg-white/10 text-white font-bold rounded-xl hover:bg-white/20 transition-colors"
+              className="px-6 py-3 bg-white/15 text-white font-bold rounded hover:bg-white/25 transition-colors"
             >
               Retour à l&apos;accueil
             </button>

@@ -134,4 +134,164 @@ async function readBoundedBuffer(response, maxBytes = 2 * 1024 * 1024) {
   return Buffer.concat(chunks, total);
 }
 
-module.exports = { SECURITY_HEADERS, HttpError, positiveInteger, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter, isAllowedSubtitleUrl, readBoundedBuffer };
+const SUBTITLE_AD_PATTERN = /(?:opensubtitles|osdb\.link|subtitles\.org|tryray\.app|appuyez sur lecture|une seule app|plus de 200 langues|watch online movies|devenez membre vip|become vip|advertise your product|support us and|sous-titres\.eu|addic7ed|subscene|yifysubtitles|podnapisi|best watched using|sync(?:ed)?\s*(?:&|and)\s*correct|resync(?:ed)?\s*by|allsubs\.org|tvsubtitles|subdivx)/i;
+
+function decodeSubtitleBuffer(buf) {
+  if (!buf || !buf.length) return '';
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(buf);
+  }
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buf);
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buf);
+  }
+}
+
+function cleanSubtitleToVtt(rawText) {
+  let text = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  // Normaliser les timestamps SRT (00:01:02,345 ou 0:01:02,345 -> 00:01:02.345)
+  text = text.replace(/\b(\d{1,2}):(\d{2}:\d{2}),(\d{3})\b/g, (_m, h, rest, ms) => `${h.padStart(2, '0')}:${rest}.${ms}`);
+  const blocks = text.split(/\n{2,}/);
+  const kept = [];
+  const timeRe = /^\d{1,2}:\d{2}(?::\d{2})?\.\d{3}\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?\.\d{3}/;
+
+  for (const rawBlock of blocks) {
+    const lines = rawBlock.split('\n').map(l => l.trimEnd());
+    const timeIdx = lines.findIndex(l => timeRe.test(l.trim()));
+    if (timeIdx === -1) continue;
+    const payload = lines.slice(timeIdx + 1).filter(l => l.trim().length > 0);
+    if (payload.length === 0) continue;
+    if (payload.some(l => SUBTITLE_AD_PATTERN.test(l))) continue;
+    kept.push(`${lines[timeIdx].trim()}\n${payload.join('\n')}`);
+  }
+
+  if (kept.length === 0) {
+    const fallback = text.trim();
+    return fallback.startsWith('WEBVTT') ? fallback : `WEBVTT\n\n${fallback}`;
+  }
+  return `WEBVTT\n\n${kept.join('\n\n')}`;
+}
+
+function buildSubtitleHint(s) {
+  const raw = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`.toLowerCase();
+  const parts = [];
+  if (/\bextended\b/.test(raw)) parts.push('Extended');
+  else if (/\bunrated\b/.test(raw)) parts.push('Unrated');
+  else if (/\bdirector/.test(raw)) parts.push('Director');
+  if (/\b(?:blu-?ray|bdrip|brrip)\b/.test(raw)) parts.push('BluRay');
+  else if (/\bweb-?(?:dl|rip)\b/.test(raw)) parts.push('WEB');
+  else if (/\bdvd(?:rip)?\b/.test(raw)) parts.push('DVDRip');
+  const fpsNum = parseFloat(s.MovieFPS);
+  if (Number.isFinite(fpsNum) && fpsNum >= 23 && fpsNum <= 30) {
+    parts.push(Math.abs(fpsNum - 25) < 0.2 ? '25fps' : (Math.abs(fpsNum - 23.976) < 0.2 ? '23.976' : `${fpsNum.toFixed(0)}fps`));
+  }
+  if (String(s.SubHearingImpaired) === '1') parts.push('SDH');
+  return parts.slice(0, 2).join(' · ');
+}
+
+function rankOpenSubtitles(osList, { filename = '', limit = 4 } = {}) {
+  if (!Array.isArray(osList)) return [];
+  const fnLower = String(filename || '').toLowerCase();
+  const isSplitRe = /\b(?:cd|disc|disk|part)[\s._-]?[123]\b/i;
+  const genericTokens = new Set(['french', 'truefrench', 'vff', 'vfq', 'vostfr', 'multi', '1080p', '720p', '2160p', '480p', 'x264', 'h264', 'x265', 'h265', 'hevc', 'xvid', 'divx', 'ac3', 'eac3', 'dts', 'aac', 'mp3', 'mkv', 'mp4', 'avi', 'srt', 'bluray', 'bdrip', 'brrip', 'dvdrip', 'webrip', 'webdl']);
+  const fnTokens = fnLower
+    ? fnLower.replace(/[^a-z0-9]+/g, ' ').split(' ').filter(t => t.length >= 4 && !genericTokens.has(t))
+    : [];
+
+  const fnExtended = /\bextended\b/.test(fnLower);
+  const fnUnrated = /\bunrated\b/.test(fnLower);
+  const fnDirector = /\bdirector/.test(fnLower);
+  const fnDoubleEp = /\bs\d+e\d+(?:and|[-._]?e)\d+\b/i.test(fnLower);
+  const fnIsDvdPal = /\b(?:dvdrip|pal|dvd)\b/.test(fnLower) && !/\b(?:bluray|bdrip|brrip|web-?dl|ntsc)\b/.test(fnLower);
+  const fnIsHd24 = /\b(?:bluray|bdrip|brrip|web-?dl|webrip|1080p|2160p|4k)\b/.test(fnLower) && !/\b(?:dvdrip|pal)\b/.test(fnLower);
+
+  const candidates = osList.filter(s => {
+    if (!s?.SubDownloadLink || !isAllowedSubtitleUrl(s.SubDownloadLink)) return false;
+    const fmt = String(s.SubFormat || 'srt').toLowerCase();
+    if (fmt && fmt !== 'srt' && fmt !== 'vtt') return false;
+    const nameStr = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`;
+    if (isSplitRe.test(nameStr)) return false;
+    return true;
+  });
+
+  const scored = candidates.map(s => {
+    const raw = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`.toLowerCase();
+    let score = 0;
+
+    // Popularité et note OpenSubtitles
+    const downloads = parseInt(s.SubDownloadsCnt || '0', 10) || 0;
+    score += Math.min(1500, Math.log10(downloads + 1) * 400);
+    score += (parseFloat(s.SubRating) || 0) * 40;
+    if (String(s.SubHearingImpaired) === '1') score -= 1200;
+
+    if (fnLower) {
+      const subExtended = /\bextended\b/.test(raw);
+      const subUnrated = /\bunrated\b/.test(raw);
+      const subDirector = /\bdirector/.test(raw);
+      if (fnExtended && subExtended) score += 8000;
+      else if (fnExtended !== subExtended) score -= 6000;
+      if (fnUnrated && subUnrated) score += 6000;
+      else if (fnUnrated !== subUnrated) score -= 4500;
+      if (fnDirector && subDirector) score += 6000;
+      else if (fnDirector !== subDirector) score -= 4500;
+
+      const subDoubleEp = /\bs\d+e\d+(?:and|[-._]?e)\d+\b/i.test(raw);
+      if (fnDoubleEp && subDoubleEp) score += 2000;
+
+      // Correspondance de source (DVDRip / BluRay / WEB)
+      if (/\bdvd(?:rip)?\b/.test(fnLower) && /\bdvd(?:rip)?\b/.test(raw)) score += 2500;
+      if (/\b(?:blu-?ray|bdrip|brrip)\b/.test(fnLower) && /\b(?:blu-?ray|bdrip|brrip)\b/.test(raw)) score += 2500;
+      if (/\bweb-?(?:dl|rip)\b/.test(fnLower) && /\bweb-?(?:dl|rip)\b/.test(raw)) score += 2500;
+
+      // Correspondance FPS (PAL 25fps vs BluRay/WEB 23.976fps)
+      const fps = parseFloat(s.MovieFPS) || 0;
+      if (fnIsDvdPal && Math.abs(fps - 25) < 0.25) score += 2600;
+      if (fnIsDvdPal && Math.abs(fps - 23.976) < 0.25) score -= 1800;
+      if (fnIsHd24 && (Math.abs(fps - 23.976) < 0.25 || Math.abs(fps - 24) < 0.25)) score += 2200;
+      if (fnIsHd24 && Math.abs(fps - 25) < 0.25) score -= 1600;
+
+      // Correspondance des tokens de release
+      let tokenHits = 0;
+      for (const tok of fnTokens) {
+        if (raw.includes(tok)) tokenHits++;
+      }
+      score += Math.min(2500, tokenHits * 500);
+    }
+
+    return { item: s, score, hint: buildSubtitleHint(s) };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  // Dédupliquer par URL de téléchargement
+  const seen = new Set();
+  const out = [];
+  for (const entry of scored) {
+    if (seen.has(entry.item.SubDownloadLink)) continue;
+    seen.add(entry.item.SubDownloadLink);
+    out.push(entry);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+module.exports = {
+  SECURITY_HEADERS,
+  HttpError,
+  positiveInteger,
+  validateStreams,
+  arteLimit,
+  tmdbUrl,
+  BoundedCache,
+  fetchJson,
+  createRateLimiter,
+  isAllowedSubtitleUrl,
+  readBoundedBuffer,
+  decodeSubtitleBuffer,
+  cleanSubtitleToVtt,
+  rankOpenSubtitles
+};

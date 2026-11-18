@@ -860,7 +860,7 @@ export async function testGatewayToken({ provider, token }) {
 /**
  * Recherche les sous-titres disponibles pour un film ou un épisode (Multi-sources : OpenSubtitles v3 + OpenSubtitles REST)
  */
-export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type = 'movie', season = 1, episode = 1 }) {
+export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type = 'movie', season = 1, episode = 1, filename = '' }) {
     let imdbId = initialImdbId;
 
     // Si l'identifiant IMDb est absent ou mal formaté, le résoudre automatiquement depuis TMDB
@@ -880,7 +880,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
     const isTv = type === 'tv';
     const stremKey = isTv ? `${cleanImdbId}:${season}:${episode}` : `${cleanImdbId}`;
 
-    // 1. Source 1 : Stremio OpenSubtitles v3
+    // 1. Source 1 : Stremio OpenSubtitles v3 (fallback si une langue manque côté backend)
     const stremPromise = (async () => {
         try {
             const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${isTv ? 'series' : 'movie'}/${stremKey}.json`;
@@ -896,16 +896,18 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         }
     })();
 
-    // 2. Source 2 : Backend /api/subtitles (proxy OpenSubtitles REST FR/EN sans CORS)
+    // 2. Source 2 : Backend /api/subtitles (OpenSubtitles REST classés par release/FPS, décodage CP1252/UTF-8, anti-pub)
     const backendSubsPromise = (async () => {
-        if (!id) return [];
+        if (!id && !cleanImdbId) return [];
         try {
             const q = new URLSearchParams({
-                id: String(id),
                 type: isTv ? 'tv' : 'movie',
                 season: String(season || 1),
                 episode: String(episode || 1)
             });
+            if (id) q.set('id', String(id));
+            if (cleanImdbId) q.set('imdbId', cleanImdbId);
+            if (filename) q.set('filename', String(filename).slice(0, 260));
             const res = await fetch(`/api/subtitles?${q.toString()}`, {
                 signal: AbortSignal.timeout(6000)
             });
@@ -926,34 +928,40 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         let enCount = 0;
         let esCount = 0;
 
-        // A. Sous-titres via backend (/api/subtitles-vtt, zéro CORS, déjà convertis en UTF-8 WebVTT)
+        // A. Sous-titres via backend (/api/subtitles-vtt : encodage UTF-8 propre, pubs supprimées, classés par release)
         for (const sub of backendSubs) {
             if (!sub?.url || seenUrls.has(sub.url)) continue;
             const rawLang = String(sub.lang || '').toLowerCase();
-            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && frCount < 3) {
+            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && frCount < 4) {
                 frCount++;
                 seenUrls.add(sub.url);
                 normalized.push({
                     id: sub.id || `api-fr-${frCount}`,
                     lang: 'fr',
                     label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
+                    hint: sub.hint || '',
+                    fps: sub.fps || null,
                     url: sub.url,
                     encoding: 'utf-8'
                 });
-            } else if ((rawLang === 'en' || rawLang === 'eng') && enCount < 2) {
+            } else if ((rawLang === 'en' || rawLang === 'eng') && enCount < 3) {
                 enCount++;
                 seenUrls.add(sub.url);
                 normalized.push({
                     id: sub.id || `api-en-${enCount}`,
                     lang: 'en',
                     label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
+                    hint: sub.hint || '',
+                    fps: sub.fps || null,
                     url: sub.url,
                     encoding: 'utf-8'
                 });
             }
         }
 
-        // B. Sous-titres depuis Stremio OpenSubtitles v3 (routés via /api/subtitles-vtt si possible ou direct)
+        // B. Fallback Stremio OpenSubtitles v3 uniquement pour les langues absentes du backend (évite les doublons)
+        const needStremFr = frCount === 0;
+        const needStremEn = enCount === 0;
         const langMap = {
             fre: 'fr', fra: 'fr', fr: 'fr',
             eng: 'en', en: 'en',
@@ -965,23 +973,25 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             const standardLang = langMap[rawLang];
             if (!standardLang || !sub.url || seenUrls.has(sub.url)) continue;
 
-            if (standardLang === 'fr' && frCount < 3) {
+            if (standardLang === 'fr' && needStremFr && frCount < 3) {
                 frCount++;
                 seenUrls.add(sub.url);
                 normalized.push({
                     id: sub.id || `strem-fr-${frCount}`,
                     lang: 'fr',
                     label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
+                    hint: '',
                     url: sub.url,
                     encoding: sub.SubEncoding || 'utf-8'
                 });
-            } else if (standardLang === 'en' && enCount < 2) {
+            } else if (standardLang === 'en' && needStremEn && enCount < 2) {
                 enCount++;
                 seenUrls.add(sub.url);
                 normalized.push({
                     id: sub.id || `strem-en-${enCount}`,
                     lang: 'en',
                     label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
+                    hint: '',
                     url: sub.url,
                     encoding: sub.SubEncoding || 'utf-8'
                 });
@@ -992,6 +1002,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
                     id: sub.id || `strem-es-${esCount}`,
                     lang: 'es',
                     label: 'Espagnol',
+                    hint: '',
                     url: sub.url,
                     encoding: sub.SubEncoding || 'utf-8'
                 });
@@ -1024,6 +1035,8 @@ function cueTimeToSec(h, min, s, ms) {
  * Lecture ligne par ligne : gère les lignes vides, les identifiants de cue WebVTT/SRT
  * sans effacer les dialogues numériques ("1999", "42"), les entités HTML et les blocs NOTE/STYLE.
  */
+const CUE_AD_SPAM_RE = /(?:opensubtitles|osdb\.link|subtitles\.org|tryray\.app|appuyez sur lecture|une seule app|plus de 200 langues|watch online movies|devenez membre vip|become vip|advertise your product|support us and|sous-titres\.eu|addic7ed|subscene|yifysubtitles|podnapisi|best watched using|sync(?:ed)?\s*(?:&|and)\s*correct|resync(?:ed)?\s*by)/i;
+
 export function parseVttCues(rawText) {
     if (!rawText) return [];
     const lines = String(rawText).replace(/^\uFEFF/, '').replace(/\r\n|\r/g, '\n').split('\n');
@@ -1046,7 +1059,7 @@ export function parseVttCues(rawText) {
             .replace(/&gt;/g, '>')
             .replace(/\n\s*\n+/g, '\n')
             .trim();
-        if (text && current.end > current.start) {
+        if (text && current.end > current.start && !CUE_AD_SPAM_RE.test(text)) {
             cues.push({ start: current.start, end: current.end, text });
         }
         current = null;

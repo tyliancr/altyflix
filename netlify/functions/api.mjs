@@ -20,7 +20,10 @@ const {
   BoundedCache,
   fetchJson,
   isAllowedSubtitleUrl,
-  readBoundedBuffer
+  readBoundedBuffer,
+  decodeSubtitleBuffer,
+  cleanSubtitleToVtt,
+  rankOpenSubtitles
 } = security;
 
 const memoryCache = new BoundedCache(200);
@@ -217,25 +220,16 @@ export default async function handler(req) {
       }
       if (!vttRes || !vttRes.ok) return jsonResponse({ error: 'Erreur sous-titre.' }, vttRes?.status || 502);
       const rawBuf = await readBoundedBuffer(vttRes, 2 * 1024 * 1024);
-      let text;
+      let decodedBuf = rawBuf;
       if (rawBuf.length >= 2 && rawBuf[0] === 0x1f && rawBuf[1] === 0x8b) {
         try {
-          const inflated = await gunzipAsync(rawBuf, { maxOutputLength: 5 * 1024 * 1024 });
-          text = inflated.toString('utf8');
+          decodedBuf = await gunzipAsync(rawBuf, { maxOutputLength: 5 * 1024 * 1024 });
         } catch {
-          text = rawBuf.toString('utf8');
+          decodedBuf = rawBuf;
         }
-      } else {
-        text = rawBuf.toString('utf8');
       }
 
-      text = text.replace(/^\uFEFF/, '');
-      if (!text.trim().startsWith('WEBVTT')) {
-        text = 'WEBVTT\n\n' + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
-      }
-      text = text
-        .replace(/.*(?:opensubtitles|osdb\.link|subtitles\.org|watch online movies|devenez membre vip|become vip|advertisement).*\n?/gi, '')
-        .trim();
+      const text = cleanSubtitleToVtt(decodeSubtitleBuffer(decodedBuf));
 
       return new Response(req.method === 'HEAD' ? null : text, {
         status: 200,
@@ -256,13 +250,14 @@ export default async function handler(req) {
 
   // 7. Sous-titres multi-sources (OpenSubtitles REST FR + EN + Stremio v3)
   if (pathname === '/api/subtitles') {
-    const { id, type = 'movie', season = 1, episode = 1 } = query;
+    const { id, imdbId: queryImdbId, type = 'movie', season = 1, episode = 1, filename = '' } = query;
     const safeType = type === 'tv' ? 'tv' : 'movie';
     const safeSeason = positiveInteger(season, 10000) ? Number(season) : 1;
     const safeEpisode = positiveInteger(episode, 10000) ? Number(episode) : 1;
+    const safeFilename = String(filename || '').slice(0, 260);
     try {
-      let imdbId = null;
-      if (TMDB_API_KEY && positiveInteger(id)) {
+      let imdbId = /^tt\d{5,10}$/i.test(String(queryImdbId || '')) ? String(queryImdbId).toLowerCase() : null;
+      if (!imdbId && TMDB_API_KEY && positiveInteger(id)) {
         try {
           const extUrl = tmdbUrl(safeType === 'tv' ? `tv/${id}/external_ids` : `movie/${id}/external_ids`, {}, TMDB_API_KEY);
           const extRes = await fetch(extUrl, { signal: AbortSignal.timeout(3500) });
@@ -281,50 +276,42 @@ export default async function handler(req) {
       const cleanImdb = imdbId ? imdbId.replace('tt', '') : null;
 
       if (cleanImdb) {
-        const [frList, enList] = await Promise.all([
-          (async () => {
-            try {
-              const osUrlFr = safeType === 'tv'
-                ? `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}/season-${safeSeason}/episode-${safeEpisode}`
-                : `https://rest.opensubtitles.org/search/sublanguageid-fre/imdbid-${cleanImdb}`;
-              const osRes = await fetch(osUrlFr, { headers: { 'User-Agent': 'TemporaryUserAgent' }, signal: AbortSignal.timeout(4000) });
-              if (!osRes.ok) return [];
-              const osData = await osRes.json();
-              return Array.isArray(osData) ? osData.slice(0, 3) : [];
-            } catch { return []; }
-          })(),
-          (async () => {
-            try {
-              const osUrlEn = safeType === 'tv'
-                ? `https://rest.opensubtitles.org/search/sublanguageid-eng/imdbid-${cleanImdb}/season-${safeSeason}/episode-${safeEpisode}`
-                : `https://rest.opensubtitles.org/search/sublanguageid-eng/imdbid-${cleanImdb}`;
-              const osRes = await fetch(osUrlEn, { headers: { 'User-Agent': 'TemporaryUserAgent' }, signal: AbortSignal.timeout(3000) });
-              if (!osRes.ok) return [];
-              const osData = await osRes.json();
-              return Array.isArray(osData) ? osData.slice(0, 2) : [];
-            } catch { return []; }
-          })()
+        const fetchOsLang = async (osLang, timeoutMs) => {
+          try {
+            const osUrl = safeType === 'tv'
+              ? `https://rest.opensubtitles.org/search/sublanguageid-${osLang}/imdbid-${cleanImdb}/season-${safeSeason}/episode-${safeEpisode}`
+              : `https://rest.opensubtitles.org/search/sublanguageid-${osLang}/imdbid-${cleanImdb}`;
+            const osRes = await fetch(osUrl, { headers: { 'User-Agent': 'TemporaryUserAgent' }, signal: AbortSignal.timeout(timeoutMs) });
+            if (!osRes.ok) return [];
+            const osData = await osRes.json();
+            return Array.isArray(osData) ? osData : [];
+          } catch { return []; }
+        };
+
+        const [frRaw, enRaw] = await Promise.all([
+          fetchOsLang('fre', 4000),
+          fetchOsLang('eng', 3500)
         ]);
 
-        frList.forEach((s, idx) => {
-          if (s.SubDownloadLink && isAllowedSubtitleUrl(s.SubDownloadLink)) {
-            formatted.push({
-              id: `fr-os-${idx}`,
-              label: idx === 0 ? 'Français' : `Français [${idx + 1}]`,
-              lang: 'fr',
-              url: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`
-            });
-          }
+        rankOpenSubtitles(frRaw, { filename: safeFilename, limit: 4 }).forEach(({ item: s, hint }, idx) => {
+          formatted.push({
+            id: `fr-os-${idx}`,
+            label: idx === 0 ? 'Français' : `Français (Option ${idx + 1})`,
+            hint,
+            fps: parseFloat(s.MovieFPS) || null,
+            lang: 'fr',
+            url: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`
+          });
         });
-        enList.forEach((s, idx) => {
-          if (s.SubDownloadLink && isAllowedSubtitleUrl(s.SubDownloadLink)) {
-            formatted.push({
-              id: `en-os-${idx}`,
-              label: idx === 0 ? 'English' : `English [${idx + 1}]`,
-              lang: 'en',
-              url: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`
-            });
-          }
+        rankOpenSubtitles(enRaw, { filename: safeFilename, limit: 3 }).forEach(({ item: s, hint }, idx) => {
+          formatted.push({
+            id: `en-os-${idx}`,
+            label: idx === 0 ? 'Anglais' : `Anglais (Option ${idx + 1})`,
+            hint,
+            fps: parseFloat(s.MovieFPS) || null,
+            lang: 'en',
+            url: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`
+          });
         });
       }
 

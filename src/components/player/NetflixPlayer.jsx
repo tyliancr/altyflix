@@ -171,6 +171,10 @@ export default function NetflixPlayer({
     availableSubtitlesRef.current = availableSubtitles;
     const cuesRef = useRef([]);
     const [currentSubtitleLines, setCurrentSubtitleLines] = useState([]);
+    const [subtitleOffset, setSubtitleOffset] = useState(0);
+    const subtitleOffsetRef = useRef(0);
+    subtitleOffsetRef.current = subtitleOffset;
+    const userPickedSubRef = useRef(false);
     const selectedSubtitleIdRef = useRef(selectedSubtitleId);
     selectedSubtitleIdRef.current = selectedSubtitleId;
     const updateSubtitleLinesRef = useRef(() => {});
@@ -638,6 +642,9 @@ export default function NetflixPlayer({
         loadedUrlRef.current = null;
         cuesRef.current = [];
         autoSubAppliedKeyRef.current = '';
+        userPickedSubRef.current = false;
+        subtitleOffsetRef.current = 0;
+        setSubtitleOffset(0);
         setCurrentTime(0);
         setDuration(0);
         setBuffered(0);
@@ -942,6 +949,8 @@ export default function NetflixPlayer({
         }
         loadedUrlRef.current = null;
         transcodeOffsetRef.current = 0;
+        subtitleOffsetRef.current = 0;
+        setSubtitleOffset(0);
         setActiveStream(st);
         if (st.isFrench) {
             setCurrentAudioLang('vf');
@@ -967,7 +976,7 @@ export default function NetflixPlayer({
             return;
         }
 
-        const t = (video.currentTime || 0) + (transcodeOffsetRef.current || 0);
+        const t = (video.currentTime || 0) + (transcodeOffsetRef.current || 0) + (subtitleOffsetRef.current || 0);
         const cues = cuesRef.current;
         if (!cues || cues.length === 0) {
             setCurrentSubtitleLines(lines => (lines.length === 0 ? lines : []));
@@ -975,7 +984,7 @@ export default function NetflixPlayer({
         }
 
         const matching = cues.filter(c => t >= c.start && t <= c.end);
-        const adSpamPattern = /osdb\.link|opensubtitles|subtitles\.org|watch online movies|become vip|devenez membre vip|advertise your product|support us and/i;
+        const adSpamPattern = /osdb\.link|opensubtitles|subtitles\.org|tryray\.app|appuyez sur lecture|une seule app|plus de 200 langues|watch online movies|become vip|devenez membre vip|advertise your product|support us and|sous-titres\.eu|addic7ed|subscene/i;
         const lines = [];
         matching.forEach(c => {
             const rawText = String(c.text || '');
@@ -1067,10 +1076,23 @@ export default function NetflixPlayer({
         });
     }, [currentProfile?.id, updateProfile, subsPrefKey]);
 
-    // Chargement automatique des sous-titres disponibles
+    // Ajustement fin du décalage des sous-titres en direct (-0,5 s / +0,5 s / Reset)
+    const adjustSubtitleOffset = useCallback((deltaOrReset) => {
+        setSubtitleOffset(prev => {
+            const next = deltaOrReset === 0
+                ? 0
+                : Math.max(-60, Math.min(60, Math.round((prev + deltaOrReset) * 10) / 10));
+            subtitleOffsetRef.current = next;
+            if (updateSubtitleLinesRef.current) updateSubtitleLinesRef.current();
+            return next;
+        });
+    }, []);
+
+    // Chargement automatique des sous-titres disponibles (classés selon la release/FPS de la vidéo active)
+    const activeStreamFilename = activeStream?.filename || '';
     useEffect(() => {
         let active = true;
-        const currentMediaKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}`;
+        const currentMediaKey = `${id}-${isTv ? 'tv' : 'movie'}-${season}-${episode}-${activeStreamFilename}`;
         if (!id) return;
 
         const imdbId = contentRef.current?.external_ids?.imdb_id || contentRef.current?.imdb_id || resolvedImdbIdRef.current;
@@ -1080,14 +1102,15 @@ export default function NetflixPlayer({
             imdbId,
             type: isTv ? 'tv' : 'movie',
             season,
-            episode
+            episode,
+            filename: activeStreamFilename
         }).then(subs => {
             if (!active || !Array.isArray(subs)) return;
             setAvailableSubtitles(subs);
             availableSubtitlesRef.current = subs;
 
-            // Auto-sélection des sous-titres : activés par défaut selon la préférence utilisateur (VF comme VO)
-            if (autoSubAppliedKeyRef.current !== currentMediaKey) {
+            // Auto-sélection des sous-titres les mieux synchronisés avec la release active
+            if (autoSubAppliedKeyRef.current !== currentMediaKey && !userPickedSubRef.current) {
                 autoSubAppliedKeyRef.current = currentMediaKey;
                 if (subtitlesAlwaysOnRef.current && subs.length > 0) {
                     const frSub = subs.find(s => s.lang === 'fr' || (s.label && s.label.toLowerCase().includes('fr')));
@@ -1100,7 +1123,7 @@ export default function NetflixPlayer({
         }).catch(() => {});
 
         return () => { active = false; };
-    }, [id, isTv, season, episode, handleSelectSubtitle]);
+    }, [id, isTv, season, episode, activeStreamFilename, handleSelectSubtitle]);
 
     // Sélection de la langue audio (VF vs VO)
     const handleSelectAudioLang = (lang) => {
@@ -1230,7 +1253,20 @@ export default function NetflixPlayer({
                 case 'c':
                 case 's':
                     e.preventDefault();
+                    userPickedSubRef.current = true;
                     toggleSubtitles();
+                    break;
+                case 'g':
+                    if (selectedSubtitleIdRef.current !== 'off') {
+                        e.preventDefault();
+                        adjustSubtitleOffset(-0.5);
+                    }
+                    break;
+                case 'h':
+                    if (selectedSubtitleIdRef.current !== 'off') {
+                        e.preventDefault();
+                        adjustSubtitleOffset(0.5);
+                    }
                     break;
                 case 'n':
                     if (isTv && nextEpAvailable) {
@@ -1245,7 +1281,7 @@ export default function NetflixPlayer({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, handleMouseMove, closePanel]);
+    }, [togglePlay, seekRelative, volume, toggleFullscreen, toggleMute, handleClose, isTv, nextEpAvailable, handleNextEpisode, toggleSubtitles, adjustSubtitleOffset, handleMouseMove, closePanel]);
 
     // Fin de l'épisode : enchaîne automatiquement sur le suivant
     useEffect(() => {
@@ -1631,7 +1667,14 @@ export default function NetflixPlayer({
                             onSelectAudio={handleSelectAudioLang}
                             subtitles={availableSubtitles}
                             selectedSubtitleId={selectedSubtitleId}
-                            onSelectSubtitle={(subId) => handleSelectSubtitle(subId)}
+                            onSelectSubtitle={(subId) => {
+                                userPickedSubRef.current = true;
+                                subtitleOffsetRef.current = 0;
+                                setSubtitleOffset(0);
+                                handleSelectSubtitle(subId);
+                            }}
+                            subtitleOffset={subtitleOffset}
+                            onAdjustSubtitleOffset={adjustSubtitleOffset}
                             streams={availableStreams}
                             activeStream={activeStream}
                             onSelectStream={handleSelectStream}

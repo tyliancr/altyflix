@@ -139,7 +139,7 @@ export default async function handler(req) {
     return jsonResponse({
       status: 'ok',
       runtime: 'netlify-functions',
-      version: '3.0.0',
+      version: '3.2.0',
       debridConfigured: Boolean(SERVER_DEBRID_TOKEN),
       timestamp: new Date().toISOString()
     }, 200, { 'Cache-Control': 'no-store' });

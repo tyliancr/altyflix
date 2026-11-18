@@ -264,3 +264,18 @@ test('Debrid Stream Resolver: detection AAC5.1/DDP2.0/DVDRip et priorite audio A
   assert.equal(netlifyChoice.activeStream.tierKey, '4k');
   assert.equal(netlifyChoice.activeStream.isWebAudioSafe, true);
 });
+
+test('Debrid Stream Resolver: VF prioritaire au lancement mais VO toujours conservee dans les choix', () => {
+  const streams = [
+    { name: '[TB+] Torrentio\n4k', title: 'Movie.2024.TRUEFRENCH.2160p.WEB.AAC.mp4\n👤 20 💾 10 GB', url: 'https://torrentio.strem.fun/resolve/torbox/tok/v1/f1.mp4' },
+    { name: '[TB+] Torrentio\n1080p', title: 'Movie.2024.TRUEFRENCH.1080p.WEB.AAC.mp4\n👤 30 💾 3 GB', url: 'https://torrentio.strem.fun/resolve/torbox/tok/v2/f2.mp4' },
+    { name: '[TB+] Torrentio\n720p', title: 'Movie.2024.TRUEFRENCH.720p.WEB.AAC.mp4\n👤 25 💾 1.2 GB', url: 'https://torrentio.strem.fun/resolve/torbox/tok/v3/f3.mp4' },
+    { name: '[TB+] Torrentio\n480p', title: 'Movie.2024.TRUEFRENCH.480p.WEB.AAC.mp4\n👤 15 💾 0.7 GB', url: 'https://torrentio.strem.fun/resolve/torbox/tok/v4/f4.mp4' },
+    { name: '[TB+] Torrentio\n1080p', title: 'Movie.2024.VOSTFR.1080p.WEB.AAC.mp4\n👤 12 💾 2.8 GB', url: 'https://torrentio.strem.fun/resolve/torbox/tok/v5/f5.mp4' },
+    { name: '[TB+] Torrentio\n1080p', title: 'Movie.2024.1080p.BluRay.x264.YIFY.mp4\n👤 40 💾 2.1 GB', url: 'https://torrentio.strem.fun/resolve/torbox/tok/v6/f6.mp4' }
+  ];
+
+  const curated = curateStreams(streams, 'torbox', { contentType: 'tv', preferredLang: 'vf' });
+  assert.equal(curated.activeStream.isFrench, true, 'La VF doit etre active par defaut');
+  assert.ok(curated.streams.some(s => !s.isFrench), 'Une source VO doit toujours etre disponible dans les options');
+});

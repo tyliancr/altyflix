@@ -378,6 +378,24 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     selectedList.push(defaultActive);
   }
 
+  // Garantir la présence d'au moins une VF et au moins une VO dans les choix du lecteur
+  const ensureLangSlot = (predicate) => {
+    if (selectedList.some(predicate)) return;
+    const candidate =
+      scored.find(s => !seenIds.has(s.id) && predicate(s) && s.isCached && s.tierKey === '1080p') ||
+      scored.find(s => !seenIds.has(s.id) && predicate(s) && s.isCached && s.tierKey === '4k') ||
+      scored.find(s => !seenIds.has(s.id) && predicate(s) && s.isCached) ||
+      scored.find(s => !seenIds.has(s.id) && predicate(s));
+    if (candidate) {
+      const key = `${candidate.tierKey}:${candidate.isFrench ? 'vf' : (candidate.isVostfr ? 'vostfr' : 'vo')}`;
+      seenKeys.add(key);
+      seenIds.add(candidate.id);
+      selectedList.push(candidate);
+    }
+  };
+  ensureLangSlot(s => s.isFrench);
+  ensureLangSlot(s => !s.isFrench);
+
   // 1er passage : Meilleur flux pour chaque combinaison distincte (résolution + langue)
   for (const s of scored) {
     if (selectedList.length >= 6) break;
@@ -1085,17 +1103,18 @@ async function resolveStreamsServer({
       const eligibleReady = (type !== 'tv' && movieHdReady.length > 0) ? movieHdReady : readyStreams;
 
       const pickBestReady = (list) =>
+        // 1. Langue demandée (VF par défaut) avec audio natif navigateur (1080p -> 4K -> autre)
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-        (enableAudioRemux ? (list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') || list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k')) : null) ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
-        (enableAudioRemux ? list.find(s => isPlayableFormat(s) && matchesLang(s)) : null) ||
-        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
+        // 2. Priorité stricte à la langue demandée (VF d'abord même si AC3/EAC3/DTS)
         list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
         list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+        // 3. Fallback VO uniquement si aucune VF prête n'existe
+        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+        list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
         list.find(s => isPlayableFormat(s)) ||
         list[0];
 

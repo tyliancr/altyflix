@@ -1157,12 +1157,21 @@ export default function NetflixPlayer({
         if (!availableStreams || availableStreams.length <= 1) return;
 
         if (lang === 'vf') {
-            const vfStream = availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio) || availableStreams.find(s => s.isFrench);
+            const vfStream =
+                availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                availableStreams.find(s => s.isFrench && !s.hasUnsupportedAudio) ||
+                availableStreams.find(s => s.isFrench && s.tierKey === '1080p') ||
+                availableStreams.find(s => s.isFrench);
             if (vfStream && vfStream.url !== activeStream?.url) {
                 handleSelectStream(vfStream);
             }
         } else {
-            const voStream = availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio) || availableStreams.find(s => !s.isFrench) || availableStreams[0];
+            const voStream =
+                availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                availableStreams.find(s => !s.isFrench && !s.hasUnsupportedAudio) ||
+                availableStreams.find(s => !s.isFrench && s.tierKey === '1080p') ||
+                availableStreams.find(s => !s.isFrench) ||
+                availableStreams[0];
             if (voStream && voStream.url !== activeStream?.url) {
                 handleSelectStream(voStream);
             }

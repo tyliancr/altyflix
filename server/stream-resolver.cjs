@@ -45,7 +45,6 @@ function setCachedResolve(key, data) {
 
 const ALLOWED_POLL_HOSTS = [
   'torrentio.strem.fun',
-  'comet.elfhosted.com',
   'api.torbox.app',
   'torbox.app',
   'tb-cdn.st',
@@ -1052,40 +1051,6 @@ async function resolveStreamsServer({
       return [];
     };
 
-    const fetchComet = async () => {
-      if (!token) return [];
-      try {
-        const cometSettings = {
-          debridServices: [{ service: provider, apiKey: token }],
-          languages_preferred: ['fr', 'en'],
-          maxResultsPerResolution: 20
-        };
-        const cometConfig = Buffer.from(JSON.stringify(cometSettings)).toString('base64');
-        const streamPath = isTv ? `series/${streamKey}.json` : `movie/${streamKey}.json`;
-        const cUrl = `https://comet.elfhosted.com/${cometConfig}/stream/${streamPath}`;
-        const cRes = await fetch(cUrl, {
-          headers: { 'Accept': 'application/json' },
-          redirect: 'error',
-          signal: AbortSignal.timeout(4500)
-        });
-        if (cRes.ok) {
-          const cData = await cRes.json();
-          if (Array.isArray(cData?.streams)) {
-            return cData.streams
-              .filter(s => s && typeof s.url === 'string' && !isTorrentioErrorStream(s))
-              .map(s => ({
-                ...s,
-                title: s.title || s.description || s.name || '',
-                name: s.name || '[TB+] Comet'
-              }));
-          }
-        }
-      } catch (cErr) {
-        // En cas d'indisponibilité temporaire de Comet, continuer sans bloquer les autres indexeurs
-      }
-      return [];
-    };
-
     const fetchMylist = async () => {
       if (provider !== 'torbox' || !cleanTitle) return [];
       try {
@@ -1106,19 +1071,18 @@ async function resolveStreamsServer({
       }
     };
 
-    const [priorityFrStreams, vfStreams, globalStreams, frenchioStreams, cometStreams, mylistStreams] = await Promise.all([
+    const [priorityFrStreams, vfStreams, globalStreams, frenchioStreams, mylistStreams] = await Promise.all([
       fetchTorrentio(endpointPriorityFr, 'FR Priority'),
       fetchTorrentio(endpointVf, 'VF'),
       fetchTorrentio(endpointGlobal, 'Global'),
       fetchFrenchio(),
-      fetchComet(),
       fetchMylist()
     ]);
 
     // Fusion avec déduplication stricte par URL
     const seenUrls = new Set();
     const rawStreams = [];
-    for (const s of [...(mylistStreams || []), ...priorityFrStreams, ...frenchioStreams, ...cometStreams, ...vfStreams, ...globalStreams]) {
+    for (const s of [...(mylistStreams || []), ...priorityFrStreams, ...frenchioStreams, ...vfStreams, ...globalStreams]) {
       if (s && s.url && !seenUrls.has(s.url)) {
         seenUrls.add(s.url);
         rawStreams.push(s);

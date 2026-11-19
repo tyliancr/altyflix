@@ -630,7 +630,11 @@ var require_stream_resolver = __commonJS({
       });
       const movieHdPool = isMovie ? validAll.filter(isHd1080Plus) : [];
       const anyCachedAll = validAll.some((s) => s.isCached);
-      const valid = isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some((s) => s.isCached)) ? movieHdPool : validAll;
+      const basePool = isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some((s) => s.isCached)) ? movieHdPool : validAll;
+      const isAudioPlayableInBrowser = (s) => Boolean(enableAudioRemux || s.isWebAudioSafe || !s.hasUnsupportedAudio);
+      const audioSafePool = basePool.filter(isAudioPlayableInBrowser);
+      const hasAudioSafeCached = anyCachedAll ? audioSafePool.some((s) => s.isCached) : audioSafePool.length > 0;
+      const valid = hasAudioSafeCached ? audioSafePool : basePool;
       if (valid.length === 0) {
         return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };
       }

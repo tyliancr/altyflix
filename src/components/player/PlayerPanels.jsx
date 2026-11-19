@@ -261,8 +261,14 @@ export function AudioSubsPanel({
     onToggleAlwaysOn
 }) {
     // Ne proposer QUE des sources réellement prêtes, en cache, fonctionnelles et non mortes
-    const playableStreams = (Array.isArray(streams) ? streams : [])
+    const rawPlayable = (Array.isArray(streams) ? streams : [])
         .filter(st => !st.isDead && (st.isCached || st.verifiedReady) && !st.isDownloading && (!st.isAvi || st.isTranscoded));
+    
+    // Règle d'or : Si des sources au son garanti (AAC/Opus/MP3) existent, éliminer strictement les sources muettes
+    const hasAudioSafe = rawPlayable.some(st => st.isWebAudioSafe || !st.hasUnsupportedAudio);
+    const playableStreams = hasAudioSafe
+        ? rawPlayable.filter(st => st.isWebAudioSafe || !st.hasUnsupportedAudio)
+        : rawPlayable;
     
     // Déduplication par label pour garantir que chaque bouton est unique et actionnable
     const distinctStreams = [];

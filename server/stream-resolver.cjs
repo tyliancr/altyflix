@@ -355,7 +355,16 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   // Pour les films, imposer 1080p minimum (1080p / 4K) dès qu'une source >= 1080p est exploitable (sans sacrifier un 720p en cache face à du 1080p non caché)
   const movieHdPool = isMovie ? validAll.filter(isHd1080Plus) : [];
   const anyCachedAll = validAll.some(s => s.isCached);
-  const valid = (isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some(s => s.isCached))) ? movieHdPool : validAll;
+  const basePool = (isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some(s => s.isCached))) ? movieHdPool : validAll;
+
+  // RÈGLE D'OR AUDIO SANS PIÈGE (ZÉRO VIDÉO MUETTE DANS LE NAVIGATEUR) :
+  // Si le serveur ne dispose pas de transcodeur FFmpeg (enableAudioRemux = false) et que des flux au son 100% garanti navigateur (AAC, Opus, MP3, MP4) existent,
+  // on élimine STRICTEMENT toute release au son propriétaire inaudible dans Chrome/Windows (Dolby DDP Atmos, AC3, DTS).
+  // "Soit on prend les torrents parfaits avec du son, soit on ne propose rien d'inaudible."
+  const isAudioPlayableInBrowser = (s) => Boolean(enableAudioRemux || s.isWebAudioSafe || !s.hasUnsupportedAudio);
+  const audioSafePool = basePool.filter(isAudioPlayableInBrowser);
+  const hasAudioSafeCached = anyCachedAll ? audioSafePool.some(s => s.isCached) : audioSafePool.length > 0;
+  const valid = hasAudioSafeCached ? audioSafePool : basePool;
 
   if (valid.length === 0) {
     return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };

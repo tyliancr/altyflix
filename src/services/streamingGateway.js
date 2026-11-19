@@ -144,12 +144,12 @@ export function isTorrentioErrorStream(stream) {
     const title = String(stream.title || '');
     const name = String(stream.name || '');
 
-    if (url.includes('failed_access') || url.includes('/videos/failed_')) return true;
-    if (name.toLowerCase().includes('error') || name.toLowerCase().includes('tb error') || name.toLowerCase().includes('rd error')) return true;
-    if (title.toLowerCase().includes('invalid') || title.toLowerCase().includes('failed') || title.toLowerCase().includes('rate limit')) return true;
+    if (url.includes('failed_access') || url.includes('/videos/failed_') || url.includes('slate.elfhosted.com') || url.includes('slate.') || url.includes('docs.elfhosted.com')) return true;
+    if (name.toLowerCase().includes('error') || name.toLowerCase().includes('tb error') || name.toLowerCase().includes('rd error') || name.toLowerCase().includes('obsolete configuration')) return true;
+    if (title.toLowerCase().includes('invalid') || title.toLowerCase().includes('failed') || title.toLowerCase().includes('rate limit') || title.toLowerCase().includes('couldn\'t start this stream')) return true;
 
-    // Filtre les vidéos de téléchargement Torrentio : ne jamais les considérer comme une vidéo de film valide
-    if (url.includes('downloading_') || url.includes('/videos/downloading') || url.includes('downloading.mp4')) return true;
+    // Filtre les vidéos de téléchargement ou clips d'erreur : ne jamais les considérer comme une vidéo de film valide
+    if (url.includes('downloading_') || url.includes('/videos/downloading') || url.includes('downloading.mp4') || url.includes('slate.mp4') || url.includes('slate.m3u8')) return true;
 
     return false;
 }

@@ -50,7 +50,6 @@ const ALLOWED_POLL_HOSTS = [
   'torbox.app',
   'tb-cdn.st',
   'frenchio.elfhosted.com',
-  'slate.elfhosted.com',
   'api.real-debrid.com',
   'real-debrid.com',
   'api.alldebrid.com',
@@ -117,7 +116,7 @@ function isTorrentioErrorStream(stream) {
   const name = String(stream.name || '').toLowerCase();
   const fullText = (title + ' ' + name).toLowerCase();
 
-  if (url.includes('failed_access') || url.includes('/videos/failed_')) return true;
+  if (url.includes('failed_access') || url.includes('/videos/failed_') || url.includes('slate.elfhosted.com') || url.includes('slate.') || url.includes('docs.elfhosted.com')) return true;
   if (isDownloadingUrl(url)) return true;
   if (name.includes('[❌]') || fullText.includes('obsolete configuration') || /\b(?:tb|rd|ad|pm|dl)?\s*error\b/i.test(name)) return true;
   if (/(?:invalid\s+(?:api|token|key|debrid|auth)|access\s+denied|rate\s+limit\s+exceeded|failed\s+to\s+(?:resolve|access|connect)|not\s+a\s+valid\s+debrid)/i.test(fullText)) return true;
@@ -126,12 +125,12 @@ function isTorrentioErrorStream(stream) {
 }
 
 /**
- * Détecte si une URL pointe vers le clip d'attente de téléchargement
+ * Détecte si une URL pointe vers le clip d'attente de téléchargement ou d'erreur
  */
 function isDownloadingUrl(urlStr) {
   if (!urlStr) return false;
   const clean = String(urlStr).toLowerCase();
-  return clean.includes('downloading_') || clean.includes('/videos/downloading') || clean.includes('downloading.mp4');
+  return clean.includes('downloading_') || clean.includes('/videos/downloading') || clean.includes('downloading.mp4') || clean.includes('slate.elfhosted.com') || clean.includes('slate.mp4') || clean.includes('slate.m3u8') || clean.includes('docs.elfhosted.com');
 }
 
 /**

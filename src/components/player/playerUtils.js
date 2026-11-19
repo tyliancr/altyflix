@@ -12,10 +12,15 @@ export function formatClock(seconds) {
 export function canBrowserDecodeAc3() {
     if (typeof document === 'undefined') return false;
     try {
+        // Seul Safari (WebKit sur macOS / iOS) intègre un décodeur matériel Dolby (AC-3 / E-AC-3) fiable.
+        // Chromium (Chrome, Brave, Edge) et Firefox sur Windows/Linux/Android renvoient souvent 'maybe'
+        // pour indiquer le bitstreaming système, mais ne décodent aucun octet audio dans les haut-parleurs.
+        const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+        if (!isSafari) return false;
         const v = document.createElement('video');
         const canAc3 = v.canPlayType('audio/mp4; codecs="ac-3"');
         const canEc3 = v.canPlayType('audio/mp4; codecs="ec-3"');
-        return Boolean((canAc3 && canAc3 !== 'no') || (canEc3 && canEc3 !== 'no'));
+        return canAc3 === 'probably' || canEc3 === 'probably';
     } catch {
         return false;
     }

@@ -1,0 +1,16 @@
+# Ignore heavy development directories during Netlify deploys
+node_modules
+tv-app
+.git
+.vscode
+.idea
+docs
+tests
+tools
+scripts
+logos
+media
+.data
+src
+server
+api

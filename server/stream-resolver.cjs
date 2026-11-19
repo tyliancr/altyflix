@@ -211,8 +211,9 @@ function parseStreamDetails(stream) {
 
   // Son garanti dans le navigateur : codec web explicite (AAC/MP3/Opus/FLAC) ou conteneur MP4/groupe web sans codec Dolby/DTS exclusif
   const isWebAudioSafe = Boolean(hasExplicitWebAudio || ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec));
-  // Un flux a un son non supporté si un codec propriétaire est présent sans codec web compatible
-  const hasUnsupportedAudio = Boolean(hasUnsupportedAudioCodec && !hasExplicitWebAudio);
+  // Un flux a un son non supporté si un codec propriétaire est présent, OU si c'est un MKV sans codec web explicite (les MKV sans mention AAC sont quasi systématiquement en AC3/DTS muets dans Chrome)
+  const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
+  const hasUnsupportedAudio = Boolean((hasUnsupportedAudioCodec || isMkvWithoutWebAudio) && !hasExplicitWebAudio);
 
   const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
   const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
@@ -1259,22 +1260,23 @@ async function resolveStreamsServer({
       const supportsAc3 = Boolean(clientAc3);
       const pickBestReady = (list) => {
         if (!supportsAc3) {
-          // Sur navigateur sans décodeur AC3 natif (ex. Google Chrome sur Windows) :
-          // Priorité absolue aux flux VF avec son garanti (AAC/Web-safe)
-          return list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
-                 // Si aucun flux VF AAC n'existe, conserver impérativement la VF demandée
+          // Sur navigateur sans décodeur AC3 natif (Google Chrome sur Windows, Edge, Android...) :
+          // Priorité 1 : flux VF avec son garanti (AAC/Opus/MP4 web)
+          return list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
+                 // Priorité 2 : Si aucun flux VF avec son web n'existe (ex. l'Agence tous risques, vieux films),
+                 // basculer sur un flux avec son web garanti (VOSTFR avec sous-titres FR automatiques) pour ne JAMAIS avoir de vidéo muette !
+                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
+                 // Dernier recours si absolument aucune version sonore web n'existe
                  list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
                  list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
                  list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
                  list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
-                 // Seulement si aucune VF n'existe, bascule sur VO avec son web
-                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-                 list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
                  list.find(s => isPlayableFormat(s)) ||
                  list[0];
         }

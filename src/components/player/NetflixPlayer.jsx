@@ -372,6 +372,7 @@ export default function NetflixPlayer({
                 type: isTv ? 'tv' : 'movie',
                 season,
                 episode,
+                lang: 'vf',
                 title: cleanTitle,
                 signal: abortCtrl.signal
             });
@@ -382,18 +383,14 @@ export default function NetflixPlayer({
                 resolvedKeyRef.current = streamKey;
                 if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
                 const rawStreams = res.streams || [];
-                // Éliminer toute source morte, inaudible (Dolby/Atmos/DTS/surround), 4K non exploitable ou non compatible navigateur (MKV HEVC)
+                // Éliminer toute source morte ou format conteneur non supporté sans transcodage
                 const isPlayableBrowser = (s) => {
                     if (s.isDead) return false;
-                    if (s.tierKey === '4k') return false; // Jamais de 4K muet ou non sélectionnable
-                    if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
-                    if (/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`)) return false;
-                    if (s.isMkv && s.isH265) return false;
                     if (s.isAvi && !s.isTranscoded) return false;
                     return true;
                 };
                 const safeStreams = rawStreams.filter(isPlayableBrowser);
-                const streams = safeStreams.length > 0 ? safeStreams : rawStreams.filter(s => !s.isDead && s.tierKey !== '4k');
+                const streams = safeStreams.length > 0 ? safeStreams : rawStreams.filter(s => !s.isDead);
                 setAvailableStreams(streams);
 
                 // 1. Identifier tous les flux réellement prêts (en cache et non en téléchargement)
@@ -403,12 +400,14 @@ export default function NetflixPlayer({
 
                 // 2. RÈGLE D'OR NETFLIX : Si le flux actif est en cours de téléchargement alors qu'un flux prêt existe,
                 // bascule IMMÉDIATE sur le flux prêt pour garantir un démarrage de lecture instantané (< 1s) !
+                // Si le flux actif est en français, priorité absolue à un flux prêt en français !
                 if (selectedStream.isDownloading || !selectedStream.isCached) {
                     if (readyStreams.length > 0) {
-                        const bestReady = readyStreams.find(s => s.isFrench && s.tierKey === '1080p')
-                                       || readyStreams.find(s => s.isFrench)
-                                       || readyStreams.find(s => s.tierKey === '1080p')
-                                       || readyStreams[0];
+                        const bestReady = (selectedStream.isFrench
+                            ? (readyStreams.find(s => s.isFrench && s.tierKey === '1080p') || readyStreams.find(s => s.isFrench))
+                            : null)
+                            || readyStreams.find(s => s.tierKey === '1080p')
+                            || readyStreams[0];
                         if (bestReady) {
                             console.log('[Altyflix Player] Flux par défaut en téléchargement -> Bascule instantanée sur le flux prêt :', bestReady.qualityLabel);
                             selectedStream = bestReady;
@@ -416,10 +415,10 @@ export default function NetflixPlayer({
                     }
                 }
 
-                // 3. Son garanti sur Chrome/Edge : Ne basculer QUE sur un flux PRÊT (jamais sur un flux en téléchargement !)
+                // 3. Son garanti sur Chrome/Edge : Ne basculer QUE sur un flux PRÊT DANS LA MÊME LANGUE
+                // Ne JAMAIS remplacer une VF par de l'anglais pour une question d'audio si la VF existe !
                 if (!isAc3Supported && (selectedStream.hasUnsupportedAudio || !selectedStream.isWebAudioSafe)) {
-                    const safeReady = readyStreams.find(s => (s.isWebAudioSafe || !s.hasUnsupportedAudio) && Boolean(s.isFrench) === Boolean(selectedStream.isFrench))
-                                   || readyStreams.find(s => (s.isWebAudioSafe || !s.hasUnsupportedAudio));
+                    const safeReady = readyStreams.find(s => (s.isWebAudioSafe || !s.hasUnsupportedAudio) && Boolean(s.isFrench) === Boolean(selectedStream.isFrench));
                     if (safeReady) {
                         console.log('[Altyflix Player] Optimisation audio Chrome : flux avec son garanti sélectionné :', safeReady.qualityLabel || safeReady.quality);
                         selectedStream = safeReady;
@@ -490,10 +489,14 @@ export default function NetflixPlayer({
         if (current) {
             failedStreamIdsRef.current.add(current.id || current.url);
         }
-        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && s.tierKey !== '4k' && !(s.isMkv && s.isH265) && !/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
+        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
         // RÈGLE D'OR : On ne bascule QUE sur un autre flux RÉELLEMENT EN CACHE ET FONCTIONNEL.
         // On ne bascule JAMAIS sur un torrent en téléchargement pour éviter de bloquer l'utilisateur dans un spinner infini !
-        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
+        // Priorité absolue à la même langue (VF) si disponible en cache
+        const nextStream = (current?.isFrench
+            ? list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && s.isFrench && isSafeToPlay(s))
+            : null)
+            || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
         if (!nextStream) {
             setErrorMessage('La lecture de cette vidéo a rencontré un problème. Veuillez réessayer plus tard.');
             setStreamState('error');
@@ -1606,9 +1609,9 @@ export default function NetflixPlayer({
             const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
-                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && s.tierKey !== '4k' && !(s.isMkv && s.isH265) && !/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
-                const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench))
-                    || (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
+                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
+                // Bascule UNIQUEMENT vers un flux alternatif dans la même langue que le flux actif (ne jamais imposer l'anglais à un spectateur VF)
+                const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench));
                 if (safe) {
                     console.log('[Altyflix Player] Flux muet détecté sans décodage audio, bascule automatique vers un flux sonore :', safe.qualityLabel || safe.quality);
                     handleSelectStreamRef.current(safe);

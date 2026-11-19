@@ -213,20 +213,42 @@ function parseStreamDetails(stream) {
   const nameNoMultiSub = mainReleaseName.replace(/\bmulti[\s._-]*subs?\b/gi, '');
   const fileNoMultiSub = cleanFilename.replace(/\bmulti[\s._-]*subs?\b/gi, '');
 
-  const hasFrenchInName = /\b(french|truefrench|vff|vfq|vf2|vfi|vf|audio\.fr|vf\.hd|fr-en|multi)\b/i.test(nameNoMultiSub) ||
-    /\b(french|truefrench|vff|vfq|vf2|vfi|vf|audio\.fr|vf\.hd|fr-en|multi)\b/i.test(fileNoMultiSub) ||
-    /\b(vf|vff|vfq|vfi|vf2|truefrench|french)\b/i.test(fullText);
+  // 1. Détection stricte des versions sous-titrées (VOSTFR / SUBFRENCH) :
+  // Une release VOSTFR ne doit JAMAIS être classée en VF (ce qui laissait le son en anglais !).
+  const isExplicitVostfr = /\b(?:vostfr|subfrench|fansub[\s._-]*vostfr|vost)\b/i.test(fullText) ||
+    /\b(?:vostfr|subfrench)\b/i.test(filename) ||
+    metaLines.includes('subfrench') ||
+    metaLines.includes('multi subs') ||
+    metaLines.includes('vostfr');
 
   const hasFrenchFlag = rawTitle.includes('🇫🇷');
   const isTorrent9 = fullText.includes('torrent9');
-  const isExplicitVostfr = /\b(vostfr|subfrench)\b/i.test(fullText);
-  const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle) ||
-    (hasFrenchFlag && !isExplicitVostfr);
+
+  // Groupes de releases et trackers francophones reconnus
+  const isFrenchGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|ulysse|batgirl|glados|slay3r|nbdy|rzp|jaskier)\b/i.test(fullText);
+
+  // Détection explicite du doublage audio français dans le nom
+  const hasFrenchDubInName = /\b(?:truefrench|vff|vfq|vfi|vf2|french|audio[\s._-]*fr|vf[\s._-]*hd|fr-en)\b/i.test(nameNoMultiSub) ||
+    /\b(?:truefrench|vff|vfq|vfi|vf2|french|audio[\s._-]*fr|vf[\s._-]*hd|fr-en)\b/i.test(fileNoMultiSub) ||
+    /\b(?:truefrench|vff|vfq|vfi|vf2|french)\b/i.test(fullText) ||
+    /\bvf\b/i.test(mainReleaseName) ||
+    /\bvf\b/i.test(cleanFilename);
+
+  // Scene MULTI : un MULTI scene est français s'il provient d'un tracker/groupe français ou porte des indices FR
+  const isSceneMulti = /\b(?:multi|multisite)\b/i.test(mainReleaseName) || /\b(?:multi)\b/i.test(cleanFilename);
+  const isForeignOnlyMulti = /\b(?:tam\s*\+\s*hin|dub\s*\+\s*(?:\d+x\s*)?mvo|ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu|rus\s*[-/]\s*eng)\b/i.test(fullText);
+  const isFrenchMulti = isSceneMulti && !isForeignOnlyMulti && (
+    isTorrent9 ||
+    hasFrenchFlag ||
+    hasFrenchDubInName ||
+    isFrenchGroup ||
+    /\b(?:fr|fre|francais|vff|vf2|vfq)\b/i.test(fullText)
+  );
+
+  const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle);
 
   // Détection des releases Multi où l'anglais est sur Track 0 :
   // Ex: "EN/ITA/FR/ES", "EN/FR", "EN/ES", "English/French", "Multi5", "Multi7"
-  // Dans le lecteur HTML5 du navigateur, le démultiplexeur natif joue systématiquement la piste 0.
-  // Une release où l'anglais est en piste 0 ne doit JAMAIS être labellisée comme "Français" !
   const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(rawTitle) ||
     /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) ||
     /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) ||
@@ -235,10 +257,20 @@ function parseStreamDetails(stream) {
   // Détection des releases Russes ou étrangères où le français n'est pas en piste 0
   const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
 
-  const isFrench = Boolean(!isEnglishPrimaryMulti && !isForeignPrimaryMulti && (hasFrenchInName || isTorrent9 || hasFrenchAudioInAudioLine || (hasFrenchFlag && !isExplicitVostfr)));
-  const isVostfr = !isFrench && (
-    hasFrenchFlag ||
-    /\b(vostfr|subfrench|vost)\b/i.test(fullText) ||
+  // La VF doit être une vraie version française (jamais une VOSTFR !)
+  const hasFrenchAudio = Boolean(!isExplicitVostfr && !isForeignPrimaryMulti && (
+    hasFrenchDubInName ||
+    isFrenchMulti ||
+    hasFrenchAudioInAudioLine ||
+    (isTorrent9 && !isExplicitVostfr) ||
+    (hasFrenchFlag && !isExplicitVostfr)
+  ));
+  const isPureFrench = Boolean(hasFrenchAudio && !isEnglishPrimaryMulti);
+  const isFrench = hasFrenchAudio;
+
+  const isVostfr = !isFrench && Boolean(
+    isExplicitVostfr ||
+    (hasFrenchFlag && isExplicitVostfr) ||
     metaLines.includes('subfrench') ||
     metaLines.includes('multi subs')
   );
@@ -253,28 +285,35 @@ function parseStreamDetails(stream) {
   const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
   const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
 
-  // Détection audio : codecs compatibles navigateur (AAC / MP3 / Opus stéréo / FLAC) vs multicanal surround (7.1, 8ch, Opus multicanal) et codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD / Atmos)
+  // Détection audio :
+  // 1. Codecs audio universellement compatibles navigateur (AAC stéréo ou 5.1, MP3, Opus, FLAC)
   const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasMp3 = /\bmp3\b/i.test(fullText);
   const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
-  const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st)\b/i.test(fullText);
+  const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st|fw|fr5|batgirl|ulysse|glados|rzp|slay3r|nbdy|duff)\b/i.test(fullText);
   
-  // Multicanal 7.1 / 8ch ou Opus multicanal sortant muet sans downmix matériel sur PC / navigateur
+  // 2. Multicanal 7.1 / 8ch ou Opus multicanal sortant muet sans downmix matériel sur PC / navigateur
   const has71Or8ch = /\b(?:7\.1|8ch)\b/i.test(fullText);
-  const hasOpusMultichannel = /\bopus(?:\s*\.?\s*[57]\.?[01]|\s*\.?\s*[68]ch)\b/i.test(fullText) || (hasOpus && /\b(?:5\.1|6ch|7\.1|8ch)\b/i.test(fullText));
+  const hasOpusMultichannel = /\bopus(?:\s*\.?\s*[7]\.?[01]|\s*\.?\s*8ch)\b/i.test(fullText);
   const hasMultichannelSilence = has71Or8ch || hasOpusMultichannel;
 
-  const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fullText);
-  const hasAtmosOrTrueHdOrDts = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x)\b)/i.test(fullText);
+  // 3. Codecs Dolby AC-3 / E-AC-3 / DDP (jouables nativement sur Safari, Edge Windows, Smart TVs, Android TV, et Chrome avec codec OS)
+  const isAc3OrDdp = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01])\b)/i.test(fullText);
+
+  // 4. Codecs propriétaires non décodés par les navigateurs web (DTS, TrueHD, Atmos sans fallback AAC)
+  const isDtsOrTrueHd = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x|dts-?ma|lpcm)\b)/i.test(fullText);
+  const hasUnsupportedAudioCodec = isAc3OrDdp || isDtsOrTrueHd;
+  const hasAtmosOrTrueHdOrDts = isDtsOrTrueHd;
   const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac);
 
-  // Son 100 % garanti dans le navigateur : Stéréo AAC/MP3, zéro codec multicanal surround inaudible
-  const isWebAudioSafe = Boolean((hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts && !hasMultichannelSilence) || 
+  // Son 100 % garanti dans le navigateur (Chrome, Firefox, Safari, Edge, Mobile) :
+  const isWebAudioSafe = Boolean((hasExplicitWebAudio && !isDtsOrTrueHd && !hasMultichannelSilence) || 
     ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSilence));
-  // Un flux a un son non supporté s'il a un codec propriétaire sans AAC, ou s'il a Atmos/TrueHD/DTS/7.1, ou si c'est un MKV sans codec web explicite
+
+  // Flux nécessitant attention audio
   const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-  const hasUnsupportedAudio = Boolean((hasUnsupportedAudioCodec && !hasExplicitWebAudio) || hasAtmosOrTrueHdOrDts || hasMultichannelSilence || isMkvWithoutWebAudio || !isWebAudioSafe);
+  const hasUnsupportedAudio = Boolean((isAc3OrDdp && !hasExplicitWebAudio) || isDtsOrTrueHd || hasMultichannelSilence || isMkvWithoutWebAudio || !isWebAudioSafe);
 
   // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
   const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
@@ -284,7 +323,7 @@ function parseStreamDetails(stream) {
   // Rejets stricts des captures basse qualité (CAM, Telesync, Screener)
   const isCamOrLowQuality = /\b(?:cam|camrip|hdcam|telesync|ts|hdts|telecine|tc|scr|screener|dvdscr|r5|workprint|wp)\b/i.test(fullText);
   // Doublage de référence : VFF / TrueFrench
-  const isPureFrench = /\b(truefrench|vff)\b/i.test(fullText);
+  const isVffOrTrueFrench = /\b(truefrench|vff)\b/i.test(fullText);
   const isMulti = /\bmulti\b/i.test(fullText);
   const isProper = /\b(?:proper|repack|rerip)\b/i.test(fullText);
   // Teams de releases réputées pour des encodages propres sans freeze ni désynchronisation
@@ -299,7 +338,8 @@ function parseStreamDetails(stream) {
   const seeds = seedsMatch ? parseInt(seedsMatch[1], 10) : 0;
 
   let languageLabel = 'Version Originale';
-  if (isFrench) languageLabel = 'Français (VF)';
+  if (isPureFrench) languageLabel = 'Français (VF)';
+  else if (isFrench) languageLabel = 'Français (MULTI · VF)';
   else if (isVostfr) languageLabel = 'VOSTFR (Sous-titres FR)';
 
   return {
@@ -321,6 +361,7 @@ function parseStreamDetails(stream) {
     isHighQualitySource,
     isCamOrLowQuality,
     isPureFrench,
+    isVffOrTrueFrench,
     isMulti,
     isProper,
     isTrustedGroup,
@@ -372,6 +413,7 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
         isHighQualitySource: details.isHighQualitySource,
         isCamOrLowQuality: details.isCamOrLowQuality,
         isPureFrench: details.isPureFrench,
+        isVffOrTrueFrench: details.isVffOrTrueFrench,
         isMulti: details.isMulti,
         isProper: details.isProper,
         isTrustedGroup: details.isTrustedGroup,
@@ -390,37 +432,23 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   const anyCachedAll = validAll.some(s => s.isCached);
   const basePool = (isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some(s => s.isCached))) ? movieHdPool : validAll;
 
-  // RÈGLE D'OR : "SOIT TU PRENDS LES TORRENTS PARFAITS SOIT TU FAIS RIEN"
-  // Élimination rigoureuse de tout ce qui n'a pas de son ou qui plante dans le navigateur :
+  // RÈGLE D'OR : Filtrage intelligent des flux compatibles dans le navigateur
   const isPlayableInBrowser = (s) => {
-    // 1. Rejet strict des formats vidéo anciens non décodables nativement (AVI/XviD)
-    if (s.isAvi && !s.isTranscoded) return false;
+    // 1. Rejet strict des formats vidéo anciens non décodables nativement (AVI/XviD) si aucun transcodage actif
+    if (s.isAvi && !s.isTranscoded && !enableAviTranscode) return false;
 
-    // 2. Rejet strict de TOUT flux avec audio propriétaire ou multicanal inaudible dans le navigateur (Dolby Atmos, TrueHD, DTS, DDP, AC3, 7.1, 5.1) si aucun serveur de remuxage n'est actif
-    if (!enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe)) return false;
-
-    // 3. Rejet strict des MKV contenant du HEVC (H.265) que Chrome ne sait pas démultiplexer (code 4 MEDIA_ERR_SRC_NOT_SUPPORTED)
+    // 2. Rejet strict des MKV contenant du HEVC (H.265) que Chrome ne sait pas démultiplexer (code 4 MEDIA_ERR_SRC_NOT_SUPPORTED)
     if (s.isMkvHevcUnplayable) return false;
 
-    // 4. RÈGLE D'OR POUR LA 4K (2160p) :
-    // La 4K dans un navigateur sans transcodeur ffmpeg distant est STRICTEMENT INTERDITE sauf si :
-    // - Format MP4 Web natif (aucun conteneur MKV, aucun AV1/HEVC non supporté nativement)
-    // - Audio stéréo AAC Web natif (aucun codec 7.1/Atmos/TrueHD/DTS/Opus multicanal)
-    // - Piste audio française garantie en Track 0 (zéro multi anglais en premier)
-    if (s.tierKey === '4k') {
-      if (!s.isMp4) return false;
-      if (s.isH265 || s.isAv1) return false;
-      if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
-      if (/\b(?:7\.1|5\.1|8ch|6ch|opus|dolby\s*vision|\bdv\b)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`)) return false;
-    }
+    // 3. Rejet des 4K AVI non décodables
+    if (s.tierKey === '4k' && s.isAvi) return false;
 
     return true;
   };
 
-  const audioSafePool = basePool.filter(isPlayableInBrowser);
-  // Le pool valide ne contient STRICTEMENT que des torrents parfaits et jouables.
-  // Zéro piège muet, zéro 4K qui ne se lance pas !
-  const valid = (audioSafePool.length > 0) ? audioSafePool : basePool.filter(s => !s.isDead);
+  const playablePool = basePool.filter(isPlayableInBrowser);
+  // Le pool valide contient les flux lisibles sans sacrifier la VF
+  const valid = (playablePool.length > 0) ? playablePool : basePool.filter(s => !s.isDead);
 
   if (valid.length === 0) {
     return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };
@@ -443,10 +471,10 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     else if (st.tierKey === '720p') score += isMovie ? -40000 : 10000;
     else score += isMovie ? -80000 : 0;
 
-    // 3. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
-    // Sans remux FFmpeg (ex: Netlify serverless), un flux AC3/DTS est muet -> pénalité massive pour privilégier AAC/Opus
-    if (st.isWebAudioSafe) score += enableAudioRemux ? 10000 : 55000;
-    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 14000 : 95000;
+    // 3. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD)
+    // Sans remux FFmpeg (ex: Netlify serverless), un flux AAC/Opus garantit 100% de son sur tout navigateur
+    if (st.isWebAudioSafe) score += enableAudioRemux ? 15000 : 55000;
+    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 10000 : 35000;
 
     // 4. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
     if (preferVo) {
@@ -462,6 +490,7 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
 
     // 6. Doublage français de référence : VFF / TRUEFRENCH
     if (st.isPureFrench) score += 30000;
+    if (st.isVffOrTrueFrench) score += 20000;
     // Une vraie release VF sans MULTI a une seule piste sonore -> son français garanti à 100% au lancement
     if (st.isFrench && !st.isMulti) score += 15000;
     if (st.isProper) score += 5000;
@@ -496,37 +525,94 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   const anyCached = scored.some(s => s.isCached);
   const allDownloading = !anyCached && scored.every(s => s.isDownloading);
 
-  // Détermination du meilleur flux actif (priorité langue demandée + audio fonctionnel sans remux + 1080p/4K en cache)
+  // Détermination du meilleur flux actif (priorité absolue à la langue demandée : VF par défaut !)
   const matchesPrefLang = (s) => (preferVo ? !s.isFrench : s.isFrench);
-  const audioPlayable = (s) => enableAudioRemux || !s.hasUnsupportedAudio;
+  const audioPlayable = (s) => enableAudioRemux || s.isWebAudioSafe || !s.hasUnsupportedAudio;
+
   let defaultActive = null;
   if (anyCached) {
-    const cachedPreferred =
-      scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
-      scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
-      scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s)) ||
-      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '1080p') ||
-      scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '4k') ||
-      scored.find(s => s.isCached && audioPlayable(s)) ||
-      scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '1080p') ||
-      scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '4k') ||
-      scored.find(s => s.isCached && matchesPrefLang(s)) ||
-      scored.find(s => s.isCached && s.tierKey === '1080p') ||
-      scored.find(s => s.isCached && s.tierKey === '4k') ||
-      scored.find(s => s.isCached);
+    const cachedPreferred = (!enableAudioRemux)
+      ? (
+          // Quand aucun remux audio FFmpeg n'est disponible (Netlify/navigateur),
+          // priorité aux flux avec son 100% garanti (AAC/Opus) : 1080p puis 4K
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe) ||
+          // Ensuite les flux avec audio AC3/DDP : 1080p puis 4K
+          scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s)) ||
+          // Autre VF
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && matchesPrefLang(s)) ||
+          // Repli VO
+          scored.find(s => s.isCached && s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && s.isWebAudioSafe) ||
+          scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && audioPlayable(s)) ||
+          scored.find(s => s.isCached && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && s.tierKey === '4k') ||
+          scored.find(s => s.isCached)
+        )
+      : (
+          // Avec remux audio actif : 1080p est le format roi, même en AC3
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe) ||
+          scored.find(s => s.isCached && matchesPrefLang(s) && audioPlayable(s)) ||
+          scored.find(s => s.isCached && matchesPrefLang(s)) ||
+          scored.find(s => s.isCached && s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && s.tierKey === '1080p') ||
+          scored.find(s => s.isCached && s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && audioPlayable(s) && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && s.tierKey === '4k') ||
+          scored.find(s => s.isCached && audioPlayable(s)) ||
+          scored.find(s => s.isCached)
+        );
     defaultActive = cachedPreferred || scored[0];
   } else {
-    defaultActive =
-      scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
-      scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
-      scored.find(s => matchesPrefLang(s) && audioPlayable(s)) ||
-      scored.find(s => audioPlayable(s) && s.tierKey === '1080p') ||
-      scored.find(s => audioPlayable(s) && s.tierKey === '4k') ||
-      scored.find(s => audioPlayable(s)) ||
-      scored.find(s => matchesPrefLang(s) && s.tierKey === '1080p') ||
-      scored.find(s => matchesPrefLang(s) && s.tierKey === '4k') ||
-      scored.find(s => matchesPrefLang(s)) ||
-      scored[0];
+    defaultActive = (!enableAudioRemux)
+      ? (
+          scored.find(s => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => matchesPrefLang(s) && s.isWebAudioSafe) ||
+          scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
+          scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
+          scored.find(s => matchesPrefLang(s) && audioPlayable(s)) ||
+          scored.find(s => matchesPrefLang(s) && s.tierKey === '1080p') ||
+          scored.find(s => matchesPrefLang(s) && s.tierKey === '4k') ||
+          scored.find(s => matchesPrefLang(s)) ||
+          scored.find(s => s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => s.isWebAudioSafe) ||
+          scored[0]
+        )
+      : (
+          scored.find(s => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
+          scored.find(s => matchesPrefLang(s) && s.tierKey === '1080p') ||
+          scored.find(s => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
+          scored.find(s => matchesPrefLang(s) && s.tierKey === '4k') ||
+          scored.find(s => matchesPrefLang(s) && s.isWebAudioSafe) ||
+          scored.find(s => matchesPrefLang(s) && audioPlayable(s)) ||
+          scored.find(s => matchesPrefLang(s)) ||
+          scored.find(s => s.isWebAudioSafe && s.tierKey === '1080p') ||
+          scored.find(s => audioPlayable(s) && s.tierKey === '1080p') ||
+          scored.find(s => s.tierKey === '1080p') ||
+          scored.find(s => s.isWebAudioSafe && s.tierKey === '4k') ||
+          scored.find(s => s.tierKey === '4k') ||
+          scored.find(s => s.isWebAudioSafe) ||
+          scored[0]
+        );
   }
 
   // Sélection intelligente par palier de qualité (4K, 1080p, 720p) et langue (VF / VO)
@@ -1272,7 +1358,7 @@ async function resolveStreamsServer({
 
   const resolvePromise = (async () => {
 
-  const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,ext,thepiratebay,kickasstorrents,torrentgalaxy,uindex,knaben,magnetdl,horriblesubs,nyaasi,animetosho,tokyotosho,anidex,nekobt,torrent9,rutracker,rutor,cinemaz,ibit,torlock,comando,bludv,micoleaodublado,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,besttorrents';
+  const ALL_PROVIDERS = 'torrent9,1337x,thepiratebay,torrentgalaxy,yts,rarbg,eztv,kickasstorrents,magnetdl,rutor,rutracker,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,besttorrents,nyaasi,tokyotosho,anidex,nekobt,horriblesubs,animetosho,cinemaz,ibit,torlock,comando,bludv,micoleaodublado,uindex,knaben,ext';
 
   console.log(`[Altyflix Stream Resolver] Recherche parallèle des flux pour ${type} ${imdbId} (S${season}E${episode}) via ${provider}...`);
 
@@ -1455,15 +1541,20 @@ async function resolveStreamsServer({
 
     const pickBestCandidate = (list) => {
       if (!supportsAc3) {
+        // En priorité absolue : les flux correspondant à la langue demandée (VF)
         return list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+               // Repli VO/autre langue UNIQUEMENT si aucun flux de la langue demandée n'existe
                list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
                list.find(s => isPlayableFormat(s)) ||
                list[0];
       }
@@ -1473,6 +1564,7 @@ async function resolveStreamsServer({
              list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
              list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
              list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+             // Repli VO/autre langue
              list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
              list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
              list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||

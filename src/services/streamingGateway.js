@@ -207,14 +207,33 @@ function parseStreamDetails(stream) {
     }
 
     // 1. DÉTECTION VRAIE PISTE AUDIO FRANÇAISE (VF / VFF / TRUEFRENCH / VFQ / VFI / MULTI / Torrent9)
-    const hasFrenchInName = /\b(french|truefrench|vff|vfq|vf2|vfi|vf|audio\.fr|vf\.hd|fr-en|multi)\b/i.test(mainReleaseName) ||
-        /\b(french|truefrench|vff|vfq|vf2|vfi|vf|audio\.fr|vf\.hd|fr-en|multi)\b/i.test(cleanFilename) ||
-        /\b(vf|vff|vfq|vfi|vf2|truefrench|french)\b/i.test(fullText);
+    const isExplicitVostfr = /\b(?:vostfr|subfrench|fansub[\s._-]*vostfr|vost)\b/i.test(fullText) ||
+        /\b(?:vostfr|subfrench)\b/i.test(filename) ||
+        metaLines.includes('subfrench') ||
+        metaLines.includes('multi subs') ||
+        metaLines.includes('vostfr');
 
     const hasFrenchFlag = titleText.includes('🇫🇷');
     const isTorrent9 = fullText.includes('torrent9');
-    const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(titleText) ||
-        (hasFrenchFlag && !/\b(vostfr|subfrench)\b/i.test(mainReleaseName));
+    const isFrenchGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|ulysse|batgirl|glados|slay3r|nbdy|rzp|jaskier)\b/i.test(fullText);
+
+    const hasFrenchDubInName = /\b(?:truefrench|vff|vfq|vfi|vf2|french|audio[\s._-]*fr|vf[\s._-]*hd|fr-en)\b/i.test(mainReleaseName) ||
+        /\b(?:truefrench|vff|vfq|vfi|vf2|french|audio[\s._-]*fr|vf[\s._-]*hd|fr-en)\b/i.test(cleanFilename) ||
+        /\b(?:truefrench|vff|vfq|vfi|vf2|french)\b/i.test(fullText) ||
+        /\bvf\b/i.test(mainReleaseName) ||
+        /\bvf\b/i.test(cleanFilename);
+
+    const isSceneMulti = /\b(?:multi|multisite)\b/i.test(mainReleaseName) || /\b(?:multi)\b/i.test(cleanFilename);
+    const isForeignOnlyMulti = /\b(?:tam\s*\+\s*hin|dub\s*\+\s*(?:\d+x\s*)?mvo|ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu|rus\s*[-/]\s*eng)\b/i.test(fullText);
+    const isFrenchMulti = isSceneMulti && !isForeignOnlyMulti && (
+        isTorrent9 ||
+        hasFrenchFlag ||
+        hasFrenchDubInName ||
+        isFrenchGroup ||
+        /\b(?:fr|fre|francais|vff|vf2|vfq)\b/i.test(fullText)
+    );
+
+    const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(titleText);
 
     const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(titleText) ||
         /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) ||
@@ -224,31 +243,42 @@ function parseStreamDetails(stream) {
     // Détection des releases Russes ou étrangères où le français n'est pas en piste 0
     const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
 
-    const isFrench = Boolean(!isEnglishPrimaryMulti && !isForeignPrimaryMulti && (hasFrenchInName || isTorrent9 || hasFrenchAudioInAudioLine || (hasFrenchFlag && !metaLines.includes('subfrench'))));
+    const hasFrenchAudio = Boolean(!isExplicitVostfr && !isForeignPrimaryMulti && (
+        hasFrenchDubInName ||
+        isFrenchMulti ||
+        hasFrenchAudioInAudioLine ||
+        (isTorrent9 && !isExplicitVostfr) ||
+        (hasFrenchFlag && !isExplicitVostfr)
+    ));
+    const isPureFrench = Boolean(hasFrenchAudio && !isEnglishPrimaryMulti);
+    const isFrench = hasFrenchAudio;
 
     // 2. SOUS-TITRES FRANÇAIS (VOSTFR)
-    // Si la piste audio n'est pas VF mais que des sous-titres FR ou la mention VOSTFR sont présents
-    const isVostfr = !isFrench && (
-        hasFrenchFlag ||
-        /\b(vostfr|subfrench|vost)\b/i.test(fullText) ||
+    const isVostfr = !isFrench && Boolean(
+        isExplicitVostfr ||
+        (hasFrenchFlag && isExplicitVostfr) ||
         metaLines.includes('subfrench') ||
         metaLines.includes('multi subs')
     );
 
     // Détection compatibilité audio navigateur (AAC, MP3, Opus, FLAC...)
-    // Évite le silence provoqué par les codecs propriétaires Dolby AC3 / E-AC3 / DTS non décodés par Chrome
     const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
     const hasMp3 = /\bmp3\b/i.test(fullText);
     const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
     const hasFlac = /\bflac\b/i.test(fullText);
-    const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|joy|ozlem|galaxytv|tgx|qman|lordvako|psa|f4st)\b/i.test(fullText);
+    const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|joy|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|f4st|extreme|pop|fw|fr5|batgirl|ulysse|glados|rzp|slay3r|nbdy|duff)\b/i.test(fullText);
+
+    const has71Or8ch = /\b(?:7\.1|8ch)\b/i.test(fullText);
+    const hasOpusMultichannel = /\bopus(?:\s*\.?\s*[7]\.?[01]|\s*\.?\s*8ch)\b/i.test(fullText);
+    const hasMultichannelSilence = has71Or8ch || hasOpusMultichannel;
+
+    const isAc3OrDdp = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01])\b)/i.test(fullText);
+    const isDtsOrTrueHd = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x|dts-?ma|lpcm)\b)/i.test(fullText);
     const hasDdp = /ddp|eac3|atmos/i.test(fullText);
     const hasDts = /dts/i.test(fullText);
     const hasAc3 = /\bac3\b/i.test(fullText);
-    const hasMultichannelSurround = /\b(?:7\.1|5\.1|8ch|6ch|surround)\b/i.test(fullText);
-    const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fullText);
-    const hasAtmosOrTrueHdOrDts = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x)\b)/i.test(fullText);
-    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSurround) || hasFlac);
+    const hasUnsupportedAudioCodec = isAc3OrDdp || isDtsOrTrueHd;
+    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac);
 
     // Détection codec vidéo H.264 (universel) vs H.265/HEVC (incompatible sur certains navigateurs sans extension)
     const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
@@ -259,15 +289,15 @@ function parseStreamDetails(stream) {
     const isAvi = /\.avi(\?|$)/i.test(stream?.url || '') || /\.avi/i.test(filename) || /xvid|divx/i.test(fullText);
     const isMkv = /\.mkv(\?|$)/i.test(stream?.url || '') || /\.mkv/i.test(filename) || (!isMp4 && !isAvi);
 
-    // Audio 100% garanti sans coupure sonore dans le navigateur : Stéréo AAC/MP3, zéro surround muet
-    const isWebAudioSafe = Boolean((hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts && !hasMultichannelSurround) || 
-        ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSurround));
+    // Audio 100% garanti sans coupure sonore dans le navigateur (Chrome, Firefox, Safari, Edge, Mobile)
+    const isWebAudioSafe = Boolean((hasExplicitWebAudio && !isDtsOrTrueHd && !hasMultichannelSilence) || 
+        ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSilence));
     const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-    const hasBadAudio = Boolean(hasUnsupportedAudioCodec || hasAtmosOrTrueHdOrDts || hasMultichannelSurround || isMkvWithoutWebAudio || !isWebAudioSafe);
+    const hasBadAudio = Boolean((isAc3OrDdp && !hasExplicitWebAudio) || isDtsOrTrueHd || hasMultichannelSilence || isMkvWithoutWebAudio || !isWebAudioSafe);
 
     // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
     const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
-    const isPureFrench = /\b(truefrench|vff)\b/i.test(fullText);
+    const isVffOrTrueFrench = /\b(truefrench|vff)\b/i.test(fullText);
     const isHighQualitySource = /\b(?:bluray|bdrip|brrip|web-?dl|web-?rip|hdtv)\b/i.test(fullText);
     const isCamOrLowQuality = /\b(?:cam|camrip|hdcam|telesync|ts|hdts|telecine|tc|scr|screener|dvdscr|r5|workprint|wp)\b/i.test(fullText);
     const isMulti = /\bmulti\b/i.test(fullText);
@@ -284,8 +314,10 @@ function parseStreamDetails(stream) {
     const seeds = seedsMatch ? parseInt(seedsMatch[1], 10) : 0;
 
     let languageLabel = 'Version Originale';
-    if (isFrench) {
+    if (isPureFrench) {
         languageLabel = 'Français (VF)';
+    } else if (isFrench) {
+        languageLabel = 'Français (MULTI · VF)';
     } else if (isVostfr) {
         languageLabel = 'VOSTFR (Sous-titres FR)';
     }
@@ -307,6 +339,7 @@ function parseStreamDetails(stream) {
         isMkv,
         isMkvHevcUnplayable,
         isPureFrench,
+        isVffOrTrueFrench,
         isHighQualitySource,
         isCamOrLowQuality,
         isMulti,
@@ -345,6 +378,8 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
                 isCached: details.isCached,
                 isDownloading: details.isDownloading,
                 isFrench: details.isFrench,
+                isPureFrench: details.isPureFrench,
+                isVffOrTrueFrench: details.isVffOrTrueFrench,
                 isVostfr: details.isVostfr,
                 isWebAudioSafe: details.isWebAudioSafe,
                 hasBadAudio: details.hasBadAudio,
@@ -369,25 +404,20 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
     const movieHdPool = isMovie ? validAll.filter(s => s.tierKey === '1080p' || s.tierKey === '4k') : [];
     const basePool = (isMovie && movieHdPool.length > 0) ? movieHdPool : validAll;
 
-    // RÈGLE D'OR : "SOIT TU PRENDS LES TORRENTS PARFAITS SOIT TU FAIS RIEN"
-    // Élimination rigoureuse de tout ce qui n'a pas de son ou qui crash dans le navigateur :
+    // RÈGLE D'OR : Élimination des formats conteneurs incompatibles sans transcodage
     const isStreamPlayableInBrowser = (s) => {
         if (s.isAvi && !s.isTranscoded) return false;
-        if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
-        if (s.isMkvHevcUnplayable) return false;
-        if (s.tierKey === '4k') return false;
         return true;
     };
 
-    const audioSafePool = basePool.filter(isStreamPlayableInBrowser);
-    const valid = (audioSafePool.length > 0) ? audioSafePool : basePool.filter(s => !s.isDead && s.tierKey !== '4k');
+    const valid = basePool.filter(isStreamPlayableInBrowser);
 
     if (valid.length === 0) return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false, anyCached: false };
 
     // Y a-t-il au moins un flux avec de la vraie VF ?
     const hasTrueVf = valid.some(s => s.isFrench);
 
-    // Fonction de score : PRIORITÉ ABSOLUE AUX FLUX EN CACHE (+100 000), SON FONCTIONNEL (+25000) ET VF (+15000)
+    // Fonction de score : PRIORITÉ ABSOLUE AUX FLUX EN CACHE ET À LA VF AVEC AUDIO FONCTIONNEL
     const scoreStream = (st) => {
         let score = 0;
 
@@ -402,28 +432,38 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
             score -= 500000;
         }
 
-        // 2. Son 100% garanti dans le navigateur (AAC / MP3 / Opus) : CRITIQUE pour ne jamais avoir de vidéo muette
-        if (st.isWebAudioSafe) {
-            score += 45000;
+        // 2. Gestion audio intelligente :
+        if (st.isFrench) {
+            if (st.isWebAudioSafe) {
+                score += 185000; // VF avec audio web (AAC/MP3/Opus) = priorité suprême
+            } else if (!st.hasBadAudio) {
+                score += 145000; // VF avec audio standard (AC3/DDP) = conservé avec fort bonus
+            } else {
+                score += 110000; // Autre VF
+            }
+        } else {
+            if (st.isWebAudioSafe) {
+                score += 55000;  // VO avec audio web
+            }
         }
-        if (st.hasBadAudio) {
-            // Codecs propriétaires Dolby/DTS (AC3/DTS/E-AC3) rejetés car non décodés par Chrome/Edge
-            score -= 85000;
+
+        if (st.hasBadAudio && /dts|truehd/i.test(`${st.rawTitle} ${st.filename}`)) {
+            score -= 50000;
         }
 
         // 3. Codec vidéo : H.264 ultra compatible web (+12000) vs H.265/HEVC (-15000)
         if (st.isH264) score += 12000;
         if (st.isH265) score -= 15000;
 
-        // 4. VF prioritaire au lancement (+15000) sinon VOSTFR (+500)
-        if (st.isFrench) score += 15000;
-        else if (st.isVostfr) score += 500;
+        // 4. VOSTFR si pas VF (+20000)
+        if (st.isVostfr && !st.isFrench) score += 20000;
 
         // 5. Source d'origine certifiée : BluRay / BDRip / WEB-DL garantissent une image propre
         if (st.isHighQualitySource) score += 18000;
 
         // 6. Doublage français de référence : VFF / TRUEFRENCH
         if (st.isPureFrench) score += 20000;
+        if (st.isVffOrTrueFrench) score += 20000;
         if (st.isFrench && !st.isMulti) score += 6000;
         if (st.isProper) score += 5000;
         if (st.isTrustedGroup) score += 8000;
@@ -553,22 +593,23 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
     let defaultActive = null;
     if (anyCached) {
         defaultActive =
-            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && !s.hasBadAudio && s.tierKey === '1080p') ||
-            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && !s.hasBadAudio) ||
-            finalStreams.find(s => s.isCached && !s.isDownloading && !s.hasBadAudio && s.tierKey === '1080p') ||
-            finalStreams.find(s => s.isCached && !s.isDownloading && !s.hasBadAudio) ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
             finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench && s.tierKey === '1080p') ||
             finalStreams.find(s => s.isCached && !s.isDownloading && s.isFrench) ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isCached && !s.isDownloading && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
             finalStreams.find(s => s.isCached && !s.isDownloading && s.tierKey === '1080p') ||
             finalStreams.find(s => s.isCached && !s.isDownloading);
     }
     if (!defaultActive) {
         defaultActive =
-            finalStreams.find(s => s.isFrench && !s.hasBadAudio && s.tierKey === '1080p') ||
-            finalStreams.find(s => s.isFrench && !s.hasBadAudio) ||
-            finalStreams.find(s => !s.hasBadAudio && s.tierKey === '1080p') ||
-            finalStreams.find(s => !s.hasBadAudio) ||
-            (hasTrueVf ? (finalStreams.find(s => s.isFrench && s.tierKey === '1080p') || finalStreams.find(s => s.isFrench)) : null) ||
+            finalStreams.find(s => s.isFrench && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isFrench && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
+            finalStreams.find(s => s.isFrench && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isFrench) ||
+            finalStreams.find(s => s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+            finalStreams.find(s => s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
             finalStreams.find(s => s.tierKey === '1080p') ||
             finalStreams[0];
     }
@@ -616,6 +657,7 @@ export async function resolvePlaybackStreams({
     type = 'movie',
     season = 1,
     episode = 1,
+    lang = 'vf',
     title = '',
     signal: callerSignal = null
 }) {
@@ -649,6 +691,7 @@ export async function resolvePlaybackStreams({
             type: isTv ? 'tv' : 'movie',
             season: String(season || 1),
             episode: String(episode || 1),
+            lang: String(lang || 'vf'),
             clientAc3: checkBrowserAc3Support() ? '1' : '0'
         });
         if (title) {
@@ -722,48 +765,46 @@ export async function resolvePlaybackStreams({
     }
 
     try {
-        const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,ext,thepiratebay,kickasstorrents,torrentgalaxy,uindex,knaben,magnetdl,horriblesubs,nyaasi,animetosho,tokyotosho,anidex,nekobt,torrent9,rutracker,rutor,cinemaz,ibit,torlock,comando,bludv,micoleaodublado,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,besttorrents';
-        const options = `providers=${ALL_PROVIDERS}|sort=qualitysize|language=french|${activeProvider}=${encodeURIComponent(activeToken)}`;
-        const endpoint = `https://torrentio.strem.fun/${options}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
+        const ALL_PROVIDERS = 'torrent9,1337x,thepiratebay,torrentgalaxy,yts,rarbg,eztv,kickasstorrents,magnetdl,rutor,rutracker,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,besttorrents,nyaasi,tokyotosho,anidex,nekobt,horriblesubs,animetosho,cinemaz,ibit,torlock,comando,bludv,micoleaodublado,uindex,knaben,ext';
+        const optionsPriorityFr = `providers=${ALL_PROVIDERS}|sort=qualitysize|qualityfilter=scr,cam|foreign_lang=french|${activeProvider}=${encodeURIComponent(activeToken)}`;
+        const endpointPriorityFr = `https://torrentio.strem.fun/${optionsPriorityFr}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 
-        const s1 = createTimeoutSignal(8000, callerSignal);
-        let res;
-        try {
-            res = await fetch(endpoint, {
-                headers: { 'Accept': 'application/json' },
-                cache: 'no-store',
-                signal: s1.signal
-            });
-        } finally {
-            s1.cleanup();
-        }
+        const optionsVf = `providers=${ALL_PROVIDERS}|sort=qualitysize|qualityfilter=scr,cam|language=french|${activeProvider}=${encodeURIComponent(activeToken)}`;
+        const endpointVf = `https://torrentio.strem.fun/${optionsVf}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 
-        let rawStreams = [];
-        if (res.ok) {
-            const data = await res.json();
-            rawStreams = Array.isArray(data?.streams) ? data.streams : [];
-        }
+        const optionsGlobal = `providers=${ALL_PROVIDERS}|sort=qualitysize|qualityfilter=scr,cam|${activeProvider}=${encodeURIComponent(activeToken)}`;
+        const endpointGlobal = `https://torrentio.strem.fun/${optionsGlobal}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 
-        // Si aucun flux en VF, élargir au catalogue mondial
-        if (!rawStreams || rawStreams.length === 0 || rawStreams.every(isTorrentioErrorStream)) {
-            const optionsGlobal = `providers=${ALL_PROVIDERS}|sort=qualitysize|${activeProvider}=${encodeURIComponent(activeToken)}`;
-            const endpointGlobal = `https://torrentio.strem.fun/${optionsGlobal}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
-
-            const s2 = createTimeoutSignal(8000, callerSignal);
-            let resGlobal;
+        const fetchEndpoint = async (url) => {
+            const s = createTimeoutSignal(8000, callerSignal);
             try {
-                resGlobal = await fetch(endpointGlobal, {
+                const res = await fetch(url, {
                     headers: { 'Accept': 'application/json' },
                     cache: 'no-store',
-                    signal: s2.signal
+                    signal: s.signal
                 });
+                if (!res.ok) return [];
+                const data = await res.json();
+                return Array.isArray(data?.streams) ? data.streams : [];
+            } catch {
+                return [];
             } finally {
-                s2.cleanup();
+                s.cleanup();
             }
+        };
 
-            if (resGlobal.ok) {
-                const dataGlobal = await resGlobal.json();
-                rawStreams = Array.isArray(dataGlobal?.streams) ? dataGlobal.streams : [];
+        const [streamsFr, streamsVf, streamsGlobal] = await Promise.all([
+            fetchEndpoint(endpointPriorityFr),
+            fetchEndpoint(endpointVf),
+            fetchEndpoint(endpointGlobal)
+        ]);
+
+        const seenUrls = new Set();
+        const rawStreams = [];
+        for (const s of [...streamsFr, ...streamsVf, ...streamsGlobal]) {
+            if (s && s.url && !seenUrls.has(s.url)) {
+                seenUrls.add(s.url);
+                rawStreams.push(s);
             }
         }
 

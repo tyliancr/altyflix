@@ -1518,12 +1518,12 @@ export default function NetflixPlayer({
         if (audioFallbackDoneRef.current === key) return;
         audioFallbackDoneRef.current = key;
         const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream.isFrench))
-            || (!activeStream.isFrench ? (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio) : null);
+            || (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio);
         if (safe) handleSelectStreamRef.current(safe);
     }, [streamState, isAc3Supported, activeStream, availableStreams, id, season, episode]);
 
     // Détection en temps réel du décodage audio : si la vidéo tourne depuis 2 s mais qu'aucun octet audio n'est décodé (ex. Chrome sur AC3/DTS non étiqueté),
-    // bascule automatique et transparente vers une source au son garanti dans la même langue.
+    // bascule automatique et transparente vers une source au son garanti (même langue en priorité, sinon VOSTFR).
     useEffect(() => {
         if (streamState !== 'playing' || isAc3Supported) return undefined;
         const video = videoRef.current;
@@ -1538,8 +1538,10 @@ export default function NetflixPlayer({
             const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
-                const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream?.isFrench));
+                const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream?.isFrench))
+                    || (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio);
                 if (safe) {
+                    console.log('[Altyflix Player] Flux muet détecté sans décodage audio, bascule automatique vers un flux sonore :', safe.qualityLabel || safe.quality);
                     handleSelectStreamRef.current(safe);
                 }
             }

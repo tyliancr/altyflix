@@ -45,6 +45,7 @@ function setCachedResolve(key, data) {
 
 const ALLOWED_POLL_HOSTS = [
   'torrentio.strem.fun',
+  'comet.elfhosted.com',
   'api.torbox.app',
   'torbox.app',
   'tb-cdn.st',
@@ -111,13 +112,14 @@ function parseBytes(str) {
 function isTorrentioErrorStream(stream) {
   if (!stream) return true;
   const url = String(stream.url || '');
-  const title = String(stream.title || '').toLowerCase();
+  const title = String(stream.title || stream.description || '').toLowerCase();
   const name = String(stream.name || '').toLowerCase();
+  const fullText = (title + ' ' + name).toLowerCase();
 
   if (url.includes('failed_access') || url.includes('/videos/failed_')) return true;
   if (isDownloadingUrl(url)) return true;
-  if (/\b(?:tb|rd|ad|pm|dl)?\s*error\b/i.test(name)) return true;
-  if (/(?:invalid\s+(?:api|token|key|debrid|auth)|access\s+denied|rate\s+limit\s+exceeded|failed\s+to\s+(?:resolve|access|connect)|not\s+a\s+valid\s+debrid)/i.test(title)) return true;
+  if (name.includes('[❌]') || /\b(?:tb|rd|ad|pm|dl)?\s*error\b/i.test(name)) return true;
+  if (/(?:invalid\s+(?:api|token|key|debrid|auth)|access\s+denied|rate\s+limit\s+exceeded|failed\s+to\s+(?:resolve|access|connect)|not\s+a\s+valid\s+debrid)/i.test(fullText)) return true;
 
   return false;
 }
@@ -135,7 +137,7 @@ function isDownloadingUrl(urlStr) {
  * Parse les métadonnées d'un flux Torrentio
  */
 function parseStreamDetails(stream) {
-  const rawTitle = stream.title || '';
+  const rawTitle = stream.title || stream.description || '';
   const rawName = stream.name || '';
   const filename = stream.behaviorHints?.filename || rawTitle.split('\n')[0] || '';
   const fullText = (rawTitle + ' ' + rawName + ' ' + filename).toLowerCase().replace(/_/g, ' ');
@@ -1049,6 +1051,38 @@ async function resolveStreamsServer({
       return [];
     };
 
+    const fetchComet = async () => {
+      if (!token) return [];
+      try {
+        const cometConfig = Buffer.from(JSON.stringify({
+          debridService: provider,
+          debridApiKey: token
+        })).toString('base64url');
+        const streamPath = isTv ? `series/${streamKey}.json` : `movie/${streamKey}.json`;
+        const cUrl = `https://comet.elfhosted.com/${cometConfig}/stream/${streamPath}`;
+        const cRes = await fetch(cUrl, {
+          headers: { 'Accept': 'application/json' },
+          redirect: 'error',
+          signal: AbortSignal.timeout(4000)
+        });
+        if (cRes.ok) {
+          const cData = await cRes.json();
+          if (Array.isArray(cData?.streams)) {
+            return cData.streams
+              .filter(s => s && typeof s.url === 'string' && !isTorrentioErrorStream(s))
+              .map(s => ({
+                ...s,
+                title: s.title || s.description || s.name || '',
+                name: s.name || '[TB+] Comet'
+              }));
+          }
+        }
+      } catch (cErr) {
+        // En cas d'indisponibilité temporaire de Comet, continuer sans bloquer les autres indexeurs
+      }
+      return [];
+    };
+
     const fetchMylist = async () => {
       if (provider !== 'torbox' || !cleanTitle) return [];
       try {
@@ -1069,18 +1103,19 @@ async function resolveStreamsServer({
       }
     };
 
-    const [priorityFrStreams, vfStreams, globalStreams, frenchioStreams, mylistStreams] = await Promise.all([
+    const [priorityFrStreams, vfStreams, globalStreams, frenchioStreams, cometStreams, mylistStreams] = await Promise.all([
       fetchTorrentio(endpointPriorityFr, 'FR Priority'),
       fetchTorrentio(endpointVf, 'VF'),
       fetchTorrentio(endpointGlobal, 'Global'),
       fetchFrenchio(),
+      fetchComet(),
       fetchMylist()
     ]);
 
     // Fusion avec déduplication stricte par URL
     const seenUrls = new Set();
     const rawStreams = [];
-    for (const s of [...(mylistStreams || []), ...priorityFrStreams, ...frenchioStreams, ...vfStreams, ...globalStreams]) {
+    for (const s of [...(mylistStreams || []), ...priorityFrStreams, ...frenchioStreams, ...cometStreams, ...vfStreams, ...globalStreams]) {
       if (s && s.url && !seenUrls.has(s.url)) {
         seenUrls.add(s.url);
         rawStreams.push(s);

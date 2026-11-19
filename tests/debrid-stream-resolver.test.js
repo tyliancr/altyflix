@@ -102,6 +102,7 @@ test('Debrid Stream Resolver: Filtrage des clips d\'erreur et de fausses vidéos
 test('Debrid Stream Resolver: Protection SSRF stricte sur le polling', async () => {
   // Hôtes autorisés
   assert.equal(isAllowedUrl('https://torrentio.strem.fun/resolve/torbox/test'), true);
+  assert.equal(isAllowedUrl('https://comet.elfhosted.com/playback/test'), true);
   assert.equal(isAllowedUrl('https://api.torbox.app/v1/api/torrents/requestdl'), true);
   assert.equal(isAllowedUrl('https://api.real-debrid.com/rest/1.0/downloads'), true);
 
@@ -447,4 +448,28 @@ test('Debrid Stream Resolver: Règle d\'or Netflix - lecture instantanée sans b
   assert.equal(curated.activeStream.isDownloading, false, 'Le flux actif ne doit PAS être en cours de téléchargement');
   assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/cached/from_vo.mp4');
   assert.equal(curated.streams[0].isCached, true, 'Le premier choix dans les options du lecteur DOIT être le flux prêt');
+});
+
+test('Debrid Stream Resolver: Support multi-indexeur Comet (parsing description et détection [TB+])', () => {
+  const cometStreams = [
+    {
+      name: '[TB+] Comet\n1080p',
+      description: 'Fall.Guy.2024.FRENCH.1080p.WEB.H264.AAC\n👤 25 💾 3.2 GB',
+      url: 'https://comet.elfhosted.com/playback/encrypted_token_1/fall_guy.mp4'
+    },
+    {
+      name: '[❌] torbox',
+      description: 'torbox: Invalid API key.',
+      url: 'https://comet.elfhosted.com/playback/invalid'
+    }
+  ];
+
+  assert.equal(isTorrentioErrorStream(cometStreams[1]), true, 'L\'erreur Comet [❌] doit être rejetée');
+  assert.equal(isTorrentioErrorStream(cometStreams[0]), false, 'Le flux Comet valide doit être accepté');
+
+  const curated = curateStreams(cometStreams, 'torbox', { contentType: 'movie' });
+  assert.equal(curated.streams.length, 1);
+  assert.equal(curated.activeStream.isCached, true);
+  assert.equal(curated.activeStream.isFrench, true);
+  assert.equal(curated.activeStream.url, 'https://comet.elfhosted.com/playback/encrypted_token_1/fall_guy.mp4');
 });

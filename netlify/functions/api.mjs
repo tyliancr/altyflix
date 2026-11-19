@@ -533,18 +533,23 @@ var require_stream_resolver = __commonJS({
       const isVostfr = !isFrench && (hasFrenchFlag || /\b(vostfr|subfrench|vost)\b/i.test(fullText) || metaLines.includes("subfrench") || metaLines.includes("multi subs"));
       const isMp4 = /\.mp4(?:\?|$)/i.test(stream?.url || "") || /\.mp4(?:$|\?|\s|["')\]])/i.test(filename);
       const isAvi = /\.avi(?:\?|$)/i.test(stream?.url || "") || /\.avi(?:$|\?|\s|["')\]])/i.test(filename) || /\b(?:xvid|divx)\b/i.test(fullText);
+      const isMkv = /\.mkv(?:\?|$)/i.test(stream?.url || "") || /\.mkv(?:$|\?|\s|["')\]])/i.test(filename) || !isMp4 && !isAvi;
+      const isWebm = /\.webm(?:\?|$)/i.test(stream?.url || "") || /\.webm(?:$|\?|\s|["')\]])/i.test(filename);
+      const isAv1 = /\b(?:av1|d?av1nci|av01)\b/i.test(fullText);
+      const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
+      const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
       const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
       const hasMp3 = /\bmp3\b/i.test(fullText);
       const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
       const hasFlac = /\bflac\b/i.test(fullText);
       const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st)\b/i.test(fullText);
-      const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
+      const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fullText);
+      const hasAtmosOrTrueHdOrDts = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x)\b)/i.test(fullText);
       const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus || hasFlac);
-      const isWebAudioSafe = Boolean(hasExplicitWebAudio || (isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec);
+      const isWebAudioSafe = Boolean(hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts || (isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec);
       const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-      const hasUnsupportedAudio = Boolean((hasUnsupportedAudioCodec || isMkvWithoutWebAudio) && !hasExplicitWebAudio);
-      const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
-      const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
+      const hasUnsupportedAudio = Boolean(hasUnsupportedAudioCodec && !hasExplicitWebAudio || hasAtmosOrTrueHdOrDts || isMkvWithoutWebAudio);
+      const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
       const isHighQualitySource = /\b(?:bluray|bdrip|brrip|web-?dl|web-?rip|hdtv)\b/i.test(fullText);
       const isCamOrLowQuality = /\b(?:cam|camrip|hdcam|telesync|ts|hdts|telecine|tc|scr|screener|dvdscr|r5|workprint|wp)\b/i.test(fullText);
       const isPureFrench = /\b(truefrench|vff)\b/i.test(fullText);
@@ -570,8 +575,11 @@ var require_stream_resolver = __commonJS({
         hasUnsupportedAudio,
         isH264,
         isH265,
+        isAv1,
         isMp4,
         isAvi,
+        isMkv,
+        isMkvHevcUnplayable,
         isHighQualitySource,
         isCamOrLowQuality,
         isPureFrench,
@@ -610,8 +618,11 @@ var require_stream_resolver = __commonJS({
           hasUnsupportedAudio: details.hasUnsupportedAudio,
           isH264: details.isH264,
           isH265: details.isH265,
+          isAv1: details.isAv1,
           isMp4: details.isMp4,
           isAvi: details.isAvi,
+          isMkv: details.isMkv,
+          isMkvHevcUnplayable: details.isMkvHevcUnplayable,
           isTorboxLibrary: Boolean(s.isTorboxLibrary),
           isHighQualitySource: details.isHighQualitySource,
           isCamOrLowQuality: details.isCamOrLowQuality,
@@ -631,10 +642,19 @@ var require_stream_resolver = __commonJS({
       const movieHdPool = isMovie ? validAll.filter(isHd1080Plus) : [];
       const anyCachedAll = validAll.some((s) => s.isCached);
       const basePool = isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some((s) => s.isCached)) ? movieHdPool : validAll;
-      const isAudioPlayableInBrowser = (s) => Boolean(enableAudioRemux || s.isWebAudioSafe || !s.hasUnsupportedAudio);
-      const audioSafePool = basePool.filter(isAudioPlayableInBrowser);
-      const hasAudioSafeCached = anyCachedAll ? audioSafePool.some((s) => s.isCached) : audioSafePool.length > 0;
-      const valid = hasAudioSafeCached ? audioSafePool : basePool;
+      const isPlayableInBrowser = (s) => {
+        if (enableAudioRemux) return true;
+        if (s.isAvi && !s.isTranscoded) return false;
+        if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
+        if (s.isMkvHevcUnplayable) return false;
+        if (s.tierKey === "4k") {
+          if (s.isH265 && !s.isMp4 && !s.isAv1) return false;
+          if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
+        }
+        return true;
+      };
+      const audioSafePool = basePool.filter(isPlayableInBrowser);
+      const valid = audioSafePool.length > 0 ? audioSafePool : basePool;
       if (valid.length === 0) {
         return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };
       }
@@ -1085,6 +1105,16 @@ var require_stream_resolver = __commonJS({
             } else if (episodePattern.test(fName)) {
               continue;
             }
+            const fStr = `${t.name || ""} ${fName}`.toLowerCase();
+            const hasBadAudio = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fStr);
+            if (hasBadAudio) continue;
+            const is4k = /\b(?:4k|2160p|uhd)\b/i.test(fStr);
+            const isMp4 = fName.toLowerCase().endsWith(".mp4");
+            const isAv1 = /\b(?:av1|d?av1nci)\b/i.test(fStr);
+            if (is4k && !isMp4 && !isAv1) continue;
+            const isMkv = fName.toLowerCase().endsWith(".mkv");
+            const isHevc = /\b(?:hevc|x265|h\.?265|10bit)\b/i.test(fStr);
+            if (isMkv && isHevc && !isAv1) continue;
             candidateFiles.push({ torrent: t, file: f, fName, size: Number(f.size) || 0 });
           }
         }
@@ -1122,12 +1152,13 @@ var require_stream_resolver = __commonJS({
                   const sizeGb = size ? (size / (1024 * 1024 * 1024)).toFixed(2) + " GB" : "";
                   const metaStr = `${t.name || ""} ${fName}`.replace(/_/g, " ");
                   const inferredRes = /\b(?:2160p|4k|uhd)\b/i.test(metaStr) ? "4K" : /\b1080p\b/i.test(metaStr) ? "1080p" : /\b720p\b/i.test(metaStr) ? "720p" : /\b(?:480p|dvdrip|xvid|divx)\b/i.test(metaStr) ? "480p" : "";
+                  const hasFr = /\b(french|truefrench|vff|vfq|vf|vf2|audio\.fr|vf\.hd|fr-en|multi)\b/i.test(metaStr);
                   return {
                     name: `[TB+] Torbox Cloud${inferredRes ? `
 ${inferredRes}` : ""}`,
-                    title: `${fName}
-\u{1F464} 1 \u{1F4BE} ${sizeGb} \u2699\uFE0F Ma Biblioth\xE8que TorBox
-\u{1F1EB}\u{1F1F7}`,
+                    title: `${t.name || fName}
+${fName}
+\u{1F464} 1 \u{1F4BE} ${sizeGb} \u2699\uFE0F Ma Biblioth\xE8que TorBox${hasFr ? "\n\u{1F1EB}\u{1F1F7}" : ""}`,
                     url: safeDlUrl,
                     isTorboxLibrary: true
                   };

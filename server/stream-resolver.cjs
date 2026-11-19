@@ -233,6 +233,13 @@ function parseStreamDetails(stream) {
 
   const isMp4 = /\.mp4(?:\?|$)/i.test(stream?.url || '') || /\.mp4(?:$|\?|\s|["')\]])/i.test(filename);
   const isAvi = /\.avi(?:\?|$)/i.test(stream?.url || '') || /\.avi(?:$|\?|\s|["')\]])/i.test(filename) || /\b(?:xvid|divx)\b/i.test(fullText);
+  const isMkv = /\.mkv(?:\?|$)/i.test(stream?.url || '') || /\.mkv(?:$|\?|\s|["')\]])/i.test(filename) || (!isMp4 && !isAvi);
+  const isWebm = /\.webm(?:\?|$)/i.test(stream?.url || '') || /\.webm(?:$|\?|\s|["')\]])/i.test(filename);
+
+  // Video Codecs
+  const isAv1 = /\b(?:av1|d?av1nci|av01)\b/i.test(fullText);
+  const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
+  const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
 
   // Détection audio : codecs compatibles navigateur (AAC / MP3 / Opus / FLAC) vs codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD / Atmos)
   const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
@@ -240,17 +247,19 @@ function parseStreamDetails(stream) {
   const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
   const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st)\b/i.test(fullText);
-  const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|truehd|atmos|lpcm)\b)/i.test(fullText);
+  
+  const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fullText);
+  const hasAtmosOrTrueHdOrDts = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x)\b)/i.test(fullText);
   const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus || hasFlac);
 
-  // Son garanti dans le navigateur : codec web explicite (AAC/MP3/Opus/FLAC) ou conteneur MP4/groupe web sans codec Dolby/DTS exclusif
-  const isWebAudioSafe = Boolean(hasExplicitWebAudio || ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec));
-  // Un flux a un son non supporté si un codec propriétaire est présent, OU si c'est un MKV sans codec web explicite (les MKV sans mention AAC sont quasi systématiquement en AC3/DTS muets dans Chrome)
+  // Son 100 % garanti dans le navigateur : Un flux avec AAC/Opus/MP3 reste web-safe sauf si Atmos/TrueHD/DTS prend Track 0
+  const isWebAudioSafe = Boolean((hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts) || ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec));
+  // Un flux a un son non supporté s'il a un codec propriétaire sans AAC, ou s'il a Atmos/TrueHD/DTS, ou si c'est un MKV sans codec web explicite
   const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-  const hasUnsupportedAudio = Boolean((hasUnsupportedAudioCodec || isMkvWithoutWebAudio) && !hasExplicitWebAudio);
+  const hasUnsupportedAudio = Boolean((hasUnsupportedAudioCodec && !hasExplicitWebAudio) || hasAtmosOrTrueHdOrDts || isMkvWithoutWebAudio);
 
-  const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
-  const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
+  // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
+  const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
 
   // Qualité de la source originale : BluRay / WEB-DL garantissent une image nette
   const isHighQualitySource = /\b(?:bluray|bdrip|brrip|web-?dl|web-?rip|hdtv)\b/i.test(fullText);
@@ -286,8 +295,11 @@ function parseStreamDetails(stream) {
     hasUnsupportedAudio,
     isH264,
     isH265,
+    isAv1,
     isMp4,
     isAvi,
+    isMkv,
+    isMkvHevcUnplayable,
     isHighQualitySource,
     isCamOrLowQuality,
     isPureFrench,
@@ -333,8 +345,11 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
         hasUnsupportedAudio: details.hasUnsupportedAudio,
         isH264: details.isH264,
         isH265: details.isH265,
+        isAv1: details.isAv1,
         isMp4: details.isMp4,
         isAvi: details.isAvi,
+        isMkv: details.isMkv,
+        isMkvHevcUnplayable: details.isMkvHevcUnplayable,
         isTorboxLibrary: Boolean(s.isTorboxLibrary),
         isHighQualitySource: details.isHighQualitySource,
         isCamOrLowQuality: details.isCamOrLowQuality,
@@ -357,14 +372,34 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   const anyCachedAll = validAll.some(s => s.isCached);
   const basePool = (isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some(s => s.isCached))) ? movieHdPool : validAll;
 
-  // RÈGLE D'OR AUDIO SANS PIÈGE (ZÉRO VIDÉO MUETTE DANS LE NAVIGATEUR) :
-  // Si le serveur ne dispose pas de transcodeur FFmpeg (enableAudioRemux = false) et que des flux au son 100% garanti navigateur (AAC, Opus, MP3, MP4) existent,
-  // on élimine STRICTEMENT toute release au son propriétaire inaudible dans Chrome/Windows (Dolby DDP Atmos, AC3, DTS).
-  // "Soit on prend les torrents parfaits avec du son, soit on ne propose rien d'inaudible."
-  const isAudioPlayableInBrowser = (s) => Boolean(enableAudioRemux || s.isWebAudioSafe || !s.hasUnsupportedAudio);
-  const audioSafePool = basePool.filter(isAudioPlayableInBrowser);
-  const hasAudioSafeCached = anyCachedAll ? audioSafePool.some(s => s.isCached) : audioSafePool.length > 0;
-  const valid = hasAudioSafeCached ? audioSafePool : basePool;
+  // RÈGLE D'OR : "SOIT TU PRENDS LES TORRENTS PARFAITS SOIT TU FAIS RIEN"
+  // Élimination rigoureuse de tout ce qui n'a pas de son ou qui crash dans le navigateur :
+  const isPlayableInBrowser = (s) => {
+    if (enableAudioRemux) return true; // Si serveur avec transcodeur ffmpeg actif
+
+    // 1. Rejet strict des formats vidéo anciens non décodables nativement (AVI/XviD)
+    if (s.isAvi && !s.isTranscoded) return false;
+
+    // 2. Rejet strict de TOUT flux avec audio propriétaire inaudible dans le navigateur (Dolby Atmos, TrueHD, DTS, DDP, AC3)
+    if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
+
+    // 3. Rejet strict des MKV contenant du HEVC (H.265) que Chrome ne sait pas démultiplexer (code 4 MEDIA_ERR_SRC_NOT_SUPPORTED)
+    if (s.isMkvHevcUnplayable) return false;
+
+    // 4. Pour les flux 4K (2160p) : Chrome n'accepte la 4K que si elle est dans un conteneur web parfait (MP4 ou AV1/WebM, ou H264 sans HEVC)
+    // avec audio web garanti sans aucun codec Dolby/DTS/Atmos !
+    if (s.tierKey === '4k') {
+      if (s.isH265 && !s.isMp4 && !s.isAv1) return false;
+      if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
+    }
+
+    return true;
+  };
+
+  const audioSafePool = basePool.filter(isPlayableInBrowser);
+  // Le pool valide ne contient STRICTEMENT que des torrents parfaits et jouables.
+  // Zéro piège muet, zéro 4K qui ne se lance pas !
+  const valid = (audioSafePool.length > 0) ? audioSafePool : basePool;
 
   if (valid.length === 0) {
     return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };
@@ -918,6 +953,20 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
           continue;
         }
 
+        const fStr = `${t.name || ''} ${fName}`.toLowerCase();
+        // Éliminer d'office les fichiers avec codec audio propriétaire inaudible (Dolby Atmos, TrueHD, DTS, DDP, AC3)
+        const hasBadAudio = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fStr);
+        if (hasBadAudio) continue;
+
+        // Éliminer les 4K non MP4 / non AV1 et les MKV HEVC qui crashent le navigateur
+        const is4k = /\b(?:4k|2160p|uhd)\b/i.test(fStr);
+        const isMp4 = fName.toLowerCase().endsWith('.mp4');
+        const isAv1 = /\b(?:av1|d?av1nci)\b/i.test(fStr);
+        if (is4k && !isMp4 && !isAv1) continue;
+        const isMkv = fName.toLowerCase().endsWith('.mkv');
+        const isHevc = /\b(?:hevc|x265|h\.?265|10bit)\b/i.test(fStr);
+        if (isMkv && isHevc && !isAv1) continue;
+
         candidateFiles.push({ torrent: t, file: f, fName, size: Number(f.size) || 0 });
       }
     }
@@ -962,9 +1011,10 @@ async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1
                 : /\b720p\b/i.test(metaStr) ? '720p'
                 : /\b(?:480p|dvdrip|xvid|divx)\b/i.test(metaStr) ? '480p'
                 : '';
+              const hasFr = /\b(french|truefrench|vff|vfq|vf|vf2|audio\.fr|vf\.hd|fr-en|multi)\b/i.test(metaStr);
               return {
                 name: `[TB+] Torbox Cloud${inferredRes ? `\n${inferredRes}` : ''}`,
-                title: `${fName}\n👤 1 💾 ${sizeGb} ⚙️ Ma Bibliothèque TorBox\n🇫🇷`,
+                title: `${t.name || fName}\n${fName}\n👤 1 💾 ${sizeGb} ⚙️ Ma Bibliothèque TorBox${hasFr ? '\n🇫🇷' : ''}`,
                 url: safeDlUrl,
                 isTorboxLibrary: true
               };

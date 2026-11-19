@@ -264,11 +264,14 @@ export function AudioSubsPanel({
     const rawPlayable = (Array.isArray(streams) ? streams : [])
         .filter(st => !st.isDead && (st.isCached || st.verifiedReady) && !st.isDownloading && (!st.isAvi || st.isTranscoded));
     
-    // Règle d'or : Si des sources au son garanti (AAC/Opus/MP3) existent, éliminer strictement les sources muettes
-    const hasAudioSafe = rawPlayable.some(st => st.isWebAudioSafe || !st.hasUnsupportedAudio);
-    const playableStreams = hasAudioSafe
-        ? rawPlayable.filter(st => st.isWebAudioSafe || !st.hasUnsupportedAudio)
-        : rawPlayable;
+    // Règle d'or absolue : Ne proposer QUE des sources avec son et vidéo 100% compatibles navigateur
+    // Zéro piège 4K inaudible, zéro MKV HEVC qui plante, zéro codec Dolby/DTS muet
+    const playableStreams = rawPlayable.filter(st => {
+        if (st.hasUnsupportedAudio || !st.isWebAudioSafe) return false;
+        if (st.tierKey === '4k' && !st.isMp4 && !st.isAv1) return false;
+        if (st.isMkv && st.isH265 && !st.isAv1) return false;
+        return true;
+    });
     
     // Déduplication par label pour garantir que chaque bouton est unique et actionnable
     const distinctStreams = [];

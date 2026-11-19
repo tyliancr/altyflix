@@ -382,14 +382,23 @@ export default function NetflixPlayer({
                 resolvedKeyRef.current = streamKey;
                 if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
                 const rawStreams = res.streams || [];
-                // Éliminer toute source morte ou corrompue pour ne présenter que des options fonctionnelles
-                const streams = rawStreams.filter(s => !s.isDead);
+                // Éliminer toute source morte, inaudible (Dolby/Atmos/DTS) ou non compatible navigateur (MKV HEVC, 4K non MP4)
+                const isPlayableBrowser = (s) => {
+                    if (s.isDead) return false;
+                    if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
+                    if (s.tierKey === '4k' && !s.isMp4 && !s.isAv1) return false;
+                    if (s.isMkv && s.isH265 && !s.isAv1) return false;
+                    if (s.isAvi && !s.isTranscoded) return false;
+                    return true;
+                };
+                const safeStreams = rawStreams.filter(isPlayableBrowser);
+                const streams = safeStreams.length > 0 ? safeStreams : rawStreams.filter(s => !s.isDead);
                 setAvailableStreams(streams);
 
                 // 1. Identifier tous les flux réellement prêts (en cache et non en téléchargement)
-                const readyStreams = streams.filter(s => (s.isCached || s.verifiedReady) && !s.isDownloading);
+                const readyStreams = streams.filter(s => (s.isCached || s.verifiedReady) && !s.isDownloading && isPlayableBrowser(s));
 
-                let selectedStream = res.activeStream;
+                let selectedStream = isPlayableBrowser(res.activeStream) ? res.activeStream : (readyStreams[0] || streams[0] || res.activeStream);
 
                 // 2. RÈGLE D'OR NETFLIX : Si le flux actif est en cours de téléchargement alors qu'un flux prêt existe,
                 // bascule IMMÉDIATE sur le flux prêt pour garantir un démarrage de lecture instantané (< 1s) !
@@ -481,7 +490,7 @@ export default function NetflixPlayer({
         if (current) {
             failedStreamIdsRef.current.add(current.id || current.url);
         }
-        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead;
+        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !(s.tierKey === '4k' && !s.isMp4 && !s.isAv1) && !(s.isMkv && s.isH265 && !s.isAv1);
         // RÈGLE D'OR : On ne bascule QUE sur un autre flux RÉELLEMENT EN CACHE ET FONCTIONNEL.
         // On ne bascule JAMAIS sur un torrent en téléchargement pour éviter de bloquer l'utilisateur dans un spinner infini !
         const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
@@ -1597,7 +1606,7 @@ export default function NetflixPlayer({
             const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
-                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead;
+                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !(s.tierKey === '4k' && !s.isMp4 && !s.isAv1) && !(s.isMkv && s.isH265 && !s.isAv1);
                 const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench))
                     || (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
                 if (safe) {

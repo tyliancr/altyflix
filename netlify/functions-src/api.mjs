@@ -101,7 +101,7 @@ function makeJsonResponse(req) {
   };
 }
 
-export default async function handler(req) {
+async function handleRequest(req) {
   try {
     const corsOrigin = getCorsOrigin(req);
     const jsonResponse = makeJsonResponse(req);
@@ -526,3 +526,53 @@ export default async function handler(req) {
     });
   }
 }
+
+export default async function universalHandler(reqOrEvent, context) {
+  // Détection : Request Web Standard (Netlify v2) ou Event AWS Lambda (Netlify v1)
+  const isFetchApi = reqOrEvent && typeof reqOrEvent.text === 'function' && typeof reqOrEvent.headers?.get === 'function';
+  let request;
+  if (isFetchApi) {
+    request = reqOrEvent;
+  } else {
+    const event = reqOrEvent || {};
+    const method = event.httpMethod || 'GET';
+    const rawHeaders = event.headers || {};
+    const host = rawHeaders['host'] || 'altyflix.netlify.app';
+    const proto = rawHeaders['x-forwarded-proto'] || 'https';
+    const path = event.path || '/api';
+    const qs = event.rawQuery || (event.queryStringParameters ? new URLSearchParams(event.queryStringParameters).toString() : '');
+    const fullUrl = `${proto}://${host}${path}${qs ? `?${qs}` : ''}`;
+
+    const headers = new Headers();
+    for (const [k, v] of Object.entries(rawHeaders)) {
+      if (v != null) headers.set(k, String(v));
+    }
+    const body = (method !== 'GET' && method !== 'HEAD' && event.body)
+      ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64') : event.body)
+      : undefined;
+
+    request = new Request(fullUrl, { method, headers, body });
+  }
+
+  const response = await handleRequest(request, context);
+
+  if (isFetchApi) {
+    return response;
+  }
+
+  // AWS Lambda v1 format
+  const resHeaders = {};
+  response.headers.forEach((v, k) => { resHeaders[k] = v; });
+  const textBody = await response.text();
+
+  return {
+    statusCode: response.status,
+    headers: resHeaders,
+    body: textBody
+  };
+}
+
+export const handler = universalHandler;
+export const config = {
+  path: ["/api", "/api/*"]
+};

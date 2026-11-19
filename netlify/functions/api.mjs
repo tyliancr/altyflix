@@ -1688,7 +1688,7 @@ function makeJsonResponse(req) {
     });
   };
 }
-async function handler(req) {
+async function handleRequest(req) {
   try {
     const corsOrigin = getCorsOrigin(req);
     const jsonResponse = makeJsonResponse(req);
@@ -2075,7 +2075,49 @@ async function handler(req) {
     });
   }
 }
+async function universalHandler(reqOrEvent, context) {
+  const isFetchApi = reqOrEvent && typeof reqOrEvent.text === "function" && typeof reqOrEvent.headers?.get === "function";
+  let request;
+  if (isFetchApi) {
+    request = reqOrEvent;
+  } else {
+    const event = reqOrEvent || {};
+    const method = event.httpMethod || "GET";
+    const rawHeaders = event.headers || {};
+    const host = rawHeaders["host"] || "altyflix.netlify.app";
+    const proto = rawHeaders["x-forwarded-proto"] || "https";
+    const path = event.path || "/api";
+    const qs = event.rawQuery || (event.queryStringParameters ? new URLSearchParams(event.queryStringParameters).toString() : "");
+    const fullUrl = `${proto}://${host}${path}${qs ? `?${qs}` : ""}`;
+    const headers = new Headers();
+    for (const [k, v] of Object.entries(rawHeaders)) {
+      if (v != null) headers.set(k, String(v));
+    }
+    const body = method !== "GET" && method !== "HEAD" && event.body ? event.isBase64Encoded ? Buffer.from(event.body, "base64") : event.body : void 0;
+    request = new Request(fullUrl, { method, headers, body });
+  }
+  const response = await handleRequest(request, context);
+  if (isFetchApi) {
+    return response;
+  }
+  const resHeaders = {};
+  response.headers.forEach((v, k) => {
+    resHeaders[k] = v;
+  });
+  const textBody = await response.text();
+  return {
+    statusCode: response.status,
+    headers: resHeaders,
+    body: textBody
+  };
+}
+var handler = universalHandler;
+var config = {
+  path: ["/api", "/api/*"]
+};
 export {
-  handler as default,
-  getStreamBackendUrl
+  config,
+  universalHandler as default,
+  getStreamBackendUrl,
+  handler
 };

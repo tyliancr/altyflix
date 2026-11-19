@@ -7,15 +7,16 @@
     "dev": "vite",
     "server": "node server/server-vf-api.cjs",
     "start": "node server/server-vf-api.cjs",
-    "build": "vite build",
+    "build:function": "node tools/bundle-function.mjs",
+    "build": "npm run build:function && vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "node --test tests/auth.test.js tests/security.test.js tests/stream-v1.test.js tests/streaming-engine.test.js tests/debrid-stream-resolver.test.js",
     "check:structure": "node tools/check-structure.mjs",
     "check": "npm run check:structure && npm run lint && npm test && npm run build",
     "bench:stream": "node tools/bench-stream.mjs",
-    "deploy": "npm run build && npx netlify deploy --prod --dir=dist",
-    "deploy:preview": "npm run build && npx netlify deploy --dir=dist"
+    "deploy": "npm run build && npx netlify deploy --prod --dir=dist --functions=netlify/functions",
+    "deploy:preview": "npm run build && npx netlify deploy --dir=dist --functions=netlify/functions"
   },
   "dependencies": {
     "cors": "^2.8.6",

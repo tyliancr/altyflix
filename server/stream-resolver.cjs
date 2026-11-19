@@ -566,7 +566,7 @@ async function autoRepairTorboxTorrent(torrentioUrl, token) {
   const match = torrentioUrl.match(/\/resolve\/torbox\/[^/]+\/([a-fA-F0-9]{40})(?:\/([^/]+)\/(\d+))?/i);
   if (!match) return null;
   const hash = match[1];
-  const fileIndex = match[3] ? parseInt(match[3], 10) : 0;
+  let fileIndex = match[3] && match[3] !== 'undefined' ? parseInt(match[3], 10) : null;
 
   try {
     const form = new FormData();
@@ -581,6 +581,34 @@ async function autoRepairTorboxTorrent(torrentioUrl, token) {
     const data = await res.json();
     const newTorrentId = data.data?.torrent_id;
     if (!newTorrentId) return null;
+
+    // Toujours s'assurer de sélectionner le fichier vidéo principal (et non un sous-titre .srt ou .nfo)
+    try {
+      const listRes = await fetch(`https://api.torbox.app/v1/api/torrents/mylist?id=${newTorrentId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(3000)
+      });
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        const files = listData.data?.files || [];
+        if (Array.isArray(files) && files.length > 0) {
+          const videoFiles = files.filter(f => {
+            const name = (f.name || f.short_name || '').toLowerCase();
+            const mime = (f.mimetype || '').toLowerCase();
+            return mime.startsWith('video/') || /\.(?:mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(name);
+          });
+          const candidates = videoFiles.length > 0 ? videoFiles : files;
+          candidates.sort((a, b) => (b.size || 0) - (a.size || 0));
+          if (candidates[0]?.id !== undefined) {
+            fileIndex = candidates[0].id;
+          }
+        }
+      }
+    } catch {
+      // Conserver fileIndex existant
+    }
+
+    if (fileIndex === null || isNaN(fileIndex)) fileIndex = 0;
 
     const dlUrl = `https://api.torbox.app/v1/api/torrents/requestdl?token=${encodeURIComponent(token)}&torrent_id=${newTorrentId}&file_id=${fileIndex}&redirect=true`;
     const head = await fetch(dlUrl, {
@@ -683,7 +711,18 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
               if (token && safeStreamUrl.includes('/resolve/torbox/')) {
                 const repaired = await autoRepairTorboxTorrent(safeStreamUrl, token);
                 if (repaired) {
-                  const isAviRep = isLegacyContainerExt(repaired) || isLegacyContainerExt(knownFilename);
+                  let isAviRep = isLegacyContainerExt(repaired) || isLegacyContainerExt(knownFilename);
+                  if (!isAviRep) {
+                    try {
+                      const probeRep = await fetch(repaired, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(3000) });
+                      const cType = (probeRep.headers.get('content-type') || '').toLowerCase();
+                      const cDisp = (probeRep.headers.get('content-disposition') || '').toLowerCase();
+                      try { await probeRep.body?.cancel(); } catch {}
+                      if (isLegacyContainerMime(cType) || isLegacyContainerExt(cDisp)) {
+                        isAviRep = true;
+                      }
+                    } catch {}
+                  }
                   const canTranscodeRep = Boolean(isAviRep && enableAviTranscode);
                   const effectiveUrlRep = canTranscodeRep ? `/api/video-stream?url=${encodeURIComponent(repaired)}` : repaired;
                   return {
@@ -760,7 +799,18 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
     if (token && safeStreamUrl.includes('/resolve/torbox/')) {
       const repaired = await autoRepairTorboxTorrent(safeStreamUrl, token);
       if (repaired) {
-        const isAviRep = isLegacyContainerExt(repaired) || isLegacyContainerExt(knownFilename);
+        let isAviRep = isLegacyContainerExt(repaired) || isLegacyContainerExt(knownFilename);
+        if (!isAviRep) {
+          try {
+            const probeRep = await fetch(repaired, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(3000) });
+            const cType = (probeRep.headers.get('content-type') || '').toLowerCase();
+            const cDisp = (probeRep.headers.get('content-disposition') || '').toLowerCase();
+            try { await probeRep.body?.cancel(); } catch {}
+            if (isLegacyContainerMime(cType) || isLegacyContainerExt(cDisp)) {
+              isAviRep = true;
+            }
+          } catch {}
+        }
         const canTranscodeRep = Boolean(isAviRep && enableAviTranscode);
         const effectiveUrlRep = canTranscodeRep ? `/api/video-stream?url=${encodeURIComponent(repaired)}` : repaired;
         return {

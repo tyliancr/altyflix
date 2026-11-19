@@ -26,6 +26,9 @@ const autoBackendPlugin = () => ({
 
 // https://vite.dev/config/
 export default defineConfig({
+  resolve: {
+    preserveSymlinks: true
+  },
   server: {
     proxy: {
       '/api': {

@@ -15,8 +15,8 @@
     "check:structure": "node tools/check-structure.mjs",
     "check": "npm run check:structure && npm run lint && npm test && npm run build",
     "bench:stream": "node tools/bench-stream.mjs",
-    "deploy": "npm run build && npx netlify deploy --prod --dir=dist --functions=netlify/functions",
-    "deploy:preview": "npm run build && npx netlify deploy --dir=dist --functions=netlify/functions"
+    "deploy": "npm run build && npx --yes netlify-cli@17 deploy --prod --dir=dist --functions=netlify/functions",
+    "deploy:preview": "npm run build && npx --yes netlify-cli@17 deploy --dir=dist --functions=netlify/functions"
   },
   "dependencies": {
     "cors": "^2.8.6",

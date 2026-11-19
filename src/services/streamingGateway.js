@@ -216,7 +216,15 @@ function parseStreamDetails(stream) {
     const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(titleText) ||
         (hasFrenchFlag && !/\b(vostfr|subfrench)\b/i.test(mainReleaseName));
 
-    const isFrench = Boolean(hasFrenchInName || isTorrent9 || hasFrenchAudioInAudioLine || (hasFrenchFlag && !metaLines.includes('subfrench')));
+    const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(titleText) ||
+        /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) ||
+        /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) ||
+        /\b(?:dual.*(?:eng|en))\b/i.test(fullText);
+
+    // Détection des releases Russes ou étrangères où le français n'est pas en piste 0
+    const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
+
+    const isFrench = Boolean(!isEnglishPrimaryMulti && !isForeignPrimaryMulti && (hasFrenchInName || isTorrent9 || hasFrenchAudioInAudioLine || (hasFrenchFlag && !metaLines.includes('subfrench'))));
 
     // 2. SOUS-TITRES FRANÇAIS (VOSTFR)
     // Si la piste audio n'est pas VF mais que des sous-titres FR ou la mention VOSTFR sont présents
@@ -237,9 +245,10 @@ function parseStreamDetails(stream) {
     const hasDdp = /ddp|eac3|atmos/i.test(fullText);
     const hasDts = /dts/i.test(fullText);
     const hasAc3 = /\bac3\b/i.test(fullText);
+    const hasMultichannelSurround = /\b(?:7\.1|5\.1|8ch|6ch|surround)\b/i.test(fullText);
     const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fullText);
     const hasAtmosOrTrueHdOrDts = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x)\b)/i.test(fullText);
-    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus || hasFlac);
+    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSurround) || hasFlac);
 
     // Détection codec vidéo H.264 (universel) vs H.265/HEVC (incompatible sur certains navigateurs sans extension)
     const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
@@ -250,10 +259,11 @@ function parseStreamDetails(stream) {
     const isAvi = /\.avi(\?|$)/i.test(stream?.url || '') || /\.avi/i.test(filename) || /xvid|divx/i.test(fullText);
     const isMkv = /\.mkv(\?|$)/i.test(stream?.url || '') || /\.mkv/i.test(filename) || (!isMp4 && !isAvi);
 
-    // Audio 100% garanti sans coupure sonore dans le navigateur
-    const isWebAudioSafe = Boolean((hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts) || ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec));
+    // Audio 100% garanti sans coupure sonore dans le navigateur : Stéréo AAC/MP3, zéro surround muet
+    const isWebAudioSafe = Boolean((hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts && !hasMultichannelSurround) || 
+        ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSurround));
     const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-    const hasBadAudio = Boolean((hasUnsupportedAudioCodec && !hasExplicitWebAudio) || hasAtmosOrTrueHdOrDts || isMkvWithoutWebAudio);
+    const hasBadAudio = Boolean(hasUnsupportedAudioCodec || hasAtmosOrTrueHdOrDts || hasMultichannelSurround || isMkvWithoutWebAudio || !isWebAudioSafe);
 
     // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
     const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
@@ -365,15 +375,12 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
         if (s.isAvi && !s.isTranscoded) return false;
         if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
         if (s.isMkvHevcUnplayable) return false;
-        if (s.tierKey === '4k') {
-            if (s.isH265 && !s.isMp4 && !s.isAv1) return false;
-            if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
-        }
+        if (s.tierKey === '4k') return false;
         return true;
     };
 
     const audioSafePool = basePool.filter(isStreamPlayableInBrowser);
-    const valid = (audioSafePool.length > 0) ? audioSafePool : basePool;
+    const valid = (audioSafePool.length > 0) ? audioSafePool : basePool.filter(s => !s.isDead && s.tierKey !== '4k');
 
     if (valid.length === 0) return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false, anyCached: false };
 

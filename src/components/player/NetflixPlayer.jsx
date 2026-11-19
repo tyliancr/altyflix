@@ -382,17 +382,18 @@ export default function NetflixPlayer({
                 resolvedKeyRef.current = streamKey;
                 if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
                 const rawStreams = res.streams || [];
-                // Éliminer toute source morte, inaudible (Dolby/Atmos/DTS) ou non compatible navigateur (MKV HEVC, 4K non MP4)
+                // Éliminer toute source morte, inaudible (Dolby/Atmos/DTS/surround), 4K non exploitable ou non compatible navigateur (MKV HEVC)
                 const isPlayableBrowser = (s) => {
                     if (s.isDead) return false;
+                    if (s.tierKey === '4k') return false; // Jamais de 4K muet ou non sélectionnable
                     if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
-                    if (s.tierKey === '4k' && !s.isMp4 && !s.isAv1) return false;
-                    if (s.isMkv && s.isH265 && !s.isAv1) return false;
+                    if (/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`)) return false;
+                    if (s.isMkv && s.isH265) return false;
                     if (s.isAvi && !s.isTranscoded) return false;
                     return true;
                 };
                 const safeStreams = rawStreams.filter(isPlayableBrowser);
-                const streams = safeStreams.length > 0 ? safeStreams : rawStreams.filter(s => !s.isDead);
+                const streams = safeStreams.length > 0 ? safeStreams : rawStreams.filter(s => !s.isDead && s.tierKey !== '4k');
                 setAvailableStreams(streams);
 
                 // 1. Identifier tous les flux réellement prêts (en cache et non en téléchargement)
@@ -407,7 +408,6 @@ export default function NetflixPlayer({
                         const bestReady = readyStreams.find(s => s.isFrench && s.tierKey === '1080p')
                                        || readyStreams.find(s => s.isFrench)
                                        || readyStreams.find(s => s.tierKey === '1080p')
-                                       || readyStreams.find(s => s.tierKey === '4k')
                                        || readyStreams[0];
                         if (bestReady) {
                             console.log('[Altyflix Player] Flux par défaut en téléchargement -> Bascule instantanée sur le flux prêt :', bestReady.qualityLabel);
@@ -490,7 +490,7 @@ export default function NetflixPlayer({
         if (current) {
             failedStreamIdsRef.current.add(current.id || current.url);
         }
-        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !(s.tierKey === '4k' && !s.isMp4 && !s.isAv1) && !(s.isMkv && s.isH265 && !s.isAv1);
+        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && s.tierKey !== '4k' && !(s.isMkv && s.isH265) && !/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
         // RÈGLE D'OR : On ne bascule QUE sur un autre flux RÉELLEMENT EN CACHE ET FONCTIONNEL.
         // On ne bascule JAMAIS sur un torrent en téléchargement pour éviter de bloquer l'utilisateur dans un spinner infini !
         const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
@@ -1606,7 +1606,7 @@ export default function NetflixPlayer({
             const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
-                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !(s.tierKey === '4k' && !s.isMp4 && !s.isAv1) && !(s.isMkv && s.isH265 && !s.isAv1);
+                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && s.tierKey !== '4k' && !(s.isMkv && s.isH265) && !/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
                 const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench))
                     || (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
                 if (safe) {

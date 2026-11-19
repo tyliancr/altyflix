@@ -265,11 +265,12 @@ export function AudioSubsPanel({
         .filter(st => !st.isDead && (st.isCached || st.verifiedReady) && !st.isDownloading && (!st.isAvi || st.isTranscoded));
     
     // Règle d'or absolue : Ne proposer QUE des sources avec son et vidéo 100% compatibles navigateur
-    // Zéro piège 4K inaudible, zéro MKV HEVC qui plante, zéro codec Dolby/DTS muet
+    // Zéro piège 4K inaudible ou non sélectionnable, zéro MKV HEVC qui plante, zéro codec Dolby/DTS/surround muet
     const playableStreams = rawPlayable.filter(st => {
         if (st.hasUnsupportedAudio || !st.isWebAudioSafe) return false;
-        if (st.tierKey === '4k' && !st.isMp4 && !st.isAv1) return false;
-        if (st.isMkv && st.isH265 && !st.isAv1) return false;
+        if (st.tierKey === '4k') return false; // Jamais de bouton 4K inexploitable ou muet
+        if (st.isMkv && st.isH265) return false;
+        if (/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${st.rawTitle || ''} ${st.filename || ''}`)) return false;
         return true;
     });
     

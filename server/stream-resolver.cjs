@@ -223,7 +223,19 @@ function parseStreamDetails(stream) {
   const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle) ||
     (hasFrenchFlag && !isExplicitVostfr);
 
-  const isFrench = Boolean(hasFrenchInName || isTorrent9 || hasFrenchAudioInAudioLine || (hasFrenchFlag && !isExplicitVostfr));
+  // Détection des releases Multi où l'anglais est sur Track 0 :
+  // Ex: "EN/ITA/FR/ES", "EN/FR", "EN/ES", "English/French", "Multi5", "Multi7"
+  // Dans le lecteur HTML5 du navigateur, le démultiplexeur natif joue systématiquement la piste 0.
+  // Une release où l'anglais est en piste 0 ne doit JAMAIS être labellisée comme "Français" !
+  const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(rawTitle) ||
+    /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) ||
+    /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) ||
+    /\b(?:dual.*(?:eng|en))\b/i.test(fullText);
+
+  // Détection des releases Russes ou étrangères où le français n'est pas en piste 0
+  const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
+
+  const isFrench = Boolean(!isEnglishPrimaryMulti && !isForeignPrimaryMulti && (hasFrenchInName || isTorrent9 || hasFrenchAudioInAudioLine || (hasFrenchFlag && !isExplicitVostfr)));
   const isVostfr = !isFrench && (
     hasFrenchFlag ||
     /\b(vostfr|subfrench|vost)\b/i.test(fullText) ||
@@ -241,22 +253,28 @@ function parseStreamDetails(stream) {
   const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
   const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
 
-  // Détection audio : codecs compatibles navigateur (AAC / MP3 / Opus / FLAC) vs codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD / Atmos)
+  // Détection audio : codecs compatibles navigateur (AAC / MP3 / Opus stéréo / FLAC) vs multicanal surround (7.1, 8ch, Opus multicanal) et codecs silencieux dans Chrome (AC3 / EAC3 / DTS / TrueHD / Atmos)
   const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasMp3 = /\bmp3\b/i.test(fullText);
   const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
   const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st)\b/i.test(fullText);
   
+  // Multicanal 7.1 / 8ch ou Opus multicanal sortant muet sans downmix matériel sur PC / navigateur
+  const has71Or8ch = /\b(?:7\.1|8ch)\b/i.test(fullText);
+  const hasOpusMultichannel = /\bopus(?:\s*\.?\s*[57]\.?[01]|\s*\.?\s*[68]ch)\b/i.test(fullText) || (hasOpus && /\b(?:5\.1|6ch|7\.1|8ch)\b/i.test(fullText));
+  const hasMultichannelSilence = has71Or8ch || hasOpusMultichannel;
+
   const hasUnsupportedAudioCodec = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01]|dts(?:-?hd)?|dts-?x|truehd|atmos|lpcm)\b)/i.test(fullText);
   const hasAtmosOrTrueHdOrDts = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x)\b)/i.test(fullText);
-  const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus || hasFlac);
+  const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac);
 
-  // Son 100 % garanti dans le navigateur : Un flux avec AAC/Opus/MP3 reste web-safe sauf si Atmos/TrueHD/DTS prend Track 0
-  const isWebAudioSafe = Boolean((hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts) || ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec));
-  // Un flux a un son non supporté s'il a un codec propriétaire sans AAC, ou s'il a Atmos/TrueHD/DTS, ou si c'est un MKV sans codec web explicite
+  // Son 100 % garanti dans le navigateur : Stéréo AAC/MP3, zéro codec multicanal surround inaudible
+  const isWebAudioSafe = Boolean((hasExplicitWebAudio && !hasAtmosOrTrueHdOrDts && !hasMultichannelSilence) || 
+    ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSilence));
+  // Un flux a un son non supporté s'il a un codec propriétaire sans AAC, ou s'il a Atmos/TrueHD/DTS/7.1, ou si c'est un MKV sans codec web explicite
   const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-  const hasUnsupportedAudio = Boolean((hasUnsupportedAudioCodec && !hasExplicitWebAudio) || hasAtmosOrTrueHdOrDts || isMkvWithoutWebAudio);
+  const hasUnsupportedAudio = Boolean((hasUnsupportedAudioCodec && !hasExplicitWebAudio) || hasAtmosOrTrueHdOrDts || hasMultichannelSilence || isMkvWithoutWebAudio || !isWebAudioSafe);
 
   // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
   const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
@@ -373,24 +391,27 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   const basePool = (isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some(s => s.isCached))) ? movieHdPool : validAll;
 
   // RÈGLE D'OR : "SOIT TU PRENDS LES TORRENTS PARFAITS SOIT TU FAIS RIEN"
-  // Élimination rigoureuse de tout ce qui n'a pas de son ou qui crash dans le navigateur :
+  // Élimination rigoureuse de tout ce qui n'a pas de son ou qui plante dans le navigateur :
   const isPlayableInBrowser = (s) => {
-    if (enableAudioRemux) return true; // Si serveur avec transcodeur ffmpeg actif
-
     // 1. Rejet strict des formats vidéo anciens non décodables nativement (AVI/XviD)
     if (s.isAvi && !s.isTranscoded) return false;
 
-    // 2. Rejet strict de TOUT flux avec audio propriétaire inaudible dans le navigateur (Dolby Atmos, TrueHD, DTS, DDP, AC3)
-    if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
+    // 2. Rejet strict de TOUT flux avec audio propriétaire ou multicanal inaudible dans le navigateur (Dolby Atmos, TrueHD, DTS, DDP, AC3, 7.1, 5.1) si aucun serveur de remuxage n'est actif
+    if (!enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe)) return false;
 
     // 3. Rejet strict des MKV contenant du HEVC (H.265) que Chrome ne sait pas démultiplexer (code 4 MEDIA_ERR_SRC_NOT_SUPPORTED)
     if (s.isMkvHevcUnplayable) return false;
 
-    // 4. Pour les flux 4K (2160p) : Chrome n'accepte la 4K que si elle est dans un conteneur web parfait (MP4 ou AV1/WebM, ou H264 sans HEVC)
-    // avec audio web garanti sans aucun codec Dolby/DTS/Atmos !
+    // 4. RÈGLE D'OR POUR LA 4K (2160p) :
+    // La 4K dans un navigateur sans transcodeur ffmpeg distant est STRICTEMENT INTERDITE sauf si :
+    // - Format MP4 Web natif (aucun conteneur MKV, aucun AV1/HEVC non supporté nativement)
+    // - Audio stéréo AAC Web natif (aucun codec 7.1/Atmos/TrueHD/DTS/Opus multicanal)
+    // - Piste audio française garantie en Track 0 (zéro multi anglais en premier)
     if (s.tierKey === '4k') {
-      if (s.isH265 && !s.isMp4 && !s.isAv1) return false;
+      if (!s.isMp4) return false;
+      if (s.isH265 || s.isAv1) return false;
       if (s.hasUnsupportedAudio || !s.isWebAudioSafe) return false;
+      if (/\b(?:7\.1|5\.1|8ch|6ch|opus|dolby\s*vision|\bdv\b)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`)) return false;
     }
 
     return true;
@@ -399,7 +420,7 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   const audioSafePool = basePool.filter(isPlayableInBrowser);
   // Le pool valide ne contient STRICTEMENT que des torrents parfaits et jouables.
   // Zéro piège muet, zéro 4K qui ne se lance pas !
-  const valid = (audioSafePool.length > 0) ? audioSafePool : basePool;
+  const valid = (audioSafePool.length > 0) ? audioSafePool : basePool.filter(s => !s.isDead);
 
   if (valid.length === 0) {
     return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };
@@ -418,14 +439,14 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
 
     // 2. Qualité vidéo : 1080p / 4K fortement privilégiés (1080p minimum sur les films)
     if (st.tierKey === '1080p') score += 45000;
-    else if (st.tierKey === '4k') score += 42000;
+    else if (st.tierKey === '4k') score += 20000;
     else if (st.tierKey === '720p') score += isMovie ? -40000 : 10000;
     else score += isMovie ? -80000 : 0;
 
     // 3. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
     // Sans remux FFmpeg (ex: Netlify serverless), un flux AC3/DTS est muet -> pénalité massive pour privilégier AAC/Opus
-    if (st.isWebAudioSafe) score += enableAudioRemux ? 25000 : 55000;
-    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 35000 : 95000;
+    if (st.isWebAudioSafe) score += enableAudioRemux ? 10000 : 55000;
+    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 14000 : 95000;
 
     // 4. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
     if (preferVo) {
@@ -1436,31 +1457,24 @@ async function resolveStreamsServer({
       if (!supportsAc3) {
         return list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
                list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
                list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
                list.find(s => isPlayableFormat(s)) ||
                list[0];
       }
       return list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
              list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-             list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
              list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
              list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
-             list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '4k') ||
              list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
-             list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
              list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
              list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
              list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-             list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
              list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
              list.find(s => isPlayableFormat(s)) ||
              list[0];

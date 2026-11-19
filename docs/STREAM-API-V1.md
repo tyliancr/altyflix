@@ -80,5 +80,4 @@ Reproduire avec `npm run check`, `npm run bench:stream` puis `npm run test:e2e:s
 - `tests/security.test.js`
 - `tests/stream-v1.test.js`
 - `tools/bench-stream.mjs`
-- `tools/e2e-stream.mjs`
 - `vite.config.js`

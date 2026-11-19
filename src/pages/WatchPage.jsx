@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
 import NetflixPlayer from '../components/player/NetflixPlayer';
 import { useProfile } from '../contexts/ProfileContext';
 import { getMovieDetails, getSeriesDetails } from '../services/tmdb';
@@ -12,6 +12,7 @@ import { getMovieDetails, getSeriesDetails } from '../services/tmdb';
 export default function WatchPage() {
     const { id } = useParams();
     const [searchParams] = useSearchParams();
+    const location = useLocation();
     const navigate = useNavigate();
     const { watchHistory, addToHistory } = useProfile();
     const watchHistoryRef = useRef(watchHistory);
@@ -21,6 +22,9 @@ export default function WatchPage() {
     const tmdbId = id ? id.replace(/^(movie|tv)-/, '') : '';
     const urlSeasonParam = searchParams.get('s');
     const urlEpisodeParam = searchParams.get('e');
+
+    const stateContent = location.state?.content || location.state;
+    const initialTitle = stateContent?.title || stateContent?.name || '';
 
     // Figer la saison/épisode initiaux par route afin qu'une mise à jour de watchHistory
     // (ex: passage à l'épisode suivant dans NetflixPlayer) ne démonte jamais le lecteur !
@@ -44,32 +48,27 @@ export default function WatchPage() {
     const [content, setContent] = useState(() => ({
         id: tmdbId,
         contentId: tmdbId,
-        title: '',
+        title: initialTitle,
         type: isTv ? 'tv' : 'movie',
-        media_type: isTv ? 'tv' : 'movie'
+        media_type: isTv ? 'tv' : 'movie',
+        ...(stateContent && typeof stateContent === 'object' ? stateContent : {})
     }));
 
     useEffect(() => {
         if (!tmdbId) return;
         let active = true;
-        setContent({
-            id: tmdbId,
-            contentId: tmdbId,
-            title: '',
-            type: isTv ? 'tv' : 'movie',
-            media_type: isTv ? 'tv' : 'movie'
-        });
         const fetcher = isTv ? getSeriesDetails(tmdbId) : getMovieDetails(tmdbId);
         fetcher
             .then(data => {
                 if (active && data) {
-                    setContent({
+                    setContent(prev => ({
+                        ...(prev || {}),
                         ...data,
                         id: tmdbId,
                         contentId: tmdbId,
                         type: isTv ? 'tv' : 'movie',
                         media_type: isTv ? 'tv' : 'movie'
-                    });
+                    }));
                 }
             })
             .catch(() => {});

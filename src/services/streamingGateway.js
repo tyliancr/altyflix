@@ -635,7 +635,7 @@ export async function resolvePlaybackStreams({
             headers['x-frenchio-url'] = config.frenchioUrl;
         }
 
-        const reqSig = createTimeoutSignal(10000, callerSignal);
+        const reqSig = createTimeoutSignal(18000, callerSignal);
         console.log(`[Altyflix Stream Resolver] Résolution sécurisée via backend pour ${type} ${imdbId}...`);
         let serverRes;
         try {
@@ -790,7 +790,7 @@ export async function resolvePlaybackStreams({
 export async function pollStreamStatus({
     streamUrl,
     signal,
-    maxAttempts = 40,
+    maxAttempts = 8,
     intervalMs = 2500,
     onProgress = () => {}
 }) {

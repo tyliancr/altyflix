@@ -260,8 +260,23 @@ export function AudioSubsPanel({
     subtitlesAlwaysOn,
     onToggleAlwaysOn
 }) {
-    const showSources = Array.isArray(streams) && streams.length > 1;
-    const hasVo = Array.isArray(streams) && streams.some(s =>
+    // Ne proposer QUE des sources réellement prêtes, en cache, fonctionnelles et non mortes
+    const playableStreams = (Array.isArray(streams) ? streams : [])
+        .filter(st => !st.isDead && (st.isCached || st.verifiedReady) && !st.isDownloading && (!st.isAvi || st.isTranscoded));
+    
+    // Déduplication par label pour garantir que chaque bouton est unique et actionnable
+    const distinctStreams = [];
+    const seenLabels = new Set();
+    for (const st of playableStreams) {
+        const lbl = streamLabel(st);
+        if (!seenLabels.has(lbl)) {
+            seenLabels.add(lbl);
+            distinctStreams.push(st);
+        }
+    }
+
+    const showSources = distinctStreams.length > 1;
+    const hasVo = distinctStreams.some(s =>
         !s.isFrench || /\bmulti\b|multi\s*audio/i.test(`${s.filename || ''} ${s.rawTitle || ''}`)
     );
     return (
@@ -297,7 +312,7 @@ export function AudioSubsPanel({
                 <section className="mt-4 border-t border-white/[0.08] pt-3.5">
                     <SectionTitle>Qualité vidéo</SectionTitle>
                     <div className="mt-2 flex flex-wrap gap-1.5 px-1">
-                        {streams.map(st => {
+                        {distinctStreams.map(st => {
                             const selected = activeStream?.id != null ? activeStream.id === st.id : activeStream?.url === st.url;
                             return (
                                 <button
@@ -305,7 +320,7 @@ export function AudioSubsPanel({
                                     type="button"
                                     aria-pressed={selected}
                                     onClick={() => onSelectStream(st)}
-                                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer ${
+                                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer active:scale-95 ${
                                         selected
                                             ? 'bg-white text-black shadow-sm'
                                             : 'bg-white/[0.08] text-white/75 hover:bg-white/[0.15] hover:text-white'

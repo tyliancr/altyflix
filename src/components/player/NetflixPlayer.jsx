@@ -366,7 +366,9 @@ export default function NetflixPlayer({
             if (res.success && res.activeStream) {
                 resolvedKeyRef.current = streamKey;
                 if (res.imdbId) resolvedImdbIdRef.current = res.imdbId;
-                const streams = res.streams || [];
+                const rawStreams = res.streams || [];
+                // Éliminer toute source morte ou corrompue pour ne présenter que des options fonctionnelles
+                const streams = rawStreams.filter(s => !s.isDead);
                 setAvailableStreams(streams);
 
                 // 1. Identifier tous les flux réellement prêts (en cache et non en téléchargement)
@@ -462,10 +464,10 @@ export default function NetflixPlayer({
         if (current) {
             failedStreamIdsRef.current.add(current.id || current.url);
         }
-        const isSafeToPlay = (s) => !s.isAvi || s.isTranscoded;
-        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s))
-                        || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && isSafeToPlay(s))
-                        || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url));
+        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead;
+        // RÈGLE D'OR : On ne bascule QUE sur un autre flux RÉELLEMENT EN CACHE ET FONCTIONNEL.
+        // On ne bascule JAMAIS sur un torrent en téléchargement pour éviter de bloquer l'utilisateur dans un spinner infini !
+        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
         if (!nextStream) {
             setErrorMessage('La lecture de cette vidéo a rencontré un problème. Veuillez réessayer plus tard.');
             setStreamState('error');
@@ -1104,6 +1106,8 @@ export default function NetflixPlayer({
     const handleSelectStream = (st) => {
         if (!st) return;
         setPanel(null);
+        failedStreamIdsRef.current.delete(st.id || st.url);
+        setErrorMessage('');
         if (st.id === activeStream?.id && st.url === activeStream?.url) {
             if (streamState === 'error' || streamState === 'resolving' || streamState === 'downloading') {
                 if (st.isCached && !st.isDownloading) {

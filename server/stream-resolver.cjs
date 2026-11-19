@@ -76,6 +76,47 @@ function isAllowedUrl(urlStr) {
 }
 
 /**
+ * Extrait les mots-clés significatifs d'un titre pour filtrer les faux positifs
+ */
+function extractTitleKeywords(title) {
+  if (!title || typeof title !== 'string') return [];
+  const clean = title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .trim();
+  const STOPWORDS = new Set([
+    'le', 'la', 'les', 'l', 'un', 'une', 'des', 'du', 'de', 'd',
+    'the', 'a', 'an', 'and', 'et', 'in', 'en', 'of', 'for', 'pour',
+    'to', 'a', 'on', 'sur', 'with', 'avec', 'par', 'by', 'movie', 'film',
+    'saison', 'season', 'episode', 'part', 'partie', 'complete', 'integrale'
+  ]);
+  return clean.split(/\s+/).filter(w => w.length >= 2 && !STOPWORDS.has(w));
+}
+
+/**
+ * Vérifie si un nom de torrent est pertinent par rapport au titre recherché
+ */
+function isTorrentRelevantToTitle(torrentText, cleanTitle) {
+  if (!cleanTitle || typeof cleanTitle !== 'string' || cleanTitle.trim().length < 2) return true;
+  const keywords = extractTitleKeywords(cleanTitle);
+  if (keywords.length === 0) return true;
+
+  const normalizedTorrent = String(torrentText || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ' ');
+
+  return keywords.some(kw => {
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+    return regex.test(normalizedTorrent);
+  });
+}
+
+/**
  * Extrait les octets depuis une chaîne (ex: '2.19 GB')
  */
 function parseBytes(str) {
@@ -256,13 +297,18 @@ function parseStreamDetails(stream) {
 /**
  * Système de score et curation des flux vidéo
  */
-function curateStreams(rawStreams, provider, { enableAviTranscode = true, enableAudioRemux = enableAviTranscode, preferredLang = 'vf', contentType = 'movie' } = {}) {
+function curateStreams(rawStreams, provider, { enableAviTranscode = true, enableAudioRemux = enableAviTranscode, preferredLang = 'vf', contentType = 'movie', cleanTitle = '' } = {}) {
   const preferVo = String(preferredLang || '').toLowerCase() === 'vo' || String(preferredLang || '').toLowerCase() === 'vostfr';
   const isMovie = String(contentType || 'movie').toLowerCase() !== 'tv';
   const isHd1080Plus = (s) => s.tierKey === '1080p' || s.tierKey === '4k';
 
   const validAll = rawStreams
-    .filter(s => typeof s.url === 'string' && normalizeAllowedUrl(s.url) !== null && !isTorrentioErrorStream(s))
+    .filter(s => {
+      if (typeof s.url !== 'string' || normalizeAllowedUrl(s.url) === null || isTorrentioErrorStream(s)) return false;
+      const combined = `${s.filename || ''} ${s.title || ''} ${s.name || ''}`;
+      if (cleanTitle && !isTorrentRelevantToTitle(combined, cleanTitle)) return false;
+      return true;
+    })
     .map((s, idx) => {
       const normalizedUrl = normalizeAllowedUrl(s.url);
       const details = parseStreamDetails(s);
@@ -326,8 +372,8 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
 
     // 3. Audio compatible navigateur HTML5 (AAC / MP3 / Opus) vs codecs silencieux (AC3 / EAC3 / DTS / TrueHD)
     // Sans remux FFmpeg (ex: Netlify serverless), un flux AC3/DTS est muet -> pénalité massive pour privilégier AAC/Opus
-    if (st.isWebAudioSafe) score += enableAudioRemux ? 25000 : 45000;
-    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 35000 : 85000;
+    if (st.isWebAudioSafe) score += enableAudioRemux ? 25000 : 55000;
+    if (st.hasUnsupportedAudio) score -= enableAudioRemux ? 35000 : 95000;
 
     // 4. Langue préférée (VF par défaut, ou VO/VOSTFR si demandé)
     if (preferVo) {
@@ -342,9 +388,9 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     if (st.isHighQualitySource) score += 18000;
 
     // 6. Doublage français de référence : VFF / TRUEFRENCH
-    if (st.isPureFrench) score += 20000;
-    // Une vraie release VF sans MULTI a une seule piste sonore -> zéro risque que la piste anglaise démarre par défaut
-    if (st.isFrench && !st.isMulti) score += 6000;
+    if (st.isPureFrench) score += 30000;
+    // Une vraie release VF sans MULTI a une seule piste sonore -> son français garanti à 100% au lancement
+    if (st.isFrench && !st.isMulti) score += 15000;
     if (st.isProper) score += 5000;
     if (st.isTrustedGroup) score += 8000;
 
@@ -352,7 +398,7 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     if (st.isH264) score += 12000;
     if (st.isH265) score -= 15000;
     if (st.isMp4) score += 3000;
-    if (st.isAvi && !enableAviTranscode) score -= 250000;
+    if (st.isAvi && !enableAviTranscode) score -= 400000;
 
     // 8. Poids adapté à la bande passante (sweet spot streaming 1.2 - 4.5 Go en 1080p)
     const gb = st.sizeBytes / (1024 * 1024 * 1024);
@@ -397,7 +443,6 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
       scored.find(s => s.isCached);
     defaultActive = cachedPreferred || scored[0];
   } else {
-    // Si aucun n'est en cache, on prend le meilleur disponible (langue préférée + audio garanti prioritaire)
     defaultActive =
       scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '1080p') ||
       scored.find(s => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === '4k') ||
@@ -411,13 +456,12 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
       scored[0];
   }
 
-  // Sélection intelligente par palier de qualité (4K, 1080p, 720p, 480p) et langue (VF / VO)
-  // Évite d'avoir 6 doublons en 1080p et garantit un vrai choix de qualité dans le lecteur
+  // Sélection intelligente par palier de qualité (4K, 1080p, 720p) et langue (VF / VO)
+  // Évite les doublons identiques et garantit des boutons de qualité clairs et fonctionnels dans le lecteur
   const selectedList = [];
   const seenKeys = new Set();
   const seenIds = new Set();
 
-  // Toujours inclure le flux actif par défaut
   if (defaultActive) {
     const activeKey = `${defaultActive.tierKey}:${defaultActive.isFrench ? 'vf' : (defaultActive.isVostfr ? 'vostfr' : 'vo')}`;
     seenKeys.add(activeKey);
@@ -425,7 +469,6 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     selectedList.push(defaultActive);
   }
 
-  // Garantir la présence d'au moins une VF et au moins une VO dans les choix du lecteur
   const ensureLangSlot = (predicate) => {
     if (selectedList.some(predicate)) return;
     const candidate =
@@ -455,15 +498,19 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     }
   }
 
-  // 2e passage : Si moins de 4 choix, compléter avec des alternatives en cache (fallback audio/source)
+  // 2e passage : Alternatives avec codec sonore distinct (AAC web vs AC3) si moins de 4 choix
   for (const s of scored) {
     if (selectedList.length >= 4) break;
     if (seenIds.has(s.id)) continue;
-    seenIds.add(s.id);
-    selectedList.push(s);
+    const keyWithAudio = `${s.tierKey}:${s.isFrench ? 'vf' : (s.isVostfr ? 'vostfr' : 'vo')}:${s.isWebAudioSafe ? 'aac' : 'other'}`;
+    if (!seenKeys.has(keyWithAudio)) {
+      seenKeys.add(keyWithAudio);
+      seenIds.add(s.id);
+      selectedList.push(s);
+    }
   }
 
-  // Tri propre pour l'interface : Flux en cache D'ABORD (priorité absolue), puis 4K -> 1080p -> 720p -> 480p, puis VF avant VO
+  // Tri propre : Flux en cache D'ABORD, puis 4K -> 1080p -> 720p, puis VF avant VO
   const tierOrder = { '4k': 0, '1080p': 1, '720p': 2, '480p': 3 };
   selectedList.sort((a, b) => {
     if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
@@ -512,13 +559,59 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
 }
 
 /**
+ * Tente de réparer un flux Torrentio/TorBox dont le torrent_id est orphelin/expiré en l'attachant au compte TorBox
+ */
+async function autoRepairTorboxTorrent(torrentioUrl, token) {
+  if (!torrentioUrl || !token) return null;
+  const match = torrentioUrl.match(/\/resolve\/torbox\/[^/]+\/([a-fA-F0-9]{40})(?:\/([^/]+)\/(\d+))?/i);
+  if (!match) return null;
+  const hash = match[1];
+  const fileIndex = match[3] ? parseInt(match[3], 10) : 0;
+
+  try {
+    const form = new FormData();
+    form.append('magnet', `magnet:?xt=urn:btih:${hash}`);
+    const res = await fetch('https://api.torbox.app/v1/api/torrents/createtorrent', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+      signal: AbortSignal.timeout(3500)
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const newTorrentId = data.data?.torrent_id;
+    if (!newTorrentId) return null;
+
+    const dlUrl = `https://api.torbox.app/v1/api/torrents/requestdl?token=${encodeURIComponent(token)}&torrent_id=${newTorrentId}&file_id=${fileIndex}&redirect=true`;
+    const head = await fetch(dlUrl, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3500)
+    });
+    if (head.status >= 300 && head.status < 400 && head.headers.get('location')) {
+      const loc = head.headers.get('location');
+      return normalizeAllowedUrl(loc) || dlUrl;
+    }
+    if (head.status === 200) {
+      return dlUrl;
+    }
+  } catch (err) {
+    console.warn('[Altyflix Stream Resolver] Échec auto-repair TorBox :', err.message);
+  }
+  return null;
+}
+
+/**
  * Vérifie le statut réel d'un lien Torrentio de débridage (détection directe sans CORS)
  */
-async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTranscode = true } = {}) {
+async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTranscode = true, token = '' } = {}) {
   const safeStreamUrl = normalizeAllowedUrl(streamUrl);
   if (!safeStreamUrl) {
-    return { success: false, status: 'error', statusCode: 400, error: 'Hôte non autorisé pour la vérification.' };
+    return { success: false, status: 'error', isDead: true, statusCode: 400, error: 'Hôte non autorisé pour la vérification.' };
   }
+
+  const isLegacyContainerExt = (str) => /\.(?:avi|wmv|flv|vob|mpe?g|divx)(?:["';?\s]|$)/i.test(String(str || ''));
+  const isLegacyContainerMime = (ct) => /msvideo|avi|x-ms-wmv|video\/mpeg|x-flv/i.test(String(ct || ''));
 
   try {
     const res = await fetch(safeStreamUrl, {
@@ -535,11 +628,11 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
       try {
         resolvedLocation = normalizeAllowedUrl(new URL(location, safeStreamUrl).toString());
       } catch {
-        return { success: false, status: 'error', statusCode: 502, error: 'Redirection invalide.' };
+        return { success: false, status: 'error', isDead: true, statusCode: 502, error: 'Redirection invalide.' };
       }
 
       if (!resolvedLocation) {
-        return { success: false, status: 'error', statusCode: 403, error: 'Hôte de redirection non autorisé.' };
+        return { success: false, status: 'error', isDead: true, statusCode: 403, error: 'Hôte de redirection non autorisé.' };
       }
 
       if (isDownloadingUrl(resolvedLocation)) {
@@ -553,8 +646,6 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
       }
 
       // Inspection multi-sauts (Torrentio -> api.torbox.app 307 -> CDN) pour détecter les conteneurs non HTML5 (.avi/.wmv/.mpg/.flv)
-      const isLegacyContainerExt = (str) => /\.(?:avi|wmv|flv|vob|mpe?g|divx)(?:["';?\s]|$)/i.test(String(str || ''));
-      const isLegacyContainerMime = (ct) => /msvideo|avi|x-ms-wmv|video\/mpeg|x-flv/i.test(String(ct || ''));
       let isAvi = isLegacyContainerExt(resolvedLocation) || isLegacyContainerExt(knownFilename);
       const isModernKnownContainer = /\.(mp4|mkv|webm|m4v|mov)(?:["';?\s]|$)/i.test(knownFilename || resolvedLocation);
       if (!isAvi && !isModernKnownContainer) {
@@ -569,7 +660,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
               try { await headTarget.body?.cancel(); } catch {}
               const resolvedNext = normalizeAllowedUrl(new URL(nextLoc, safeProbe).toString());
               if (!resolvedNext) {
-                return { success: false, status: 'error', statusCode: 403, error: 'Hôte de redirection non autorisé.' };
+                return { success: false, status: 'error', isDead: true, statusCode: 403, error: 'Hôte de redirection non autorisé.' };
               }
               if (isDownloadingUrl(resolvedNext)) {
                 return {
@@ -588,9 +679,28 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
             const cDisp = (headTarget.headers.get('content-disposition') || '').toLowerCase();
             try { await headTarget.body?.cancel(); } catch {}
             if (headTarget.status >= 400) {
+              // Tentative de réparation automatique si TorBox a renvoyé 500 sur un torrent_id orphelin
+              if (token && safeStreamUrl.includes('/resolve/torbox/')) {
+                const repaired = await autoRepairTorboxTorrent(safeStreamUrl, token);
+                if (repaired) {
+                  const isAviRep = isLegacyContainerExt(repaired) || isLegacyContainerExt(knownFilename);
+                  const canTranscodeRep = Boolean(isAviRep && enableAviTranscode);
+                  const effectiveUrlRep = canTranscodeRep ? `/api/video-stream?url=${encodeURIComponent(repaired)}` : repaired;
+                  return {
+                    success: true,
+                    status: 'ready',
+                    ready: true,
+                    isAvi: isAviRep,
+                    isTranscoded: canTranscodeRep,
+                    playbackUrl: effectiveUrlRep,
+                    directUrl: repaired
+                  };
+                }
+              }
               return {
                 success: false,
                 status: 'error',
+                isDead: true,
                 statusCode: headTarget.status <= 599 ? headTarget.status : 502,
                 error: 'Flux indisponible.'
               };
@@ -629,8 +739,6 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
         };
       }
 
-      const isLegacyContainerExt = (str) => /\.(?:avi|wmv|flv|vob|mpe?g|divx)(?:["';?\s]|$)/i.test(String(str || ''));
-      const isLegacyContainerMime = (ct) => /msvideo|avi|x-ms-wmv|video\/mpeg|x-flv/i.test(String(ct || ''));
       const cType = (res.headers.get('content-type') || '').toLowerCase();
       const cDisp = (res.headers.get('content-disposition') || '').toLowerCase();
       const isAvi = isLegacyContainerExt(safeStreamUrl) || isLegacyContainerExt(knownFilename) || isLegacyContainerExt(cDisp) || isLegacyContainerMime(cType);
@@ -648,10 +756,29 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
       };
     }
 
-    // Réponse inattendue
+    // Erreur HTTP directe sur la cible
+    if (token && safeStreamUrl.includes('/resolve/torbox/')) {
+      const repaired = await autoRepairTorboxTorrent(safeStreamUrl, token);
+      if (repaired) {
+        const isAviRep = isLegacyContainerExt(repaired) || isLegacyContainerExt(knownFilename);
+        const canTranscodeRep = Boolean(isAviRep && enableAviTranscode);
+        const effectiveUrlRep = canTranscodeRep ? `/api/video-stream?url=${encodeURIComponent(repaired)}` : repaired;
+        return {
+          success: true,
+          status: 'ready',
+          ready: true,
+          isAvi: isAviRep,
+          isTranscoded: canTranscodeRep,
+          playbackUrl: effectiveUrlRep,
+          directUrl: repaired
+        };
+      }
+    }
+
     return {
       success: false,
       status: 'error',
+      isDead: true,
       statusCode: res.status >= 400 && res.status <= 599 ? res.status : 502,
       error: 'Flux temporairement indisponible.'
     };
@@ -1127,7 +1254,7 @@ async function resolveStreamsServer({
       }
     }
 
-    const curated = curateStreams(rawStreams, provider, { enableAviTranscode, enableAudioRemux, preferredLang: normalizedLang, contentType: type });
+    const curated = curateStreams(rawStreams, provider, { enableAviTranscode, enableAudioRemux, preferredLang: normalizedLang, contentType: type, cleanTitle });
 
     if (!curated.streams || curated.streams.length === 0) {
       return {
@@ -1140,121 +1267,119 @@ async function resolveStreamsServer({
       };
     }
 
-    // Pré-vérification PARALLÈLE de toutes les qualités sélectionnées (~150-350ms au total) :
-    // 1. Élimine définitivement le clip vert "Torrent is being downloaded to debrid..."
-    // 2. Pré-résout l'URL CDN directe de CHAQUE qualité (changement de qualité instantané)
-    // 3. Choisit automatiquement la meilleure source réellement prête + compatible audio
-    const verifiedList = await Promise.all(
-      curated.streams.map(async (st) => {
-        if (st.isTorboxLibrary) {
-          return { ...st, isCached: true, isDownloading: false, verifiedReady: true };
-        }
-        const rawTarget = st.originalUrl || st.url;
-        if (!rawTarget || !normalizeAllowedUrl(rawTarget)) {
-          return { ...st, verifiedReady: false };
-        }
-        try {
-          const check = await checkStreamStatus(rawTarget, st.filename || '', { enableAviTranscode });
-          if (check.ready && check.playbackUrl) {
-            const isAviNow = Boolean(st.isAvi || check.isAvi);
-            return {
-              ...st,
-              url: check.playbackUrl,
-              directUrl: check.directUrl || check.playbackUrl,
-              originalUrl: rawTarget,
-              isCached: true,
-              isDownloading: false,
-              isAvi: isAviNow,
-              isTranscoded: Boolean(isAviNow && enableAviTranscode),
-              verifiedReady: true
-            };
-          }
-          if (check.status === 'downloading') {
-            return {
-              ...st,
-              isCached: false,
-              isDownloading: true,
-              verifiedReady: false
-            };
-          }
-        } catch {
-          // Timeout réseau sur cette source -> marquée non vérifiée
-        }
-        return { ...st, verifiedReady: false };
-      })
-    );
+    // Sélection ciblée et pré-résolution ultra-rapide (<250ms) du flux actif :
+    // Évite le déluge de 18 requêtes HEAD simultanées qui déclenche les blocages et rate-limits Cloudflare / TorBox
+    const supportsAc3 = Boolean(clientAc3);
+    const wantVo = normalizedLang === 'vo';
+    const matchesLang = (s) => (wantVo ? !s.isFrench : s.isFrench);
+    const isPlayableFormat = (s) => !s.isAvi || enableAviTranscode;
 
-    const readyStreams = verifiedList.filter(s => s.verifiedReady || (s.isCached && !s.isDownloading));
-    let initialStatus = 'ready';
-    let active = null;
-    let finalStreams = verifiedList;
-
-    if (readyStreams.length > 0) {
-      const wantVo = normalizedLang === 'vo';
-      const matchesLang = (s) => (wantVo ? !s.isFrench : s.isFrench);
-      const isPlayableFormat = (s) => !s.isAvi || enableAviTranscode;
-      const playableReady = readyStreams.filter(isPlayableFormat);
-      const basePool = playableReady.length > 0 ? playableReady : readyStreams;
-      const isHd1080 = (s) => s.tierKey === '1080p' || s.tierKey === '4k';
-      const movieHdReady = type !== 'tv' ? basePool.filter(isHd1080) : [];
-      const eligibleReady = (type !== 'tv' && movieHdReady.length > 0) ? movieHdReady : basePool;
-
-      const supportsAc3 = Boolean(clientAc3);
-      const pickBestReady = (list) => {
-        if (!supportsAc3) {
-          // Sur navigateur sans décodeur AC3 natif (Google Chrome sur Windows, Edge, Android...) :
-          // Priorité 1 : flux VF avec son garanti (AAC/Opus/MP4 web)
-          return list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
-                 // Priorité 2 : Si aucun flux VF avec son web n'existe (ex. l'Agence tous risques, vieux films),
-                 // basculer sur un flux avec son web garanti (VOSTFR avec sous-titres FR automatiques) pour ne JAMAIS avoir de vidéo muette !
-                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-                 list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
-                 // Dernier recours si absolument aucune version sonore web n'existe
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
-                 list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
-                 list.find(s => isPlayableFormat(s)) ||
-                 list[0];
-        }
-
-        // Sur appareil/navigateur avec support AC3 natif (Safari, Edge avec Dolby, Smart TV...)
-        return list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
+    const pickBestCandidate = (list) => {
+      if (!supportsAc3) {
+        return list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
+               list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+               list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+               list.find(s => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '4k') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
                list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
-               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
-               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
-               list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
                list.find(s => isPlayableFormat(s)) ||
                list[0];
-      };
-
-      active = pickBestReady(eligibleReady);
-      // Préserver TOUS les flux prêts en tête (classés par palier puis langue), suivis des alternatives en téléchargement
-      const readyFallbacks = verifiedList.filter(s => s.verifiedReady || (s.isCached && !s.isDownloading));
-      const unreadyFallbacks = verifiedList.filter(s => !readyFallbacks.some(r => (r.id && r.id === s.id) || (r.url && r.url === s.url)));
-      finalStreams = [...readyFallbacks, ...unreadyFallbacks];
-      initialStatus = 'ready';
-    } else {
-      // Aucune source en cache : on lance le débridage proprement avec l'écran de chargement
-      active = verifiedList.find(s => (normalizedLang === 'vo' ? !s.isFrench : s.isFrench)) || verifiedList[0];
-      if (active) {
-        active = { ...active, isDownloading: true, isCached: false };
       }
+      return list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '1080p') ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s) && s.isH264 && s.tierKey === '4k') ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '1080p') ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s) && s.tierKey === '4k') ||
+             list.find(s => isPlayableFormat(s) && matchesLang(s)) ||
+             list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.isH264 && s.tierKey === '1080p') ||
+             list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
+             list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === '4k') ||
+             list.find(s => isPlayableFormat(s) && !s.hasUnsupportedAudio) ||
+             list.find(s => isPlayableFormat(s)) ||
+             list[0];
+    };
+
+    let workingStreams = [...curated.streams];
+    const cachedCandidates = workingStreams.filter(s => s.isCached && !s.isDownloading);
+    const pool = cachedCandidates.length > 0 ? cachedCandidates : workingStreams;
+
+    let active = null;
+    let initialStatus = cachedCandidates.length > 0 ? 'ready' : 'downloading';
+
+    // On valide en priorité le meilleur candidat en cache (avec auto-réparation TorBox si id orphelin)
+    const testedIds = new Set();
+    while (testedIds.size < 3) {
+      const remainingPool = pool.filter(s => !testedIds.has(s.id) && !s.isDead);
+      if (remainingPool.length === 0) break;
+      const candidate = pickBestCandidate(remainingPool);
+      if (!candidate) break;
+      testedIds.add(candidate.id);
+
+      if (candidate.isTorboxLibrary) {
+        active = { ...candidate, isCached: true, isDownloading: false, verifiedReady: true };
+        break;
+      }
+
+      const rawTarget = candidate.originalUrl || candidate.url;
+      if (!rawTarget || !normalizeAllowedUrl(rawTarget)) {
+        continue;
+      }
+
+      try {
+        const check = await checkStreamStatus(rawTarget, candidate.filename || '', { enableAviTranscode, token });
+        if (check.ready && check.playbackUrl) {
+          const isAviNow = Boolean(candidate.isAvi || check.isAvi);
+          active = {
+            ...candidate,
+            url: check.playbackUrl,
+            directUrl: check.directUrl || check.playbackUrl,
+            originalUrl: rawTarget,
+            isCached: true,
+            isDownloading: false,
+            isAvi: isAviNow,
+            isTranscoded: Boolean(isAviNow && enableAviTranscode),
+            verifiedReady: true
+          };
+          // Mettre à jour dans la liste
+          const idx = workingStreams.findIndex(s => s.id === candidate.id);
+          if (idx !== -1) workingStreams[idx] = active;
+          break;
+        } else if (check.status === 'error' || check.isDead) {
+          // Source morte ou corrompue : exclue définitivement
+          candidate.isDead = true;
+          candidate.isCached = false;
+          candidate.verifiedReady = false;
+        }
+      } catch {
+        // En cas de simple timeout réseau, la source reste présumée en cache si taguée [TB+]
+        active = { ...candidate, verifiedReady: true };
+        break;
+      }
+    }
+
+    if (!active && cachedCandidates.length > 0) {
+      const fallback = cachedCandidates.find(s => !s.isDead) || cachedCandidates[0];
+      active = { ...fallback, verifiedReady: true };
+    }
+
+    if (!active) {
+      active = workingStreams[0];
       initialStatus = 'downloading';
     }
+
+    // Filtrage strict : éliminer toutes les sources mortes ou incompatibles (.avi sans transcodage si d'autres existent)
+    const cleanStreams = workingStreams.filter(s => !s.isDead);
+    const playableStreams = cleanStreams.filter(isPlayableFormat);
+    const finalStreams = playableStreams.length > 0 ? playableStreams : cleanStreams;
 
     const finalActive = active
       ? finalizeStreamUrl({ ...active, originalUrl: active.originalUrl || active.url })

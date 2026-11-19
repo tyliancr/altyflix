@@ -741,11 +741,10 @@ export async function resolvePlaybackStreams({
         // Détection explicite des erreurs d'authentification ou de clé retournées par Torrentio
         const errorStream = rawStreams.find(isTorrentioErrorStream);
         if (errorStream && rawStreams.length === 1) {
-            const errTitle = errorStream.title || 'Clé de débridage non reconnue';
             return {
                 success: false,
                 reason: 'INVALID_DEBRID_TOKEN',
-                message: `${errTitle}. Rendez-vous sur https://torbox.app/settings pour copier votre clé API TorBox.`,
+                message: 'Accès non reconnu. Veuillez vérifier vos paramètres de lecture.',
                 imdbId,
                 streams: []
             };
@@ -757,9 +756,7 @@ export async function resolvePlaybackStreams({
             return {
                 success: false,
                 reason: 'NO_STREAMS_FOUND',
-                message: errorStream
-                    ? `Erreur de clé TorBox : ${errorStream.title || 'Clé non valide'}`
-                    : 'Aucun flux direct disponible pour ce titre actuellement.',
+                message: 'Ce titre n\'est pas disponible pour le moment. Veuillez sélectionner un autre titre.',
                 imdbId,
                 streams: []
             };
@@ -882,7 +879,7 @@ export async function pollStreamStatus({
     return {
         ready: false,
         timeout: true,
-        message: 'Le téléchargement sur le service de débridage prend trop de temps.'
+        message: 'Ce titre met plus de temps que prévu à charger. Veuillez réessayer dans quelques instants.'
     };
 }
 

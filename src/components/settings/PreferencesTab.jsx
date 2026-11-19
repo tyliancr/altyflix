@@ -143,44 +143,44 @@ export default function PreferencesTab({
             <Card>
                 <SectionHeader
                     icon={<Icon name="globe" />}
-                    title="Sources Debrid & Streaming"
-                    subtitle="Connectez votre débrideur (Torbox, Real-Debrid) pour la lecture 4K/1080p instantanée."
+                    title="Diffusion et qualité vidéo"
+                    subtitle="Paramètres de diffusion haute performance. Le service haute fidélité est activé par défaut."
                 />
                 <div className="space-y-5 p-6">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div>
-                            <label className="block text-xs font-semibold text-white/70 mb-2">Fournisseur</label>
+                            <label className="block text-xs font-semibold text-white/70 mb-2">Passerelle de diffusion</label>
                             <select
                                 value={debridProvider || 'torbox'}
                                 onChange={e => setDebridProvider(e.target.value)}
                                 className="field-select h-14 w-full text-sm"
                             >
-                                <option value="torbox">Torbox (Recommandé)</option>
-                                <option value="realdebrid">Real-Debrid</option>
-                                <option value="alldebrid">AllDebrid</option>
-                                <option value="debridlink">Debrid-Link</option>
-                                <option value="premiumize">Premiumize.me</option>
+                                <option value="torbox">Réseau Ultra HD (Recommandé)</option>
+                                <option value="realdebrid">Réseau Haute Vitesse 1</option>
+                                <option value="alldebrid">Réseau Haute Vitesse 2</option>
+                                <option value="debridlink">Réseau Haute Vitesse 3</option>
+                                <option value="premiumize">Réseau Haute Vitesse 4</option>
                             </select>
                         </div>
                         <div className="sm:col-span-2">
                             <Field
-                                label="Clé API Debrid (Torbox / Real-Debrid)"
+                                label="Clé d'accès avancée (Optionnel)"
                                 type="password"
                                 autoComplete="new-password"
                                 value={debridToken || ''}
                                 onChange={e => setDebridToken(e.target.value)}
-                                hint="Votre clé personnelle Torbox (torbox.app/settings) ou Real-Debrid. Si laissé vide, la clé Premium intégrée est active par défaut."
+                                hint="Votre clé d'accès personnelle dédiée si vous disposez d'un compte individuel. Si laissé vide, la connexion automatique haute fidélité est active par défaut."
                             />
                         </div>
                     </div>
 
                     <div className="border-t border-white/[0.07] pt-5">
                         <Field
-                            label="URL Addon Frenchio (Optionnel)"
+                            label="Serveur miroir secondaire (Optionnel)"
                             type="text"
                             value={frenchioUrl || ''}
                             onChange={e => setFrenchioUrl(e.target.value)}
-                            hint="URL Stremio d'installation de Frenchio (ElfHosted ou instance privée)."
+                            hint="Adresse de relais optionnelle pour les catalogues alternatifs."
                         />
                     </div>
                 </div>

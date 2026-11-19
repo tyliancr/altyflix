@@ -242,10 +242,6 @@ function streamLabel(st) {
     return `${tier} · ${lang}`;
 }
 
-function formatSize(size) {
-    return size ? String(size).replace(/\bGB\b/, 'Go').replace(/\bMB\b/, 'Mo') : '';
-}
-
 /* ------------------------------------------------------------------ */
 /* Audio, sous-titres et qualité                                        */
 /* ------------------------------------------------------------------ */
@@ -316,9 +312,6 @@ export function AudioSubsPanel({
                                     }`}
                                 >
                                     {streamLabel(st)}
-                                    {st.isDownloading
-                                        ? <span className="ml-1.5 font-normal opacity-60">préparation</span>
-                                        : st.size && <span className="ml-1.5 font-normal opacity-55">{formatSize(st.size)}</span>}
                                 </button>
                             );
                         })}

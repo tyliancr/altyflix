@@ -564,7 +564,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
           success: true,
           status: 'downloading',
           ready: false,
-          message: 'Le torrent est en cours de téléchargement vers le cloud debrid...'
+          message: 'Préparation du flux vidéo haute définition...'
         };
       }
 
@@ -592,7 +592,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
                   success: true,
                   status: 'downloading',
                   ready: false,
-                  message: 'Le torrent est en cours de téléchargement vers le cloud debrid...'
+                  message: 'Préparation du flux vidéo haute définition...'
                 };
               }
               probeUrl = resolvedNext;
@@ -641,7 +641,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
           success: true,
           status: 'downloading',
           ready: false,
-          message: 'Le torrent est en cours de téléchargement vers le cloud debrid...'
+          message: 'Préparation du flux vidéo haute définition...'
         };
       }
 
@@ -844,7 +844,7 @@ async function resolveStreamsServer({
       success: false,
       reason: 'NO_TOKEN',
       status: 'no_token',
-      message: 'Aucun service de débridage configuré.',
+      message: 'Service de diffusion non configuré.',
       streams: []
     };
   }
@@ -1133,7 +1133,7 @@ async function resolveStreamsServer({
         success: false,
         reason: 'INVALID_DEBRID_TOKEN',
         status: 'error',
-        message: 'Clé de débridage non reconnue. Vérifiez vos paramètres.',
+        message: 'Accès non reconnu. Veuillez vérifier vos paramètres de lecture.',
         imdbId,
         streams: []
       };
@@ -1204,7 +1204,7 @@ async function resolveStreamsServer({
         success: false,
         reason: 'NO_STREAMS_FOUND',
         status: 'error',
-        message: 'Aucun flux direct disponible pour ce titre actuellement.',
+        message: 'Ce titre n\'est pas disponible pour le moment. Veuillez sélectionner un autre titre.',
         imdbId,
         streams: []
       };

@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { getMovieDetails, getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
 import { resolvePlaybackStreams, pollStreamStatus, fetchSubtitlesForContent, fetchSubtitleCues } from '../../services/streamingGateway';
@@ -87,7 +86,6 @@ export default function NetflixPlayer({
     const [isFullscreen, setIsFullscreen] = useState(false);
 
     // Overlays & Menus
-    const navigate = useNavigate();
     const [controlsVisible, setControlsVisible] = useState(true);
     const controlsVisibleRef = useRef(controlsVisible);
     controlsVisibleRef.current = controlsVisible;
@@ -307,7 +305,7 @@ export default function NetflixPlayer({
                 if (hasNext) {
                     handleStreamErrorRef.current?.();
                 } else {
-                    setErrorMessage(result.error || 'Le téléchargement vers le cloud haute vitesse prend plus de temps que prévu. Essayez une autre source.');
+                    setErrorMessage('Ce titre met plus de temps que prévu à charger. Veuillez réessayer dans un instant.');
                     setStreamState('error');
                 }
             }
@@ -323,7 +321,7 @@ export default function NetflixPlayer({
             if (hasNext) {
                 handleStreamErrorRef.current?.();
             } else {
-                setErrorMessage('Erreur lors de la vérification de la source : ' + err.message);
+                setErrorMessage('Un problème est survenu lors du chargement de la vidéo. Veuillez réessayer.');
                 setStreamState('error');
             }
         });
@@ -413,7 +411,7 @@ export default function NetflixPlayer({
                         if (anyPlayable) {
                             selectedStream = anyPlayable;
                         } else {
-                            setErrorMessage("Ce film d'archive utilise un format vidéo (.avi) qui nécessite le transcodage serveur. Démarrez le serveur local (npm start) ou choisissez un autre titre.");
+                            setErrorMessage("Ce titre n'est pas disponible pour la lecture dans votre navigateur actuellement. Veuillez sélectionner un autre titre.");
                             setStreamState('error');
                             return;
                         }
@@ -443,12 +441,12 @@ export default function NetflixPlayer({
                     setStreamState('playing');
                 }
             } else {
-                setErrorMessage(res.message || 'Aucun flux direct disponible pour ce titre.');
+                setErrorMessage(res.message || 'Ce titre n\'est pas disponible pour le moment. Veuillez sélectionner un autre titre.');
                 setStreamState('error');
             }
         } catch (err) {
             if (!mountedRef.current || reqId !== resolveReqIdRef.current || err?.name === 'AbortError') return;
-            setErrorMessage(err.message || 'Erreur lors de la résolution du flux direct.');
+            setErrorMessage('Impossible de lancer la lecture pour le moment. Veuillez réessayer plus tard.');
             setStreamState('error');
         }
     }, [id, isTv, season, episode, isAc3Supported, startStreamPolling]);
@@ -469,9 +467,7 @@ export default function NetflixPlayer({
                         || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && isSafeToPlay(s))
                         || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url));
         if (!nextStream) {
-            setErrorMessage(list.length <= 1
-                ? 'Ce format vidéo ne peut pas être lu directement par votre navigateur.'
-                : 'Tous les flux vidéo directs disponibles pour ce titre ont été essayés.');
+            setErrorMessage('La lecture de cette vidéo a rencontré un problème. Veuillez réessayer plus tard.');
             setStreamState('error');
             return;
         }
@@ -2027,15 +2023,6 @@ export default function NetflixPlayer({
                         >
                             Réessayer
                         </button>
-                        {Boolean(errorMessage && /débridage|debrid|token|clé/i.test(errorMessage)) && (
-                            <button
-                                type="button"
-                                onClick={() => { handleClose(); navigate('/settings'); }}
-                                className="rounded bg-[#E50914] px-6 py-2.5 text-sm font-bold text-white hover:bg-[#b80710]"
-                            >
-                                Paramètres de lecture
-                            </button>
-                        )}
                         <button
                             type="button"
                             onClick={handleClose}

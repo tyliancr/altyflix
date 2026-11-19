@@ -50,6 +50,7 @@ const ALLOWED_POLL_HOSTS = [
   'torbox.app',
   'tb-cdn.st',
   'frenchio.elfhosted.com',
+  'slate.elfhosted.com',
   'api.real-debrid.com',
   'real-debrid.com',
   'api.alldebrid.com',
@@ -118,7 +119,7 @@ function isTorrentioErrorStream(stream) {
 
   if (url.includes('failed_access') || url.includes('/videos/failed_')) return true;
   if (isDownloadingUrl(url)) return true;
-  if (name.includes('[❌]') || /\b(?:tb|rd|ad|pm|dl)?\s*error\b/i.test(name)) return true;
+  if (name.includes('[❌]') || fullText.includes('obsolete configuration') || /\b(?:tb|rd|ad|pm|dl)?\s*error\b/i.test(name)) return true;
   if (/(?:invalid\s+(?:api|token|key|debrid|auth)|access\s+denied|rate\s+limit\s+exceeded|failed\s+to\s+(?:resolve|access|connect)|not\s+a\s+valid\s+debrid)/i.test(fullText)) return true;
 
   return false;
@@ -142,10 +143,10 @@ function parseStreamDetails(stream) {
   const filename = stream.behaviorHints?.filename || rawTitle.split('\n')[0] || '';
   const fullText = (rawTitle + ' ' + rawName + ' ' + filename).toLowerCase().replace(/_/g, ' ');
 
-  // Détection du statut Debrid : Cache (+) vs Téléchargement (download)
+  // Détection du statut Debrid : Cache (+ ou ⚡) vs Téléchargement (download ou ⬇️)
   // Si vérifié en temps réel contre l'API TorBox (_torboxVerifiedCached), la vérité TorBox prime sur Torrentio
-  let isCached = /\[(tb|rd|ad|pm|dl)\+\]/i.test(rawName) || /\[\+\]/.test(rawName) || Boolean(stream.isTorboxLibrary);
-  let isDownloading = !isCached && (/\[(tb|rd|ad|pm|dl)\s+download\]/i.test(rawName) || /download/i.test(rawName));
+  let isCached = /\[(?:tb|rd|ad|pm|dl)?(?:\+|⚡)\]/i.test(rawName) || /\[\+\]/.test(rawName) || rawName.includes('⚡') || Boolean(stream.isTorboxLibrary);
+  let isDownloading = !isCached && (rawName.includes('⬇️') || /\[(?:tb|rd|ad|pm|dl)\s+download\]/i.test(rawName) || /download/i.test(rawName));
   if (typeof stream._torboxVerifiedCached === 'boolean') {
     isCached = stream._torboxVerifiedCached;
     isDownloading = !isCached;
@@ -539,7 +540,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
     const res = await fetch(safeStreamUrl, {
       method: 'HEAD',
       redirect: 'manual',
-      signal: AbortSignal.timeout(2500)
+      signal: AbortSignal.timeout(4500)
     });
 
     const location = res.headers.get('location') || '';
@@ -578,7 +579,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
           for (let hop = 0; hop < 3; hop++) {
             const safeProbe = normalizeAllowedUrl(probeUrl);
             if (!safeProbe) break;
-            const headTarget = await fetch(safeProbe, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(1800) });
+            const headTarget = await fetch(safeProbe, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(4000) });
             const nextLoc = headTarget.headers.get('location') || '';
             if (headTarget.status >= 300 && headTarget.status < 400 && nextLoc) {
               try { await headTarget.body?.cancel(); } catch {}
@@ -1004,7 +1005,7 @@ async function resolveStreamsServer({
 
   const resolvePromise = (async () => {
 
-  const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,torrent9,rutracker,rutor,cinemaz,ibit,torlock';
+  const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,ext,thepiratebay,kickasstorrents,torrentgalaxy,uindex,knaben,magnetdl,horriblesubs,nyaasi,animetosho,tokyotosho,anidex,nekobt,torrent9,rutracker,rutor,cinemaz,ibit,torlock,comando,bludv,micoleaodublado,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,besttorrents';
 
   console.log(`[Altyflix Stream Resolver] Recherche parallèle des flux pour ${type} ${imdbId} (S${season}E${episode}) via ${provider}...`);
 
@@ -1055,16 +1056,18 @@ async function resolveStreamsServer({
     const fetchComet = async () => {
       if (!token) return [];
       try {
-        const cometConfig = Buffer.from(JSON.stringify({
-          debridService: provider,
-          debridApiKey: token
-        })).toString('base64url');
+        const cometSettings = {
+          debridServices: [{ service: provider, apiKey: token }],
+          languages_preferred: ['fr', 'en'],
+          maxResultsPerResolution: 20
+        };
+        const cometConfig = Buffer.from(JSON.stringify(cometSettings)).toString('base64');
         const streamPath = isTv ? `series/${streamKey}.json` : `movie/${streamKey}.json`;
         const cUrl = `https://comet.elfhosted.com/${cometConfig}/stream/${streamPath}`;
         const cRes = await fetch(cUrl, {
           headers: { 'Accept': 'application/json' },
           redirect: 'error',
-          signal: AbortSignal.timeout(4000)
+          signal: AbortSignal.timeout(4500)
         });
         if (cRes.ok) {
           const cData = await cRes.json();
@@ -1149,11 +1152,21 @@ async function resolveStreamsServer({
               const bHd = /2160p|4k|uhd|1080p/i.test(`${b.name || ''} ${b.title || ''}`) ? 1 : 0;
               return bHd - aHd;
             });
+        const extractTorrentHash = (s) => {
+          const m = (s.url || '').match(hashRegex);
+          if (m && m[1]) return m[1].toLowerCase();
+          if (s.behaviorHints?.bingeGroup) {
+            const bg = s.behaviorHints.bingeGroup.match(/([a-fA-F0-9]{40})/i);
+            if (bg) return bg[1].toLowerCase();
+          }
+          return null;
+        };
+
         for (const s of orderedForCacheCheck) {
           if (s.isTorboxLibrary) continue;
-          const m = (s.url || '').match(hashRegex);
-          if (m && m[1]) hashesSet.add(m[1].toLowerCase());
-          if (hashesSet.size >= 35) break;
+          const h = extractTorrentHash(s);
+          if (h) hashesSet.add(h);
+          if (hashesSet.size >= 40) break;
         }
         if (hashesSet.size > 0) {
           const hashesParam = Array.from(hashesSet).join(',');
@@ -1171,12 +1184,9 @@ async function resolveStreamsServer({
                   s._torboxVerifiedCached = true;
                   continue;
                 }
-                const m = (s.url || '').match(hashRegex);
-                if (m && m[1]) {
-                  const h = m[1].toLowerCase();
-                  if (hashesSet.has(h)) {
-                    s._torboxVerifiedCached = Boolean(cachedMap[h]);
-                  }
+                const h = extractTorrentHash(s);
+                if (h && hashesSet.has(h)) {
+                  s._torboxVerifiedCached = Boolean(cachedMap[h]);
                 }
               }
             }
@@ -1253,9 +1263,11 @@ async function resolveStreamsServer({
       const wantVo = normalizedLang === 'vo';
       const matchesLang = (s) => (wantVo ? !s.isFrench : s.isFrench);
       const isPlayableFormat = (s) => !s.isAvi || enableAviTranscode;
+      const playableReady = readyStreams.filter(isPlayableFormat);
+      const basePool = playableReady.length > 0 ? playableReady : readyStreams;
       const isHd1080 = (s) => s.tierKey === '1080p' || s.tierKey === '4k';
-      const movieHdReady = type !== 'tv' ? readyStreams.filter(isHd1080) : [];
-      const eligibleReady = (type !== 'tv' && movieHdReady.length > 0) ? movieHdReady : readyStreams;
+      const movieHdReady = type !== 'tv' ? basePool.filter(isHd1080) : [];
+      const eligibleReady = (type !== 'tv' && movieHdReady.length > 0) ? movieHdReady : basePool;
 
       const supportsAc3 = Boolean(clientAc3);
       const pickBestReady = (list) => {

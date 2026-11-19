@@ -402,6 +402,24 @@ export default function NetflixPlayer({
                     }
                 }
 
+                // 3 bis. Compatibilité Conteneur : Un conteneur .avi non transcodé ne peut pas être décodé par les navigateurs modernes HTML5
+                if (selectedStream.isAvi && !selectedStream.isTranscoded) {
+                    const playableReady = readyStreams.find(s => !s.isAvi || s.isTranscoded);
+                    if (playableReady) {
+                        console.log('[Altyflix Player] Flux par défaut .avi non transcodé -> Bascule automatique sur flux compatible HTML5 :', playableReady.qualityLabel || playableReady.quality);
+                        selectedStream = playableReady;
+                    } else {
+                        const anyPlayable = streams.find(s => !s.isAvi || s.isTranscoded);
+                        if (anyPlayable) {
+                            selectedStream = anyPlayable;
+                        } else {
+                            setErrorMessage("Ce film d'archive utilise un format vidéo (.avi) qui nécessite le transcodage serveur. Démarrez le serveur local (npm start) ou choisissez un autre titre.");
+                            setStreamState('error');
+                            return;
+                        }
+                    }
+                }
+
                 setActiveStream(selectedStream);
                 setHasTrueVf(Boolean(res.hasTrueVf));
                 setCurrentAudioLang(selectedStream.isFrench ? 'vf' : 'vo');
@@ -446,7 +464,9 @@ export default function NetflixPlayer({
         if (current) {
             failedStreamIdsRef.current.add(current.id || current.url);
         }
-        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading)
+        const isSafeToPlay = (s) => !s.isAvi || s.isTranscoded;
+        const nextStream = list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s))
+                        || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && isSafeToPlay(s))
                         || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url));
         if (!nextStream) {
             setErrorMessage(list.length <= 1
@@ -644,6 +664,23 @@ export default function NetflixPlayer({
             }
         };
 
+        // Watchdog anti-blocage (détecte les formats incompatibles .avi ou flux figés dès 9 secondes)
+        let stallWatchdog = null;
+        const resetWatchdog = () => {
+            if (stallWatchdog) clearTimeout(stallWatchdog);
+            stallWatchdog = null;
+        };
+        const armWatchdog = () => {
+            resetWatchdog();
+            stallWatchdog = setTimeout(() => {
+                if (video && video.currentTime === 0 && !video.paused && (video.readyState < 2 || activeStream?.isAvi)) {
+                    console.warn('[Altyflix Player] Watchdog anti-blocage déclenché : la vidéo ne démarre pas après 9s, tentative du flux suivant...');
+                    handleStreamErrorRef.current?.();
+                }
+            }, 9000);
+        };
+        armWatchdog();
+
         const onLoadedMetadata = () => {
             let dur = video.duration;
             const knownTmdbDur = tmdbDurationRef.current || 0;
@@ -666,6 +703,7 @@ export default function NetflixPlayer({
             video.muted = desiredMuted;
             video.volume = desiredVolume;
             seekingTranscodeRef.current = false;
+            resetWatchdog();
             video.play().catch((err) => {
                 if (err?.name !== 'NotAllowedError') return;
                 // Autoplay bloqué par la politique du navigateur : muter temporairement pour lancer l'image
@@ -682,9 +720,13 @@ export default function NetflixPlayer({
             }
         };
 
-        const onWaiting = () => setIsBuffering(true);
+        const onWaiting = () => {
+            setIsBuffering(true);
+            armWatchdog();
+        };
         const onPlaying = () => {
             seekingTranscodeRef.current = false;
+            resetWatchdog();
             setIsBuffering(false);
             if (!hasInitialSaved && !pendingResumeSeek) {
                 hasInitialSaved = true;
@@ -692,6 +734,7 @@ export default function NetflixPlayer({
             }
         };
         const onVideoError = () => {
+            resetWatchdog();
             // Ignorer MEDIA_ERR_ABORTED (code 1, ex. changement rapide de seek transcodé)
             if (video.error?.code === 1) return;
             console.warn('[Altyflix Player] Erreur de lecture vidéo native :', video.error);
@@ -718,6 +761,7 @@ export default function NetflixPlayer({
         video.addEventListener('seeked', onSeeked);
 
         return () => {
+            resetWatchdog();
             if (!pendingResumeSeek && !skipNextCleanupSaveRef.current) saveForThisEpisode();
             skipNextCleanupSaveRef.current = false;
             loadedUrlRef.current = null;
@@ -733,7 +777,7 @@ export default function NetflixPlayer({
             video.removeEventListener('seeked', onSeeked);
             engine.destroy();
         };
-    }, [activeStream?.url, activeStream?.isTranscoded, streamState, id, isTv, season, episode, saveCurrentProgress]);
+    }, [activeStream?.url, activeStream?.isTranscoded, activeStream?.isAvi, streamState, id, isTv, season, episode, saveCurrentProgress]);
 
     // Fermeture du lecteur avec sauvegarde immédiate de l'exacte seconde
     const handleClose = useCallback(() => {

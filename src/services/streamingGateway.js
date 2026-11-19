@@ -179,9 +179,9 @@ function parseStreamDetails(stream) {
     const filename = stream.behaviorHints?.filename || titleText.split('\n')[0] || '';
     const fullText = (titleText + ' ' + nameText + ' ' + filename).toLowerCase();
 
-    // Détection Debrid : flux en cache ([TB+], [RD+], etc.) vs flux en cours de téléchargement
-    const isCached = /\[(tb|rd|ad|pm|dl)\+\]/i.test(nameText) || /\[\+\]/.test(nameText) || /\b\+\b/.test(nameText);
-    const isDownloading = !isCached && (/\[(tb|rd|ad|pm|dl)\s+download\]/i.test(nameText) || /download/i.test(nameText));
+    // Détection Debrid : flux en cache ([TB+], [TB⚡], [RD+], etc.) vs flux en cours de téléchargement
+    const isCached = /\[(?:tb|rd|ad|pm|dl)?(?:\+|⚡)\]/i.test(nameText) || /\[\+\]/.test(nameText) || nameText.includes('⚡') || /\b\+\b/.test(nameText);
+    const isDownloading = !isCached && (nameText.includes('⬇️') || /\[(?:tb|rd|ad|pm|dl)\s+download\]/i.test(nameText) || /download/i.test(nameText));
 
     // Décomposition des lignes Torrentio pour isoler le nom de la release des métadonnées
     const titleLines = titleText.split('\n');
@@ -693,7 +693,7 @@ export async function resolvePlaybackStreams({
     }
 
     try {
-        const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,torrent9,rutracker,rutor,cinemaz';
+        const ALL_PROVIDERS = 'yts,eztv,rarbg,1337x,ext,thepiratebay,kickasstorrents,torrentgalaxy,uindex,knaben,magnetdl,horriblesubs,nyaasi,animetosho,tokyotosho,anidex,nekobt,torrent9,rutracker,rutor,cinemaz,ibit,torlock,comando,bludv,micoleaodublado,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,besttorrents';
         const options = `providers=${ALL_PROVIDERS}|sort=qualitysize|language=french|${activeProvider}=${encodeURIComponent(activeToken)}`;
         const endpoint = `https://torrentio.strem.fun/${options}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
 

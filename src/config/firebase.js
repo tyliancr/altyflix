@@ -21,7 +21,7 @@ const missingKeys = requiredKeys.filter(key => !rawConfig[key]);
 export const isFirebaseConfigured = missingKeys.length === 0;
 
 if (!isFirebaseConfigured) {
-    console.warn(`⚠️ ALTYFLIX: Clés Firebase non configurées (${missingKeys.join(', ')}). La connexion est désactivée tant que la configuration est incomplète.`);
+    console.warn(`[ALTYFLIX] Clés Firebase non configurées (${missingKeys.join(', ')}). La connexion est désactivée tant que la configuration est incomplète.`);
 }
 
 // Fallback config to prevent Firebase initialization crash if env vars are unset

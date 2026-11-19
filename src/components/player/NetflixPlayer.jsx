@@ -40,17 +40,6 @@ function useCompactLayout() {
     return compact;
 }
 
-function getShortQualityBadge(stream) {
-    if (!stream) return 'HD';
-    let q = 'HD';
-    if (stream.tierKey === '4k' || stream.quality?.includes('4K')) q = '4K';
-    else if (stream.tierKey === '1080p' || stream.quality?.includes('1080p')) q = '1080p';
-    else if (stream.tierKey === '720p' || stream.quality?.includes('720p')) q = '720p';
-
-    const lang = stream.isFrench ? 'VF' : (stream.isVostfr ? 'VOSTFR' : 'VO');
-    return `${q} · ${lang}`;
-}
-
 export default function NetflixPlayer({
     content = {},
     type: initialType,
@@ -295,7 +284,7 @@ export default function NetflixPlayer({
         }).then(result => {
             if (!mountedRef.current || result.aborted || controller.signal.aborted) return;
             if (result.ready && result.playbackUrl) {
-                console.log('[Altyflix Player] ✅ Débridage terminé avec succès !');
+                console.log('[Altyflix Player] Débridage terminé avec succès');
                 loadedUrlRef.current = null;
                 setActiveStream(prev => ({
                     ...(prev || {}),
@@ -1968,47 +1957,6 @@ export default function NetflixPlayer({
                     {streamState === 'downloading' && downloadProgress.elapsedSec >= 12 && (
                         <p className="mt-3 text-sm text-white/50">Préparation de la vidéo, encore quelques instants…</p>
                     )}
-                    {(() => {
-                        const readyAlt = availableStreams.find(s => (s.isCached || s.verifiedReady) && !s.isDownloading);
-                        if (!readyAlt || streamState !== 'downloading') return null;
-                        return (
-                            <button
-                                type="button"
-                                onClick={() => handleSelectStream(readyAlt)}
-                                className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-sm font-bold text-black shadow-lg hover:bg-white/90 active:scale-95 transition-all cursor-pointer"
-                            >
-                                <span>▶ Regarder immédiatement ({readyAlt.qualityLabel || getShortQualityBadge(readyAlt)})</span>
-                            </button>
-                        );
-                    })()}
-                    {availableStreams.length > 1 && (
-                        <div className="mt-6 flex max-w-md flex-wrap items-center justify-center gap-2">
-                            <span className="w-full text-xs text-white/40">Sources disponibles :</span>
-                            {availableStreams
-                                .slice(0, 5)
-                                .map(st => {
-                                    const isCurrent = (st.id && st.id === activeStream?.id) || (st.url && st.url === activeStream?.url);
-                                    const isReady = (st.isCached || st.verifiedReady) && !st.isDownloading;
-                                    return (
-                                        <button
-                                            key={st.id || st.url}
-                                            type="button"
-                                            onClick={() => handleSelectStream(st)}
-                                            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer ${
-                                                isCurrent
-                                                    ? 'bg-white text-black shadow-sm'
-                                                    : isReady
-                                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 hover:text-white'
-                                                    : 'bg-white/15 text-white/85 hover:bg-white/25 hover:text-white'
-                                            }`}
-                                        >
-                                            {getShortQualityBadge(st)}
-                                            {isReady ? ' · Prêt' : ''}
-                                        </button>
-                                    );
-                                })}
-                        </div>
-                    )}
                 </div>
             )}
 
@@ -2025,31 +1973,6 @@ export default function NetflixPlayer({
                     </button>
                     <h2 className="text-xl font-bold md:text-2xl">Lecture impossible</h2>
                     <p className="mt-2 max-w-md text-sm text-white/60">{errorMessage || 'Ce titre ne peut pas être lu pour le moment.'}</p>
-                    {availableStreams.length > 1 && (
-                        <div className="mt-4 flex max-w-md flex-wrap items-center justify-center gap-2">
-                            <span className="w-full text-xs text-white/50">Essayer une autre source :</span>
-                            {availableStreams
-                                .slice(0, 5)
-                                .map(st => {
-                                    const isReady = (st.isCached || st.verifiedReady) && !st.isDownloading;
-                                    return (
-                                        <button
-                                            key={st.id || st.url}
-                                            type="button"
-                                            onClick={() => handleSelectStream(st)}
-                                            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer ${
-                                                isReady
-                                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 hover:text-white'
-                                                    : 'liquid-glass-pill text-white/85 hover:text-white'
-                                            }`}
-                                        >
-                                            {getShortQualityBadge(st)}
-                                            {isReady ? ' · Prêt' : ''}
-                                        </button>
-                                    );
-                                })}
-                        </div>
-                    )}
                     <div className="mt-6 flex flex-wrap justify-center gap-3">
                         <button
                             type="button"

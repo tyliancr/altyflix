@@ -832,7 +832,7 @@ export async function pollStreamStatus({
             if (res.ok && data) {
                 consecutiveErrors = 0;
                 if (data.ready && data.playbackUrl) {
-                    console.log(`[Altyflix Stream Poll] ✅ Flux PRÊT après ${elapsedSec}s (${attempts} vérifications) !`);
+                    console.log(`[Altyflix Stream Poll] Flux pret apres ${elapsedSec}s (${attempts} verifications)`);
                     return {
                         ready: true,
                         playbackUrl: data.playbackUrl,

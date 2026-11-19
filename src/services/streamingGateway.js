@@ -183,7 +183,7 @@ function parseBytes(str) {
 /**
  * Analyse les informations d'un flux Torrentio
  */
-function parseStreamDetails(stream) {
+function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
     const titleText = stream.title || '';
     const nameText = stream.name || '';
     const filename = stream.behaviorHints?.filename || titleText.split('\n')[0] || '';
@@ -253,12 +253,16 @@ function parseStreamDetails(stream) {
     // Détection des releases Russes ou étrangères où le français n'est pas en piste 0
     const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
 
+    const isNonFrenchDub = /\b(?:german|deutsch|italian|italiano|spanish|espanol|castellano|portuguese|russian|japanese|korean|hindi|tamil)\s*dub\b/i.test(fullText) ||
+        /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu)\b/i.test(fullText);
+
     const hasFrenchAudio = Boolean(!isExplicitVostfr && !isForeignPrimaryMulti && (
         hasFrenchDubInName ||
         isFrenchMulti ||
         hasFrenchAudioInAudioLine ||
         (isTorrent9 && !isExplicitVostfr) ||
-        (hasFrenchFlag && !isExplicitVostfr)
+        (hasFrenchFlag && !isExplicitVostfr) ||
+        (isFrenchOriginal && !isNonFrenchDub)
     ));
     const isPureFrench = Boolean(hasFrenchAudio && !isEnglishPrimaryMulti);
     const isFrench = hasFrenchAudio;
@@ -377,12 +381,12 @@ function parseStreamDetails(stream) {
  * - Évite les fichiers géants de 80 GB qui font ramer la 4K
  * - 1080p Full HD sélectionné par défaut pour un démarrage instantané sans freeze
  */
-function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
+function curateStreams(rawStreams, provider, { contentType = 'movie', isFrenchOriginal = false } = {}) {
     const isMovie = String(contentType || 'movie').toLowerCase() !== 'tv';
     const validAll = rawStreams
         .filter(s => typeof s.url === 'string' && s.url.startsWith('http') && !isTorrentioErrorStream(s))
         .map((s, idx) => {
-            const details = parseStreamDetails(s);
+            const details = parseStreamDetails(s, { isFrenchOriginal });
             return {
                 id: `stream-${idx}`,
                 url: s.url,
@@ -662,16 +666,38 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
 }
 
 /**
- * Résout l'identifiant IMDb d'un contenu TMDB (film ou série)
+ * Résout l'identifiant IMDb d'un contenu TMDB (film ou série) avec fallback Cinemeta
  */
-export async function getImdbIdForContent({ id, type = 'movie' }) {
-    if (!id) return null;
+export async function getImdbIdForContent({ id, type = 'movie', title = '' }) {
+    if (!id && !title) return null;
 
     try {
         const isTv = type === 'tv';
-        const details = isTv ? await getSeriesDetails(id) : await getMovieDetails(id);
-        const imdbId = details?.external_ids?.imdb_id || details?.imdb_id;
-        return imdbId || null;
+        let foundTitle = title;
+        if (id) {
+            const details = isTv ? await getSeriesDetails(id) : await getMovieDetails(id);
+            const imdbId = details?.external_ids?.imdb_id || details?.imdb_id;
+            if (imdbId && /^tt\d{5,10}$/i.test(imdbId)) return imdbId;
+            if (!foundTitle) {
+                foundTitle = details?.title || details?.name || details?.original_title || details?.original_name || '';
+            }
+        }
+        if (foundTitle) {
+            const searchTerms = [foundTitle, foundTitle.replace(/[:\-–—].*$/, '').trim()];
+            for (const term of searchTerms) {
+                if (!term) continue;
+                try {
+                    const cUrl = `https://v3-cinemeta.strem.io/catalog/${isTv ? 'series' : 'movie'}/top/search=${encodeURIComponent(term)}.json`;
+                    const res = await fetch(cUrl, { headers: { 'Accept': 'application/json' }, signal: createTimeoutSignal(3500).signal });
+                    if (res.ok) {
+                        const data = await res.json();
+                        const cid = data?.metas?.[0]?.id;
+                        if (cid && /^tt\d{5,10}$/.test(cid)) return cid;
+                    }
+                } catch { /* continue */ }
+            }
+        }
+        return null;
     } catch {
         return null;
     }
@@ -696,13 +722,13 @@ export async function resolvePlaybackStreams({
     // Résolution de l'identifiant IMDb si manquant
     let imdbId = initialImdbId;
     if (!imdbId && id) {
-        imdbId = await getImdbIdForContent({ id, type });
+        imdbId = await getImdbIdForContent({ id, type, title });
     }
     if (callerSignal?.aborted) {
         return { success: false, aborted: true, streams: [] };
     }
 
-    if (!imdbId) {
+    if (!imdbId && !id && !title) {
         return {
             success: false,
             reason: 'MISSING_IMDB_ID',
@@ -716,7 +742,7 @@ export async function resolvePlaybackStreams({
     try {
         const queryParams = new URLSearchParams({
             id: String(id || ''),
-            imdbId: String(imdbId),
+            imdbId: String(imdbId || ''),
             type: isTv ? 'tv' : 'movie',
             season: String(season || 1),
             episode: String(episode || 1),
@@ -778,6 +804,16 @@ export async function resolvePlaybackStreams({
     }
 
     // 2. FALLBACK DIRECT CLIENT : Utilisé si le backend est momentanément inaccessible
+    if (!imdbId) {
+        if (backendError) return backendError;
+        return {
+            success: false,
+            reason: 'MISSING_IMDB_ID',
+            message: 'Identifiant international non trouvé pour ce titre.',
+            streams: []
+        };
+    }
+
     const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
     const activeProvider = config.provider || PLATFORM_DEFAULT_PROVIDER;
     const activeToken = config.token || '';

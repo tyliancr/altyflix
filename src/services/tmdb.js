@@ -763,6 +763,62 @@ export const getUpcomingFrenchMovies = async (page = 1) => {
     });
 };
 
+/**
+ * Get Popular French Movies (Cinéma Français)
+ * @param {number} page
+ * @param {string} sortBy
+ */
+export const getFrenchMovies = async (page = 1, sortBy = 'popularity.desc') => {
+    return apiRequest('/discover/movie', {
+        page,
+        with_original_language: 'fr',
+        sort_by: sortBy,
+        include_adult: false
+    });
+};
+
+/**
+ * Get Popular French TV Series
+ * @param {number} page
+ * @param {string} sortBy
+ */
+export const getFrenchSeries = async (page = 1, sortBy = 'popularity.desc') => {
+    return apiRequest('/discover/tv', {
+        page,
+        with_original_language: 'fr',
+        sort_by: sortBy,
+        include_adult: false
+    });
+};
+
+/**
+ * Get French Classics
+ * @param {number} page
+ */
+export const getFrenchClassics = async (page = 1) => {
+    return apiRequest('/discover/movie', {
+        page,
+        with_original_language: 'fr',
+        sort_by: 'vote_average.desc',
+        'vote_count.gte': 400,
+        include_adult: false
+    });
+};
+
+/**
+ * Get French Comedies
+ * @param {number} page
+ */
+export const getFrenchComedies = async (page = 1) => {
+    return apiRequest('/discover/movie', {
+        page,
+        with_original_language: 'fr',
+        with_genres: '35',
+        sort_by: 'popularity.desc',
+        include_adult: false
+    });
+};
+
 // --- SEASONAL THEMED ENDPOINTS (Note: These endpoints are currently unused in the main routing/pages, preserved for future seasonal promotions) ---
 
 /**
@@ -850,6 +906,10 @@ export default {
     getLatestReleasedMovies,
     getLatestReleasedSeries,
     getUpcomingFrenchMovies,
+    getFrenchMovies,
+    getFrenchSeries,
+    getFrenchClassics,
+    getFrenchComedies,
     getHalloweenMovies,
     getChristmasMovies,
     getValentineMovies,

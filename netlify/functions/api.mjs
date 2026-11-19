@@ -449,16 +449,22 @@ var require_stream_resolver = __commonJS({
       ]);
       return clean.split(/\s+/).filter((w) => w.length >= 2 && !STOPWORDS.has(w));
     }
-    function isTorrentRelevantToTitle(torrentText, cleanTitle) {
-      if (!cleanTitle || typeof cleanTitle !== "string" || cleanTitle.trim().length < 2) return true;
-      const keywords = extractTitleKeywords(cleanTitle);
-      if (keywords.length === 0) return true;
+    function isTorrentRelevantToTitle(torrentText, titleCandidates) {
+      if (!titleCandidates) return true;
+      const candidates = (Array.isArray(titleCandidates) ? titleCandidates : [titleCandidates]).filter((t) => t && typeof t === "string" && t.trim().length >= 2);
+      if (candidates.length === 0) return true;
       const normalizedTorrent = String(torrentText || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, " ");
-      return keywords.some((kw) => {
-        const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`\\b${escaped}\\b`, "i");
-        return regex.test(normalizedTorrent);
-      });
+      for (const title of candidates) {
+        const keywords = extractTitleKeywords(title);
+        if (keywords.length === 0) return true;
+        const matches = keywords.some((kw) => {
+          const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const regex = new RegExp(`\\b${escaped}\\b`, "i");
+          return regex.test(normalizedTorrent);
+        });
+        if (matches) return true;
+      }
+      return false;
     }
     function parseBytes(str) {
       if (!str) return 0;
@@ -489,7 +495,7 @@ var require_stream_resolver = __commonJS({
       const clean = String(urlStr).toLowerCase();
       return clean.includes("downloading_") || clean.includes("/videos/downloading") || clean.includes("downloading.mp4") || clean.includes("slate.elfhosted.com") || clean.includes("slate.mp4") || clean.includes("slate.m3u8") || clean.includes("docs.elfhosted.com");
     }
-    function parseStreamDetails(stream) {
+    function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
       const rawTitle = stream.title || stream.description || "";
       const rawName = stream.name || "";
       const filename = stream.behaviorHints?.filename || rawTitle.split("\n")[0] || "";
@@ -535,7 +541,8 @@ var require_stream_resolver = __commonJS({
       const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle);
       const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(rawTitle) || /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) || /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) || /\b(?:dual.*(?:eng|en))\b/i.test(fullText);
       const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
-      const hasFrenchAudio = Boolean(!isExplicitVostfr && !isForeignPrimaryMulti && (hasFrenchDubInName || isFrenchMulti || hasFrenchAudioInAudioLine || isTorrent9 && !isExplicitVostfr || hasFrenchFlag && !isExplicitVostfr));
+      const isNonFrenchDub = /\b(?:german|deutsch|italian|italiano|spanish|espanol|castellano|portuguese|russian|japanese|korean|hindi|tamil)\s*dub\b/i.test(fullText) || /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu)\b/i.test(fullText);
+      const hasFrenchAudio = Boolean(!isExplicitVostfr && !isForeignPrimaryMulti && (hasFrenchDubInName || isFrenchMulti || hasFrenchAudioInAudioLine || isTorrent9 && !isExplicitVostfr || hasFrenchFlag && !isExplicitVostfr || isFrenchOriginal && !isNonFrenchDub));
       const isPureFrench = Boolean(hasFrenchAudio && !isEnglishPrimaryMulti);
       const isFrench = hasFrenchAudio;
       const isVostfr = !isFrench && Boolean(
@@ -577,7 +584,8 @@ var require_stream_resolver = __commonJS({
       const seedsMatch = rawTitle.match(/👤\s*(\d+)/);
       const seeds = seedsMatch ? parseInt(seedsMatch[1], 10) : 0;
       let languageLabel = "Version Originale";
-      if (isPureFrench) languageLabel = "Fran\xE7ais (VF)";
+      if (isFrenchOriginal && isFrench && !hasFrenchDubInName && !hasFrenchFlag) languageLabel = "Fran\xE7ais (Original)";
+      else if (isPureFrench) languageLabel = "Fran\xE7ais (VF)";
       else if (isFrench) languageLabel = "Fran\xE7ais (MULTI \xB7 VF)";
       else if (isVostfr) languageLabel = "VOSTFR (Sous-titres FR)";
       return {
@@ -610,18 +618,27 @@ var require_stream_resolver = __commonJS({
         languageLabel
       };
     }
-    function curateStreams(rawStreams, provider, { enableAviTranscode = true, enableAudioRemux = enableAviTranscode, preferredLang = "vf", contentType = "movie", cleanTitle = "" } = {}) {
+    function curateStreams(rawStreams, provider, {
+      enableAviTranscode = true,
+      enableAudioRemux = enableAviTranscode,
+      preferredLang = "vf",
+      contentType = "movie",
+      cleanTitle = "",
+      titleVariants = [],
+      isFrenchOriginal = false
+    } = {}) {
       const preferVo = String(preferredLang || "").toLowerCase() === "vo" || String(preferredLang || "").toLowerCase() === "vostfr";
       const isMovie = String(contentType || "movie").toLowerCase() !== "tv";
       const isHd1080Plus = (s) => s.tierKey === "1080p" || s.tierKey === "4k";
+      const allVariants = Array.from(new Set([cleanTitle, ...Array.isArray(titleVariants) ? titleVariants : [titleVariants]].filter(Boolean)));
       const validAll = rawStreams.filter((s) => {
         if (typeof s.url !== "string" || normalizeAllowedUrl2(s.url) === null || isTorrentioErrorStream(s)) return false;
         const combined = `${s.filename || ""} ${s.title || ""} ${s.name || ""}`;
-        if (cleanTitle && !isTorrentRelevantToTitle(combined, cleanTitle)) return false;
+        if (allVariants.length > 0 && !isTorrentRelevantToTitle(combined, allVariants)) return false;
         return true;
       }).map((s, idx) => {
         const normalizedUrl = normalizeAllowedUrl2(s.url);
-        const details = parseStreamDetails(s);
+        const details = parseStreamDetails(s, { isFrenchOriginal });
         return {
           id: `stream-${idx}`,
           url: normalizedUrl,
@@ -1291,10 +1308,13 @@ ${fName}
         }
         return s;
       };
-      if ((!imdbId || !cleanTitle) && safeId && tmdbKey) {
+      let isFrenchOriginal = false;
+      let originalTitle = "";
+      let cinemetaTitle = "";
+      if (safeId && tmdbKey) {
         try {
           const detailUrl = tmdbUrl2(isTv ? `tv/${safeId}/external_ids` : `movie/${safeId}/external_ids`, {}, tmdbKey);
-          const tmdbRes = await fetch(detailUrl, { redirect: "error", signal: AbortSignal.timeout(5e3) });
+          const tmdbRes = await fetch(detailUrl, { redirect: "error", signal: AbortSignal.timeout(4e3) });
           if (tmdbRes.ok) {
             const tmdbData = await tmdbRes.json();
             if (!imdbId && /^tt\d{5,10}$/.test(String(tmdbData.imdb_id || ""))) imdbId = tmdbData.imdb_id;
@@ -1303,7 +1323,7 @@ ${fName}
           console.warn("[Altyflix Stream Resolver] \xC9chec de r\xE9cup\xE9ration de l'identifiant IMDb direct :", e.message);
         }
       }
-      if (!cleanTitle && imdbId) {
+      if (imdbId) {
         try {
           const cinemetaUrl = `https://v3-cinemeta.strem.io/meta/${isTv ? "series" : "movie"}/${imdbId}.json`;
           const cRes = await fetch(cinemetaUrl, { redirect: "error", signal: AbortSignal.timeout(3e3) });
@@ -1311,14 +1331,17 @@ ${fName}
             const cData = await cRes.json();
             const foundName = cData?.meta?.name;
             if (foundName && typeof foundName === "string") {
-              cleanTitle = foundName.trim();
-              console.log(`[Altyflix Stream Resolver] Titre r\xE9solu via Cinemeta : "${cleanTitle}" pour ${imdbId}`);
+              cinemetaTitle = foundName.trim();
+              if (!cleanTitle) {
+                cleanTitle = cinemetaTitle;
+                console.log(`[Altyflix Stream Resolver] Titre r\xE9solu via Cinemeta : "${cleanTitle}" pour ${imdbId}`);
+              }
             }
           }
         } catch {
         }
       }
-      if ((!imdbId || !cleanTitle) && safeId && tmdbKey) {
+      if (safeId && tmdbKey) {
         try {
           const baseDetailUrl = tmdbUrl2(isTv ? `tv/${safeId}` : `movie/${safeId}`, { language: "fr-FR" }, tmdbKey);
           const baseRes = await fetch(baseDetailUrl, { redirect: "error", signal: AbortSignal.timeout(4e3) });
@@ -1327,18 +1350,25 @@ ${fName}
             const candidateImdb = baseData.imdb_id || baseData.external_ids?.imdb_id;
             if (!imdbId && /^tt\d{5,10}$/.test(String(candidateImdb || ""))) imdbId = candidateImdb;
             if (!cleanTitle) cleanTitle = baseData.title || baseData.name || baseData.original_title || baseData.original_name || "";
+            originalTitle = baseData.original_title || baseData.original_name || "";
+            if (baseData.original_language === "fr") isFrenchOriginal = true;
             if (!imdbId) {
-              const searchTitle = cleanTitle || baseData.original_title || baseData.title;
-              if (searchTitle) {
-                const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${isTv ? "series" : "movie"}/top/search=${encodeURIComponent(searchTitle)}.json`;
-                const cRes = await fetch(cinemetaUrl, { redirect: "error", signal: AbortSignal.timeout(4e3) });
-                if (cRes.ok) {
-                  const cData = await cRes.json();
-                  const cid = cData?.metas?.[0]?.id;
-                  if (cid && /^tt\d{5,10}$/.test(cid)) {
-                    imdbId = cid;
-                    console.log(`[Altyflix Stream Resolver] IMDb ID identifi\xE9 via Cinemeta : ${imdbId} pour "${searchTitle}"`);
+              const searchCandidates = [cleanTitle, originalTitle, cleanTitle.replace(/[:\-–—].*$/, "").trim()].filter(Boolean);
+              for (const sTitle of searchCandidates) {
+                try {
+                  const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${isTv ? "series" : "movie"}/top/search=${encodeURIComponent(sTitle)}.json`;
+                  const cRes = await fetch(cinemetaUrl, { redirect: "error", signal: AbortSignal.timeout(3500) });
+                  if (cRes.ok) {
+                    const cData = await cRes.json();
+                    const cid = cData?.metas?.[0]?.id;
+                    if (cid && /^tt\d{5,10}$/.test(cid)) {
+                      imdbId = cid;
+                      cinemetaTitle = cData?.metas?.[0]?.name || "";
+                      console.log(`[Altyflix Stream Resolver] IMDb ID identifi\xE9 via Cinemeta : ${imdbId} pour "${sTitle}"`);
+                      break;
+                    }
                   }
+                } catch {
                 }
               }
             }
@@ -1347,21 +1377,44 @@ ${fName}
           console.warn("[Altyflix Stream Resolver] Erreur de recherche IMDb \xE9tendue :", e.message);
         }
       }
+      if (!isFrenchOriginal && imdbId && tmdbKey) {
+        try {
+          const findUrl = tmdbUrl2(`find/${imdbId}`, { external_source: "imdb_id" }, tmdbKey);
+          const findRes = await fetch(findUrl, { redirect: "error", signal: AbortSignal.timeout(3e3) });
+          if (findRes.ok) {
+            const findData = await findRes.json();
+            const item = findData?.movie_results?.[0] || findData?.tv_results?.[0];
+            if (item) {
+              if (item.original_language === "fr") isFrenchOriginal = true;
+              if (!originalTitle) originalTitle = item.original_title || item.original_name || "";
+              if (!cleanTitle) cleanTitle = item.title || item.name || "";
+            }
+          }
+        } catch {
+        }
+      }
       if (!imdbId && cleanTitle && tmdbKey) {
         try {
-          const searchUrl = tmdbUrl2(isTv ? "search/tv" : "search/movie", { query: cleanTitle, language: "fr-FR" }, tmdbKey);
-          const sRes = await fetch(searchUrl, { redirect: "error", signal: AbortSignal.timeout(3500) });
-          if (sRes.ok) {
-            const sData = await sRes.json();
-            const topResult = sData.results?.[0];
-            if (topResult?.id && positiveInteger2(topResult.id)) {
-              const extUrl = tmdbUrl2(isTv ? `tv/${topResult.id}/external_ids` : `movie/${topResult.id}/external_ids`, {}, tmdbKey);
-              const extRes = await fetch(extUrl, { redirect: "error", signal: AbortSignal.timeout(3e3) });
-              if (extRes.ok) {
-                const extData = await extRes.json();
-                if (/^tt\d{5,10}$/.test(String(extData.imdb_id || ""))) {
-                  imdbId = extData.imdb_id;
-                  console.log(`[Altyflix Stream Resolver] IMDb ID trouv\xE9 via recherche TMDB : ${imdbId} pour "${cleanTitle}"`);
+          const searchCandidates = [cleanTitle, cleanTitle.replace(/[:\-–—].*$/, "").trim()];
+          for (const sTitle of searchCandidates) {
+            if (!sTitle) continue;
+            const searchUrl = tmdbUrl2(isTv ? "search/tv" : "search/movie", { query: sTitle, language: "fr-FR" }, tmdbKey);
+            const sRes = await fetch(searchUrl, { redirect: "error", signal: AbortSignal.timeout(3500) });
+            if (sRes.ok) {
+              const sData = await sRes.json();
+              const topResult = sData.results?.[0];
+              if (topResult?.id && positiveInteger2(topResult.id)) {
+                if (topResult.original_language === "fr") isFrenchOriginal = true;
+                if (!originalTitle) originalTitle = topResult.original_title || topResult.original_name || "";
+                const extUrl = tmdbUrl2(isTv ? `tv/${topResult.id}/external_ids` : `movie/${topResult.id}/external_ids`, {}, tmdbKey);
+                const extRes = await fetch(extUrl, { redirect: "error", signal: AbortSignal.timeout(3e3) });
+                if (extRes.ok) {
+                  const extData = await extRes.json();
+                  if (/^tt\d{5,10}$/.test(String(extData.imdb_id || ""))) {
+                    imdbId = extData.imdb_id;
+                    console.log(`[Altyflix Stream Resolver] IMDb ID trouv\xE9 via recherche TMDB : ${imdbId} pour "${sTitle}"`);
+                    break;
+                  }
                 }
               }
             }
@@ -1370,6 +1423,27 @@ ${fName}
           console.warn("[Altyflix Stream Resolver] Erreur recherche TMDB par titre :", sErr.message);
         }
       }
+      if (!imdbId && cleanTitle) {
+        try {
+          const searchCandidates = [cleanTitle, cleanTitle.replace(/[:\-–—].*$/, "").trim()];
+          for (const sTitle of searchCandidates) {
+            const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${isTv ? "series" : "movie"}/top/search=${encodeURIComponent(sTitle)}.json`;
+            const cRes = await fetch(cinemetaUrl, { redirect: "error", signal: AbortSignal.timeout(3500) });
+            if (cRes.ok) {
+              const cData = await cRes.json();
+              const cid = cData?.metas?.[0]?.id;
+              if (cid && /^tt\d{5,10}$/.test(cid)) {
+                imdbId = cid;
+                cinemetaTitle = cData?.metas?.[0]?.name || "";
+                console.log(`[Altyflix Stream Resolver] IMDb ID identifi\xE9 via Cinemeta direct : ${imdbId} pour "${sTitle}"`);
+                break;
+              }
+            }
+          }
+        } catch {
+        }
+      }
+      const titleVariants = Array.from(new Set([cleanTitle, originalTitle, cinemetaTitle].filter((t) => t && typeof t === "string" && t.trim().length >= 2)));
       if (!imdbId) {
         if (provider === "torbox" && cleanTitle) {
           try {
@@ -1381,7 +1455,15 @@ ${fName}
               torboxToken: token
             });
             if (mylistStreams.length > 0) {
-              const curated = curateStreams(mylistStreams, provider, { enableAviTranscode, enableAudioRemux, preferredLang: normalizedLang, contentType: type });
+              const curated = curateStreams(mylistStreams, provider, {
+                enableAviTranscode,
+                enableAudioRemux,
+                preferredLang: normalizedLang,
+                contentType: type,
+                cleanTitle,
+                titleVariants,
+                isFrenchOriginal
+              });
               const readyFallback = curated.streams.map((s) => finalizeStreamUrl({ ...s, verifiedReady: true }));
               const activeFallback = curated.activeStream ? readyFallback.find((s) => s.id === curated.activeStream.id) || readyFallback[0] : readyFallback[0];
               return {
@@ -1429,7 +1511,7 @@ ${fName}
               const res = await fetch(url, {
                 headers: { "Accept": "application/json" },
                 redirect: "error",
-                signal: AbortSignal.timeout(4500)
+                signal: AbortSignal.timeout(7500)
               });
               if (res.ok) {
                 const data = await res.json();
@@ -1556,7 +1638,15 @@ ${fName}
               console.warn("[Altyflix Stream Resolver] V\xE9rification batch cache TorBox ignor\xE9e :", e.message);
             }
           }
-          const curated = curateStreams(rawStreams, provider, { enableAviTranscode, enableAudioRemux, preferredLang: normalizedLang, contentType: type, cleanTitle });
+          const curated = curateStreams(rawStreams, provider, {
+            enableAviTranscode,
+            enableAudioRemux,
+            preferredLang: normalizedLang,
+            contentType: type,
+            cleanTitle,
+            titleVariants,
+            isFrenchOriginal
+          });
           if (!curated.streams || curated.streams.length === 0) {
             return {
               success: false,

@@ -512,3 +512,45 @@ test('Debrid Stream Resolver: Audio garanti sans faux positifs (LD/HDTV AAC prio
   // Les deux versions doivent être proposées pour que l'utilisateur puisse choisir Dolby s'il a le matériel
   assert.equal(curated.streams.length, 2, 'Les deux versions (Stéréo et Dolby) doivent être proposées');
 });
+
+test('Debrid Stream Resolver: Films français (isFrenchOriginal), réconciliation multi-titres (BAC Nord / The Stronghold) et pistes AAC originales', () => {
+  // 1. Un film français encodé par YTS avec AAC doit être reconnu comme VF (son original français) et Web Audio Safe
+  const ytsRelease = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: 'Kaamelott: First Installment 2021 1080p BluRay\n👤 9 💾 2.21 GB ⚙️ YTS',
+    behaviorHints: { filename: 'Kaamelott.First.Installment.2021.1080p.BluRay.x264.AAC5.1-[YTS.MX].mp4' },
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/kaamelott/yts.mp4'
+  }, { isFrenchOriginal: true });
+
+  assert.equal(ytsRelease.isFrench, true, 'Un film français conserve son audio français en VO');
+  assert.equal(ytsRelease.isWebAudioSafe, true, 'YTS AAC doit être compatible web');
+  assert.equal(ytsRelease.languageLabel, 'Français (Original)');
+
+  // 2. Réconciliation multi-titres : une release sous titre international (The Stronghold) ne doit PAS être éliminée quand on cherche BAC Nord
+  const rawStreams = [
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'The.Stronghold.2020.FRENCH.1080p.BluRay.H264.AAC-VXT\n👤 15 💾 1.98 GB ⚙️ RARBG\n🇫🇷',
+      behaviorHints: { filename: 'The.Stronghold.2020.FRENCH.1080p.BluRay.H264.AAC-VXT.mp4' },
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/bac/vxt.mp4'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Bac.Nord.2020.FRENCH.1080p.BluRay.DTS.x264-EXTREME\n👤 4 💾 6.55 GB ⚙️ Torrent9\n🇫🇷',
+      behaviorHints: { filename: 'Bac.Nord.2020.FRENCH.1080p.BluRay.DTS.x264-EXTREME.mkv' },
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/bac/extreme.mkv'
+    }
+  ];
+
+  const curated = curateStreams(rawStreams, 'torbox', {
+    contentType: 'movie',
+    cleanTitle: 'BAC Nord',
+    titleVariants: ['BAC Nord', 'The Stronghold'],
+    isFrenchOriginal: true,
+    enableAudioRemux: false
+  });
+
+  assert.equal(curated.streams.length, 2, 'Les deux versions (titre français et titre international) doivent être conservées');
+  assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/bac/vxt.mp4', 'Le flux AAC universel doit être le flux actif par défaut');
+  assert.equal(curated.activeStream.isWebAudioSafe, true);
+});

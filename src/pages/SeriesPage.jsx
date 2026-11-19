@@ -41,6 +41,7 @@ const SeriesPage = () => {
                 { title: 'Séries populaires', content: popular.results || [], ranked: true },
             ]),
             rest: Promise.allSettled([
+                tmdb.getFrenchSeries(),
                 tmdb.getOnTheAirSeries(),
                 tmdb.getContentByGenre('tv', TV_GENRES.ACTION_ADVENTURE),
                 tmdb.getContentByGenre('tv', TV_GENRES.SCI_FI_FANTASY),
@@ -48,7 +49,8 @@ const SeriesPage = () => {
                 tmdb.getContentByGenre('tv', TV_GENRES.ANIMATION),
                 tmdb.getContentByGenre('tv', TV_GENRES.DOCUMENTARY),
                 tmdb.getTopRatedSeries(),
-            ]).then(([onAir, action, sciFi, comedy, animation, documentary, topRated]) => [
+            ]).then(([french, onAir, action, sciFi, comedy, animation, documentary, topRated]) => [
+                { title: 'Séries Françaises & Créations Originales', content: results(french) },
                 { title: 'En cours de diffusion', content: results(onAir) },
                 { title: 'Action & aventure', content: results(action) },
                 { title: 'Science-fiction & fantastique', content: results(sciFi) },

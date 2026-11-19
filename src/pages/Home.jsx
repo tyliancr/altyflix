@@ -160,6 +160,8 @@ const Home = () => {
                     Promise.allSettled([
                         tmdb.getPopularMovies(),
                         tmdb.getPopularSeries(),
+                        tmdb.getFrenchMovies(),
+                        tmdb.getFrenchSeries(),
                         tmdb.getTopRatedMovies(),
                         tmdb.getTopRatedSeries(),
                         tmdb.getNowPlayingMovies(),
@@ -176,16 +178,18 @@ const Home = () => {
 
                         const popularMoviesData = getPhase2Val(0);
                         const popularSeriesData = getPhase2Val(1);
-                        const topRatedMoviesData = getPhase2Val(2);
-                        const topRatedSeriesData = getPhase2Val(3);
-                        const nowPlayingData = getPhase2Val(4);
-                        const upcomingMoviesData = getPhase2Val(5);
-                        const onTheAirData = getPhase2Val(6);
-                        const actionMoviesData = getPhase2Val(7);
-                        const sciFiMoviesData = getPhase2Val(8);
-                        const actionSeriesData = getPhase2Val(9);
-                        const sciFiSeriesData = getPhase2Val(10);
-                        const animationSeriesData = getPhase2Val(11);
+                        const frenchMoviesData = getPhase2Val(2);
+                        const frenchSeriesData = getPhase2Val(3);
+                        const topRatedMoviesData = getPhase2Val(4);
+                        const topRatedSeriesData = getPhase2Val(5);
+                        const nowPlayingData = getPhase2Val(6);
+                        const upcomingMoviesData = getPhase2Val(7);
+                        const onTheAirData = getPhase2Val(8);
+                        const actionMoviesData = getPhase2Val(9);
+                        const sciFiMoviesData = getPhase2Val(10);
+                        const actionSeriesData = getPhase2Val(11);
+                        const sciFiSeriesData = getPhase2Val(12);
+                        const animationSeriesData = getPhase2Val(13);
 
                         const topRatedMixed = [
                             ...(topRatedMoviesData.results || []).map(m => ({ ...m, type: 'movie' })),
@@ -195,6 +199,8 @@ const Home = () => {
                         const baseCategories = [
                             { title: t('home.trending'), content: trendingData.results || [], ranked: true },
                             { title: t('home.newReleases'), content: newReleasesList },
+                            { title: 'Cinéma Français & Francophone', content: frenchMoviesData.results || [] },
+                            { title: 'Séries Françaises à Succès', content: frenchSeriesData.results || [], isTV: true },
                             { title: t('home.seriesTrending'), content: popularSeriesData.results || [], isTV: true },
                             { title: t('home.seriesAction'), content: actionSeriesData.results || [], isTV: true },
                             { title: t('home.seriesSciFi'), content: sciFiSeriesData.results || [], isTV: true },

@@ -334,7 +334,7 @@ const LoginPage = () => {
                     initial={{ opacity: 0, y: -20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.6 }}
-                    className="cursor-pointer flex items-center w-full sm:w-auto justify-center sm:justify-start"
+                    className="cursor-pointer flex items-center shrink-0"
                     onClick={() => setStep(1)}
                 >
                     <ALTYFLIXLogo size={40} showText className="text-red-600" />
@@ -345,7 +345,7 @@ const LoginPage = () => {
                         initial={{ opacity: 0, y: -20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6, delay: 0.1 }}
-                        className="flex items-center gap-3 sm:gap-6 absolute right-4 sm:static"
+                        className="flex items-center gap-3 sm:gap-6 shrink-0"
                     >
                         <div className="relative group hidden sm:block">
                             <select

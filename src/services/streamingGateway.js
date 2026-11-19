@@ -999,116 +999,8 @@ export async function testGatewayToken({ provider, token }) {
     }
 }
 
-const OS_SPLIT_RE = /\b(?:cd|disc|disk|part)[\s._-]?[123]\b/i;
-const OS_GENERIC_TOKENS = new Set(['french', 'truefrench', 'vff', 'vfq', 'vostfr', 'multi', '1080p', '720p', '2160p', '480p', 'x264', 'h264', 'x265', 'h265', 'hevc', 'xvid', 'divx', 'ac3', 'eac3', 'dts', 'aac', 'mp3', 'mkv', 'mp4', 'avi', 'srt', 'bluray', 'bdrip', 'brrip', 'dvdrip', 'webrip', 'webdl']);
-
-function buildClientSubtitleHint(s) {
-    const raw = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`.toLowerCase();
-    const parts = [];
-    if (/\bextended\b/.test(raw)) parts.push('Extended');
-    else if (/\bunrated\b/.test(raw)) parts.push('Unrated');
-    else if (/\bdirector/.test(raw)) parts.push('Director');
-    if (/\b(?:blu-?ray|bdrip|brrip)\b/.test(raw)) parts.push('BluRay');
-    else if (/\bweb-?(?:dl|rip)\b/.test(raw)) parts.push('WEB');
-    else if (/\bdvd(?:rip)?\b/.test(raw)) parts.push('DVDRip');
-    const fpsNum = parseFloat(s.MovieFPS);
-    if (Number.isFinite(fpsNum) && fpsNum >= 23 && fpsNum <= 30) {
-        parts.push(Math.abs(fpsNum - 25) < 0.2 ? '25fps' : (Math.abs(fpsNum - 23.976) < 0.2 ? '23.976' : `${fpsNum.toFixed(0)}fps`));
-    }
-    if (String(s.SubHearingImpaired) === '1') parts.push('SDH');
-    return parts.slice(0, 2).join(' · ');
-}
-
-function rankOpenSubtitlesClient(osList, { filename = '', limit = 4 } = {}) {
-    if (!Array.isArray(osList)) return [];
-    const fnLower = String(filename || '').toLowerCase();
-    const fnTokens = fnLower
-        ? fnLower.replace(/[^a-z0-9]+/g, ' ').split(' ').filter(t => t.length >= 4 && !OS_GENERIC_TOKENS.has(t))
-        : [];
-    const fnExtended = /\bextended\b/.test(fnLower);
-    const fnUnrated = /\bunrated\b/.test(fnLower);
-    const fnDirector = /\bdirector/.test(fnLower);
-    const fnDoubleEp = /\bs\d+e\d+(?:and|[-._]?e)\d+\b/i.test(fnLower);
-    const fnIsDvdPal = /\b(?:dvdrip|pal|dvd)\b/.test(fnLower) && !/\b(?:bluray|bdrip|brrip|web-?dl|ntsc)\b/.test(fnLower);
-    const fnIsHd24 = /\b(?:bluray|bdrip|brrip|web-?dl|webrip|1080p|2160p|4k)\b/.test(fnLower) && !/\b(?:dvdrip|pal)\b/.test(fnLower);
-
-    const candidates = osList.filter(s => {
-        if (!s?.SubDownloadLink || !/^https:\/\/[a-z0-9.-]*opensubtitles\.org\//i.test(s.SubDownloadLink)) return false;
-        const fmt = String(s.SubFormat || 'srt').toLowerCase();
-        if (fmt && fmt !== 'srt' && fmt !== 'vtt') return false;
-        const nameStr = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`;
-        if (OS_SPLIT_RE.test(nameStr)) return false;
-        return true;
-    });
-
-    const scored = candidates.map(s => {
-        const raw = `${s.SubFileName || ''} ${s.MovieReleaseName || ''}`.toLowerCase();
-        let score = 0;
-        const downloads = Math.max(0, parseInt(s.SubDownloadsCnt || '0', 10) || 0);
-        score += Math.min(1500, Math.log10(downloads + 1) * 400);
-        score += (parseFloat(s.SubRating) || 0) * 40;
-        if (String(s.SubHearingImpaired) === '1') score -= 450;
-        if (String(s.SubBad) && Number(s.SubBad) > 0) score -= 2000;
-        if (String(s.SubForeignPartsOnly) === '1') score -= 4000;
-
-        const subExtended = /\bextended\b/.test(raw);
-        const subUnrated = /\bunrated\b/.test(raw);
-        const subDirector = /\bdirector/.test(raw);
-        if (fnLower) {
-            if (fnExtended && subExtended) score += 8000;
-            else if (fnExtended !== subExtended) score -= 5000;
-            if (fnUnrated && subUnrated) score += 6000;
-            else if (fnUnrated !== subUnrated) score -= 3500;
-            if (fnDirector && subDirector) score += 6000;
-            else if (fnDirector !== subDirector) score -= 3500;
-        } else if (subExtended || subUnrated || subDirector) {
-            score -= 600;
-        }
-
-        const subDoubleEp = /\b(?:s\d+e\d+(?:and|[-._]?e)\d+|e01[-._&+]?02|part\s*1\s*(?:&|and)\s*2)\b/i.test(raw);
-        if (fnDoubleEp && subDoubleEp) score += 5000;
-        else if (fnDoubleEp !== subDoubleEp) score -= 1200;
-
-        if (fnLower) {
-            const subIsBluray = /\b(?:blu-?ray|bdrip|brrip)\b/.test(raw);
-            const subIsWeb = /\bweb-?(?:dl|rip)\b/.test(raw);
-            const subIsDvd = /\bdvd(?:rip)?\b/.test(raw);
-            if (/\b(?:blu-?ray|bdrip|brrip)\b/.test(fnLower) && subIsBluray) score += 3500;
-            if (/\bweb-?(?:dl|rip)\b/.test(fnLower) && subIsWeb) score += 3500;
-            if (/\bdvd(?:rip)?\b/.test(fnLower) && subIsDvd) score += 3500;
-            if (/\b(?:blu-?ray|bdrip|brrip|web-?(?:dl|rip))\b/.test(fnLower) && subIsDvd && !subIsBluray && !subIsWeb) score -= 1800;
-
-            const fps = parseFloat(s.MovieFPS);
-            if (Number.isFinite(fps) && fps >= 23 && fps <= 30) {
-                if (fnIsDvdPal) score += Math.abs(fps - 25) < 0.2 ? 3200 : -1500;
-                else if (fnIsHd24) score += Math.abs(fps - 23.976) < 0.25 ? 2400 : (Math.abs(fps - 25) < 0.2 ? -2200 : 0);
-            }
-
-            let tokenMatches = 0;
-            for (const tok of fnTokens) {
-                if (raw.includes(tok)) tokenMatches++;
-            }
-            score += Math.min(6000, tokenMatches * 1400);
-        }
-
-        return { item: s, score, hint: buildClientSubtitleHint(s) };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    const seen = new Set();
-    const out = [];
-    for (const entry of scored) {
-        const key = `${entry.item.IDSubtitleFile || ''}|${entry.item.SubDownloadLink}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(entry);
-        if (out.length >= limit) break;
-    }
-    return out;
-}
-
 /**
- * Recherche les sous-titres disponibles pour un film ou un épisode (OpenSubtitles direct en priorité absolue)
+ * Recherche les sous-titres disponibles pour un film ou un épisode
  */
 export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type = 'movie', season = 1, episode = 1, filename = '', streamUrl = '' }) {
     let imdbId = initialImdbId;
@@ -1123,7 +1015,6 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
     }
 
     const cleanImdbId = (imdbId && /^tt\d+$/i.test(String(imdbId))) ? String(imdbId).toLowerCase() : '';
-    const numericImdb = cleanImdbId ? cleanImdbId.replace(/^tt/, '') : '';
     const isTv = type === 'tv';
     const stremKey = cleanImdbId ? (isTv ? `${cleanImdbId}:${season}:${episode}` : `${cleanImdbId}`) : '';
 
@@ -1143,34 +1034,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         }
     })();
 
-    // 1. Source PRINCIPALE : OpenSubtitles REST directement depuis le navigateur (CORS natif, contourne les blocages IP AWS/Netlify)
-    const fetchDirectOpenSubtitles = async (osLang, timeoutMs) => {
-        if (!numericImdb) return [];
-        const s = createTimeoutSignal(timeoutMs);
-        try {
-            const osUrl = isTv
-                ? `https://rest.opensubtitles.org/search/sublanguageid-${osLang}/imdbid-${numericImdb}/season-${season || 1}/episode-${episode || 1}`
-                : `https://rest.opensubtitles.org/search/sublanguageid-${osLang}/imdbid-${numericImdb}`;
-            const res = await fetch(osUrl, {
-                headers: { 'X-User-Agent': 'TemporaryUserAgent' },
-                signal: s.signal
-            });
-            if (!res.ok) return [];
-            const data = await res.json();
-            return Array.isArray(data) ? data : [];
-        } catch {
-            return [];
-        } finally {
-            s.cleanup();
-        }
-    };
-
-    const directOsPromise = Promise.all([
-        fetchDirectOpenSubtitles('fre', 5500),
-        fetchDirectOpenSubtitles('eng', 4500)
-    ]);
-
-    // 2. Source de secours : Backend /api/subtitles (OpenSubtitles côté serveur si le navigateur est bloqué)
+    // 1. Source de sous-titres : Backend /api/subtitles (OpenSubtitles côté serveur avec rate-limiting et conversion VTT sécurisée)
     const backendSubsPromise = (async () => {
         if (!id && !cleanImdbId) return [];
         const s = createTimeoutSignal(5500);
@@ -1197,9 +1061,8 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
     })();
 
     try {
-        const [embeddedSubs, [directFrRaw, directEnRaw], backendSubs] = await Promise.all([
+        const [embeddedSubs, backendSubs] = await Promise.all([
             embeddedPromise,
-            directOsPromise,
             backendSubsPromise
         ]);
 
@@ -1253,50 +1116,12 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             }
         }
 
-        // A. OpenSubtitles direct (fonctionne sur Netlify ET en local avec classement par release/FPS)
-        for (const { item: s, hint } of rankOpenSubtitlesClient(directFrRaw, { filename, limit: 4 })) {
-            const canon = canonicalSubUrl(s.SubDownloadLink);
-            if (externalFrCount >= 4 || !canon || seenUrls.has(canon)) continue;
-            frCount++;
-            externalFrCount++;
-            seenUrls.add(canon);
-            normalized.push({
-                id: `os-fr-${externalFrCount}`,
-                lang: 'fr',
-                label: frCount === 1 ? 'Français' : `Français (Option ${frCount})`,
-                hint,
-                fps: parseFloat(s.MovieFPS) || null,
-                url: s.SubDownloadLink,
-                fallbackUrl: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`,
-                encoding: s.SubEncoding || 'utf-8'
-            });
-        }
-        for (const { item: s, hint } of rankOpenSubtitlesClient(directEnRaw, { filename, limit: 3 })) {
-            const canon = canonicalSubUrl(s.SubDownloadLink);
-            if (externalEnCount >= 3 || !canon || seenUrls.has(canon)) continue;
-            enCount++;
-            externalEnCount++;
-            seenUrls.add(canon);
-            normalized.push({
-                id: `os-en-${externalEnCount}`,
-                lang: 'en',
-                label: enCount === 1 ? 'Anglais' : `Anglais (Option ${enCount})`,
-                hint,
-                fps: parseFloat(s.MovieFPS) || null,
-                url: s.SubDownloadLink,
-                fallbackUrl: `/api/subtitles-vtt?url=${encodeURIComponent(s.SubDownloadLink)}`,
-                encoding: s.SubEncoding || 'utf-8'
-            });
-        }
-
-        // B. Fallback backend /api/subtitles si OpenSubtitles direct n'a rien renvoyé pour une langue
-        const needBackendFr = externalFrCount === 0;
-        const needBackendEn = externalEnCount === 0;
+        // A. Sous-titres du backend /api/subtitles (OpenSubtitles et indexeurs sécurisés sans CORS)
         for (const sub of backendSubs) {
             const canon = canonicalSubUrl(sub?.url);
             if (!canon || seenUrls.has(canon)) continue;
             const rawLang = String(sub.lang || '').toLowerCase();
-            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && needBackendFr && externalFrCount < 4) {
+            if ((rawLang === 'fr' || rawLang === 'fre' || rawLang === 'fra') && externalFrCount < 4) {
                 frCount++;
                 externalFrCount++;
                 seenUrls.add(canon);
@@ -1309,7 +1134,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
                     url: sub.url,
                     encoding: 'utf-8'
                 });
-            } else if ((rawLang === 'en' || rawLang === 'eng') && needBackendEn && externalEnCount < 3) {
+            } else if ((rawLang === 'en' || rawLang === 'eng') && externalEnCount < 3) {
                 enCount++;
                 externalEnCount++;
                 seenUrls.add(canon);

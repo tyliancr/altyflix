@@ -1055,6 +1055,23 @@ async function resolveStreamsServer({
   }
 
   // Fallback de recherche IMDb et titre si toujours manquant
+  if (!cleanTitle && imdbId) {
+    try {
+      const cinemetaUrl = `https://v3-cinemeta.strem.io/meta/${isTv ? 'series' : 'movie'}/${imdbId}.json`;
+      const cRes = await fetch(cinemetaUrl, { redirect: 'error', signal: AbortSignal.timeout(3000) });
+      if (cRes.ok) {
+        const cData = await cRes.json();
+        const foundName = cData?.meta?.name;
+        if (foundName && typeof foundName === 'string') {
+          cleanTitle = foundName.trim();
+          console.log(`[Altyflix Stream Resolver] Titre résolu via Cinemeta : "${cleanTitle}" pour ${imdbId}`);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   if ((!imdbId || !cleanTitle) && safeId && tmdbKey) {
     try {
       const baseDetailUrl = tmdbUrl(isTv ? `tv/${safeId}` : `movie/${safeId}`, { language: 'fr-FR' }, tmdbKey);
@@ -1426,10 +1443,39 @@ async function resolveStreamsServer({
       initialStatus = 'downloading';
     }
 
+    // Pré-résolution ciblée du meilleur flux 4K en cache (pour bascule instantanée sans attente si l'utilisateur choisit 4K)
+    const candidate4k = workingStreams.find(s => s.id !== active?.id && s.tierKey === '4k' && s.isCached && !s.isDownloading && !s.isDead && !s.directUrl);
+    if (candidate4k && token) {
+      const rawTarget4k = candidate4k.originalUrl || candidate4k.url;
+      if (rawTarget4k && normalizeAllowedUrl(rawTarget4k)) {
+        try {
+          const check4k = await checkStreamStatus(rawTarget4k, candidate4k.filename || '', { enableAviTranscode, token });
+          if (check4k.ready && check4k.playbackUrl) {
+            const idx4k = workingStreams.findIndex(s => s.id === candidate4k.id);
+            if (idx4k !== -1) {
+              workingStreams[idx4k] = {
+                ...candidate4k,
+                url: check4k.playbackUrl,
+                directUrl: check4k.directUrl || check4k.playbackUrl,
+                originalUrl: rawTarget4k,
+                isCached: true,
+                isDownloading: false,
+                verifiedReady: true
+              };
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     // Filtrage strict : éliminer toutes les sources mortes ou incompatibles (.avi sans transcodage si d'autres existent)
     const cleanStreams = workingStreams.filter(s => !s.isDead);
-    const playableStreams = cleanStreams.filter(isPlayableFormat);
-    const finalStreams = playableStreams.length > 0 ? playableStreams : cleanStreams;
+    const cachedClean = cleanStreams.filter(s => s.isCached && !s.isDownloading);
+    const baseList = cachedClean.length > 0 ? cachedClean : cleanStreams;
+    const playableStreams = baseList.filter(isPlayableFormat);
+    const finalStreams = playableStreams.length > 0 ? playableStreams : baseList;
 
     const finalActive = active
       ? finalizeStreamUrl({ ...active, originalUrl: active.originalUrl || active.url })

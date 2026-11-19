@@ -284,14 +284,28 @@ export default function NetflixPlayer({
             if (result.ready && result.playbackUrl) {
                 console.log('[Altyflix Player] Débridage terminé avec succès');
                 loadedUrlRef.current = null;
+                const directUrl = result.directUrl || (typeof result.playbackUrl === 'string' && /^https?:\/\//i.test(result.playbackUrl) ? result.playbackUrl : null);
                 setActiveStream(prev => ({
                     ...(prev || {}),
                     url: result.playbackUrl,
-                    directUrl: result.directUrl || (typeof result.playbackUrl === 'string' && /^https?:\/\//i.test(result.playbackUrl) ? result.playbackUrl : prev?.directUrl),
+                    directUrl: directUrl || prev?.directUrl,
                     isAvi: Boolean(prev?.isAvi || result.isAvi),
                     isTranscoded: Boolean(prev?.isTranscoded || result.isTranscoded),
                     isDownloading: false,
                     isCached: true
+                }));
+                // Mettre à jour la liste des flux en mémoire pour que les sélections suivantes soient instantanées
+                setAvailableStreams(prevList => (prevList || []).map(s => {
+                    const match = (activeStreamRef.current?.id && s.id === activeStreamRef.current.id) || s.url === targetUrl || s.originalUrl === targetUrl;
+                    if (!match) return s;
+                    return {
+                        ...s,
+                        url: result.playbackUrl,
+                        directUrl: directUrl || s.directUrl,
+                        isCached: true,
+                        isDownloading: false,
+                        verifiedReady: true
+                    };
                 }));
                 setStreamState('playing');
             } else if (result.error || result.timeout) {
@@ -404,16 +418,18 @@ export default function NetflixPlayer({
 
                 // 3 bis. Compatibilité Conteneur : Un conteneur .avi non transcodé ne peut pas être décodé par les navigateurs modernes HTML5
                 if (selectedStream.isAvi && !selectedStream.isTranscoded) {
-                    const playableReady = readyStreams.find(s => !s.isAvi || s.isTranscoded);
+                    const playableReady = readyStreams.find(s => (!s.isAvi || s.isTranscoded) && !s.isDownloading);
                     if (playableReady) {
                         console.log('[Altyflix Player] Flux par défaut .avi non transcodé -> Bascule automatique sur flux compatible HTML5 :', playableReady.qualityLabel || playableReady.quality);
                         selectedStream = playableReady;
                     } else {
-                        const anyPlayable = streams.find(s => !s.isAvi || s.isTranscoded);
+                        const anyPlayable = streams.find(s => (!s.isAvi || s.isTranscoded) && (s.isCached || s.verifiedReady) && !s.isDownloading);
                         if (anyPlayable) {
                             selectedStream = anyPlayable;
                         } else {
-                            setErrorMessage("Ce titre n'est pas disponible pour la lecture dans votre navigateur actuellement. Veuillez sélectionner un autre titre.");
+                            // Seul le format .avi est disponible : on conserve le flux pour permettre l'ouverture dans VLC ou le téléchargement
+                            setErrorMessage("Ce titre utilise un format vidéo ancien (.avi) qui n'est pas pris en charge nativement par votre navigateur Web.");
+                            setActiveStream(selectedStream);
                             setStreamState('error');
                             return;
                         }
@@ -1134,7 +1150,11 @@ export default function NetflixPlayer({
         if (Boolean(st.isFrench) !== Boolean(activeStream?.isFrench)) {
             userPickedSubRef.current = false;
         }
-        setActiveStream(st);
+
+        const directPlaybackUrl = st.directUrl || (typeof st.url === 'string' && (st.url.includes('tb-cdn.st') || st.url.startsWith('/api/video-stream')) ? st.url : null);
+        const effectiveStream = directPlaybackUrl ? { ...st, url: directPlaybackUrl } : st;
+
+        setActiveStream(effectiveStream);
         setCurrentAudioLang(st.isFrench ? 'vf' : 'vo');
 
         if (!st.isFrench) {
@@ -1145,12 +1165,13 @@ export default function NetflixPlayer({
             }
         }
 
-        if (st.isDownloading && !st.isCached) {
-            setStreamState('downloading');
-            startStreamPolling(st.originalUrl || st.url);
-        } else {
+        if (directPlaybackUrl && (st.isCached || st.verifiedReady) && !st.isDownloading) {
             setStreamState('playing');
             setIsBuffering(true);
+        } else {
+            // Le flux sélectionné doit être débridé/résolu vers son URL CDN directe
+            setStreamState('downloading');
+            startStreamPolling(st.originalUrl || st.url);
         }
     };
 
@@ -1552,19 +1573,8 @@ export default function NetflixPlayer({
         setEpisode(e);
     }, [season, episode, resetEpisodeState]);
 
-    // Son Dolby non décodable ici : bascule silencieuse vers une source au son compatible
-    // (même langue de préférence). Une seule fois par épisode, pour respecter un choix manuel ensuite.
     const handleSelectStreamRef = useRef(handleSelectStream);
     handleSelectStreamRef.current = handleSelectStream;
-    useEffect(() => {
-        if (streamState !== 'playing' || isAc3Supported || !activeStream?.hasUnsupportedAudio) return;
-        const key = `${id}-${season}-${episode}`;
-        if (audioFallbackDoneRef.current === key) return;
-        audioFallbackDoneRef.current = key;
-        const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(activeStream.isFrench))
-            || (availableStreams || []).find(s => s.id !== activeStream?.id && !s.hasUnsupportedAudio);
-        if (safe) handleSelectStreamRef.current(safe);
-    }, [streamState, isAc3Supported, activeStream, availableStreams, id, season, episode]);
 
     // Détection en temps réel du décodage audio : si la vidéo tourne depuis 2 s mais qu'aucun octet audio n'est décodé (ex. Chrome sur AC3/DTS),
     // bascule automatique et transparente vers une source au son garanti (même langue en priorité, sinon VOSTFR).
@@ -1582,8 +1592,9 @@ export default function NetflixPlayer({
             const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
-                const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench))
-                    || (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio));
+                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead;
+                const safe = (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench))
+                    || (availableStreams || []).find(s => s.id !== activeStream?.id && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
                 if (safe) {
                     console.log('[Altyflix Player] Flux muet détecté sans décodage audio, bascule automatique vers un flux sonore :', safe.qualityLabel || safe.quality);
                     handleSelectStreamRef.current(safe);
@@ -2020,6 +2031,16 @@ export default function NetflixPlayer({
                     <h2 className="text-xl font-bold md:text-2xl">Lecture impossible</h2>
                     <p className="mt-2 max-w-md text-sm text-white/60">{errorMessage || 'Ce titre ne peut pas être lu pour le moment.'}</p>
                     <div className="mt-6 flex flex-wrap justify-center gap-3">
+                        {Boolean(activeStream?.directUrl || (typeof activeStream?.url === 'string' && activeStream.url.startsWith('http') && !activeStream.url.includes('/videos/downloading'))) && (
+                            <a
+                                href={activeStream.directUrl || activeStream.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="rounded bg-red-600 px-6 py-2.5 text-sm font-bold text-white hover:bg-red-700 transition"
+                            >
+                                Lire dans VLC / Télécharger
+                            </a>
+                        )}
                         <button
                             type="button"
                             onClick={() => resolveStream(true)}

@@ -1211,6 +1211,21 @@ ${inferredRes}` : ""}`,
           console.warn("[Altyflix Stream Resolver] \xC9chec de r\xE9cup\xE9ration de l'identifiant IMDb direct :", e.message);
         }
       }
+      if (!cleanTitle && imdbId) {
+        try {
+          const cinemetaUrl = `https://v3-cinemeta.strem.io/meta/${isTv ? "series" : "movie"}/${imdbId}.json`;
+          const cRes = await fetch(cinemetaUrl, { redirect: "error", signal: AbortSignal.timeout(3e3) });
+          if (cRes.ok) {
+            const cData = await cRes.json();
+            const foundName = cData?.meta?.name;
+            if (foundName && typeof foundName === "string") {
+              cleanTitle = foundName.trim();
+              console.log(`[Altyflix Stream Resolver] Titre r\xE9solu via Cinemeta : "${cleanTitle}" pour ${imdbId}`);
+            }
+          }
+        } catch {
+        }
+      }
       if ((!imdbId || !cleanTitle) && safeId && tmdbKey) {
         try {
           const baseDetailUrl = tmdbUrl2(isTv ? `tv/${safeId}` : `movie/${safeId}`, { language: "fr-FR" }, tmdbKey);
@@ -1506,9 +1521,35 @@ ${inferredRes}` : ""}`,
             active = workingStreams[0];
             initialStatus = "downloading";
           }
+          const candidate4k = workingStreams.find((s) => s.id !== active?.id && s.tierKey === "4k" && s.isCached && !s.isDownloading && !s.isDead && !s.directUrl);
+          if (candidate4k && token) {
+            const rawTarget4k = candidate4k.originalUrl || candidate4k.url;
+            if (rawTarget4k && normalizeAllowedUrl2(rawTarget4k)) {
+              try {
+                const check4k = await checkStreamStatus2(rawTarget4k, candidate4k.filename || "", { enableAviTranscode, token });
+                if (check4k.ready && check4k.playbackUrl) {
+                  const idx4k = workingStreams.findIndex((s) => s.id === candidate4k.id);
+                  if (idx4k !== -1) {
+                    workingStreams[idx4k] = {
+                      ...candidate4k,
+                      url: check4k.playbackUrl,
+                      directUrl: check4k.directUrl || check4k.playbackUrl,
+                      originalUrl: rawTarget4k,
+                      isCached: true,
+                      isDownloading: false,
+                      verifiedReady: true
+                    };
+                  }
+                }
+              } catch {
+              }
+            }
+          }
           const cleanStreams = workingStreams.filter((s) => !s.isDead);
-          const playableStreams = cleanStreams.filter(isPlayableFormat);
-          const finalStreams = playableStreams.length > 0 ? playableStreams : cleanStreams;
+          const cachedClean = cleanStreams.filter((s) => s.isCached && !s.isDownloading);
+          const baseList = cachedClean.length > 0 ? cachedClean : cleanStreams;
+          const playableStreams = baseList.filter(isPlayableFormat);
+          const finalStreams = playableStreams.length > 0 ? playableStreams : baseList;
           const finalActive = active ? finalizeStreamUrl({ ...active, originalUrl: active.originalUrl || active.url }) : null;
           const syncedStreams = finalStreams.map(
             (s) => finalActive && s.id === finalActive.id ? finalActive : finalizeStreamUrl(s)

@@ -313,7 +313,9 @@ export function AudioSubsPanel({
                     <SectionTitle>Qualité vidéo</SectionTitle>
                     <div className="mt-2 flex flex-wrap gap-1.5 px-1">
                         {distinctStreams.map(st => {
-                            const selected = activeStream?.id != null ? activeStream.id === st.id : activeStream?.url === st.url;
+                            const selected = (activeStream?.id != null && activeStream.id === st.id) ||
+                                (activeStream?.url != null && (activeStream.url === st.url || (st.directUrl && activeStream.url === st.directUrl))) ||
+                                (Boolean(activeStream) && streamLabel(activeStream) === streamLabel(st));
                             return (
                                 <button
                                     key={st.id || st.url}

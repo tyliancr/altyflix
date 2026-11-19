@@ -48,7 +48,6 @@ const ALLOWED_POLL_HOSTS = [
   'api.torbox.app',
   'torbox.app',
   'tb-cdn.st',
-  'frenchio.elfhosted.com',
   'api.real-debrid.com',
   'real-debrid.com',
   'api.alldebrid.com',
@@ -74,19 +73,6 @@ function normalizeAllowedUrl(urlStr) {
 
 function isAllowedUrl(urlStr) {
   return normalizeAllowedUrl(urlStr) !== null;
-}
-
-function normalizeFrenchioUrl(urlStr) {
-  const normalized = normalizeAllowedUrl(urlStr);
-  if (!normalized) return '';
-  try {
-    const u = new URL(normalized);
-    if (u.hostname.toLowerCase() !== 'frenchio.elfhosted.com') return '';
-    if (u.search || u.hash) return '';
-    return u.href.replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
-  } catch {
-    return '';
-  }
 }
 
 /**
@@ -986,9 +972,7 @@ async function resolveStreamsServer({
   }
 
   const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
-  const rawFrenchioUrl = (userFrenchioUrl && userFrenchioUrl.trim()) || process.env.FRENCHIO_URL || '';
-  const activeFrenchioUrl = normalizeFrenchioUrl(rawFrenchioUrl);
-  const cacheKey = `${provider}:${sha256Short(token)}:${streamKey}:${normalizedLang}:${sha256Short(activeFrenchioUrl)}:${enableAudioRemux ? 'remux' : 'direct'}:${enableAviTranscode ? 'avi' : 'noavi'}:${sha256Short(streamBase)}`;
+  const cacheKey = `${provider}:${sha256Short(token)}:${streamKey}:${normalizedLang}:${enableAudioRemux ? 'remux' : 'direct'}:${enableAviTranscode ? 'avi' : 'noavi'}:${sha256Short(streamBase)}`;
 
   const cachedResult = getCachedResolve(cacheKey);
   if (cachedResult) {
@@ -1035,22 +1019,6 @@ async function resolveStreamsServer({
       return [];
     };
 
-    const fetchFrenchio = async () => {
-      if (!activeFrenchioUrl) return [];
-      try {
-        const streamPath = isTv ? `series/${streamKey}.json` : `movie/${streamKey}.json`;
-        const fUrl = `${activeFrenchioUrl}/stream/${streamPath}`;
-        const fRes = await fetch(fUrl, { headers: { 'Accept': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(4000) });
-        if (fRes.ok) {
-          const fData = await fRes.json();
-          if (Array.isArray(fData?.streams)) return fData.streams;
-        }
-      } catch (fErr) {
-        console.warn('[Altyflix Frenchio] Erreur recherche Frenchio :', fErr.message);
-      }
-      return [];
-    };
-
     const fetchMylist = async () => {
       if (provider !== 'torbox' || !cleanTitle) return [];
       try {
@@ -1071,18 +1039,17 @@ async function resolveStreamsServer({
       }
     };
 
-    const [priorityFrStreams, vfStreams, globalStreams, frenchioStreams, mylistStreams] = await Promise.all([
+    const [priorityFrStreams, vfStreams, globalStreams, mylistStreams] = await Promise.all([
       fetchTorrentio(endpointPriorityFr, 'FR Priority'),
       fetchTorrentio(endpointVf, 'VF'),
       fetchTorrentio(endpointGlobal, 'Global'),
-      fetchFrenchio(),
       fetchMylist()
     ]);
 
     // Fusion avec déduplication stricte par URL
     const seenUrls = new Set();
     const rawStreams = [];
-    for (const s of [...(mylistStreams || []), ...priorityFrStreams, ...frenchioStreams, ...vfStreams, ...globalStreams]) {
+    for (const s of [...(mylistStreams || []), ...priorityFrStreams, ...vfStreams, ...globalStreams]) {
       if (s && s.url && !seenUrls.has(s.url)) {
         seenUrls.add(s.url);
         rawStreams.push(s);

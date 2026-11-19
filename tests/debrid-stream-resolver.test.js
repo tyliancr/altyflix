@@ -450,17 +450,17 @@ test('Debrid Stream Resolver: Règle d\'or Netflix - lecture instantanée sans b
   assert.equal(curated.streams[0].isCached, true, 'Le premier choix dans les options du lecteur DOIT être le flux prêt');
 });
 
-test('Debrid Stream Resolver: Support multi-indexeur Frenchio (parsing description et détection [TB+])', () => {
+test('Debrid Stream Resolver: Support flux TorBox CDN direct (parsing description et détection [TB+])', () => {
   const multiStreams = [
     {
-      name: '[TB+] Frenchio\n1080p',
+      name: '[TB+] Torrentio\n1080p',
       description: 'Fall.Guy.2024.FRENCH.1080p.WEB.H264.AAC\n👤 25 💾 3.2 GB',
-      url: 'https://frenchio.elfhosted.com/playback/encrypted_token_1/fall_guy.mp4'
+      url: 'https://tb-cdn.st/dld/encrypted_token_1/fall_guy.mp4'
     },
     {
       name: '[❌] torbox',
       description: 'torbox: Invalid API key.',
-      url: 'https://frenchio.elfhosted.com/playback/invalid'
+      url: 'https://torrentio.strem.fun/playback/invalid'
     }
   ];
 
@@ -471,5 +471,5 @@ test('Debrid Stream Resolver: Support multi-indexeur Frenchio (parsing descripti
   assert.equal(curated.streams.length, 1);
   assert.equal(curated.activeStream.isCached, true);
   assert.equal(curated.activeStream.isFrench, true);
-  assert.equal(curated.activeStream.url, 'https://frenchio.elfhosted.com/playback/encrypted_token_1/fall_guy.mp4');
+  assert.equal(curated.activeStream.url, 'https://tb-cdn.st/dld/encrypted_token_1/fall_guy.mp4');
 });

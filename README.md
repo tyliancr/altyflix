@@ -9,7 +9,6 @@ Application web de catalogue de films et séries : comptes Firebase, profils (av
 | Interface | React 18, React Router 7, Vite 6, Tailwind CSS 3, Framer Motion |
 | Comptes et données | Firebase Auth, Firestore (règles dans `firestore.rules`) |
 | Serveur | Node.js (HTTP natif) : proxy TMDB sécurisé, résolution des sources de lecture |
-| API vidéo (optionnelle) | Express, `api/` : URL signées, progression |
 | Hébergement | 100% Serverless sur Netlify |
 
 ## Prérequis
@@ -91,7 +90,6 @@ src/
   config/       constantes, avatars, Firebase
   utils/        fonctions pures (formatage, saisons, sons, traductions)
 server/         serveur Node : proxy TMDB, sécurité, résolution des sources
-api/            API vidéo Express optionnelle (URL signées, progression)
 tests/          tests Node
 tools/          vérifications et mesures
 docs/           déploiement, API de lecture, audits

@@ -10,11 +10,7 @@
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "test": "node --test tests/auth.test.js tests/security.test.js tests/stream-v1.test.js tests/video-api.test.js tests/streaming-engine.test.js tests/debrid-stream-resolver.test.js",
-    "video-api": "node api/server.js",
-    "encode": "node scripts/encode/encode.mjs",
-    "encode:test-title": "node scripts/encode/make-test-title.mjs",
-    "seed": "node scripts/encode/seed.mjs",
+    "test": "node --test tests/auth.test.js tests/security.test.js tests/stream-v1.test.js tests/streaming-engine.test.js tests/debrid-stream-resolver.test.js",
     "check:structure": "node tools/check-structure.mjs",
     "check": "npm run check:structure && npm run lint && npm test && npm run build",
     "bench:stream": "node tools/bench-stream.mjs"
@@ -26,7 +22,6 @@
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.4",
     "firebase": "^12.13.0",
-    "firebase-admin": "^13.10.0",
     "framer-motion": "^11.18.2",
     "helmet": "^8.3.0",
     "hls.js": "^1.7.4",
@@ -35,8 +30,7 @@
     "react-dom": "^18.3.1",
     "react-helmet-async": "^3.0.0",
     "react-router-dom": "^7.15.1",
-    "shaka-player": "^5.3.5",
-    "zod": "^4.6.7"
+    "shaka-player": "^5.3.5"
   },
   "devDependencies": {
     "@types/react": "^19.2.15",

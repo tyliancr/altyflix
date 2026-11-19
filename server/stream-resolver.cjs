@@ -48,11 +48,16 @@ const ALLOWED_POLL_HOSTS = [
   'api.torbox.app',
   'torbox.app',
   'tb-cdn.st',
+  'b-cdn.net',
+  'bunnycdn.com',
   'api.real-debrid.com',
   'real-debrid.com',
+  'rdeb.io',
   'api.alldebrid.com',
   'alldebrid.com',
+  'debrid.it',
   'debrid-link.com',
+  'debrid-link.fr',
   'premiumize.me'
 ];
 
@@ -63,6 +68,9 @@ function normalizeAllowedUrl(urlStr) {
   if (typeof urlStr !== 'string' || !urlStr || /[\x00-\x1f\x7f]/.test(urlStr)) return null;
   try {
     const u = new URL(urlStr);
+    if (u.protocol === 'http:' && (!u.port || u.port === '80')) {
+      u.protocol = 'https:';
+    }
     if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return null;
     const host = u.hostname.toLowerCase();
     return ALLOWED_POLL_HOSTS.some(h => host === h || host.endsWith('.' + h)) ? u.href : null;
@@ -1012,6 +1020,9 @@ async function resolveStreamsServer({
 
   // Résolution IMDb si absent (multi-tentatives sécurisées via tmdbUrl)
   let imdbId = (typeof initialImdbId === 'string' && /^tt\d{5,10}$/.test(initialImdbId.trim())) ? initialImdbId.trim() : null;
+  if (!imdbId && typeof id === 'string' && /^tt\d{5,10}$/.test(id.trim())) {
+    imdbId = id.trim();
+  }
   let cleanTitle = (title || '').trim();
   const tmdbKey = (tmdbApiKey && String(tmdbApiKey).trim()) || process.env.TMDB_API_KEY || '';
 
@@ -1443,31 +1454,38 @@ async function resolveStreamsServer({
       initialStatus = 'downloading';
     }
 
-    // Pré-résolution ciblée du meilleur flux 4K en cache (pour bascule instantanée sans attente si l'utilisateur choisit 4K)
-    const candidate4k = workingStreams.find(s => s.id !== active?.id && s.tierKey === '4k' && s.isCached && !s.isDownloading && !s.isDead && !s.directUrl);
-    if (candidate4k && token) {
-      const rawTarget4k = candidate4k.originalUrl || candidate4k.url;
-      if (rawTarget4k && normalizeAllowedUrl(rawTarget4k)) {
+    // Pré-résolution en parallèle de TOUS les flux en cache (4K, 1080p, VOSTFR...)
+    // afin que le changement de qualité dans le lecteur soit instantané et garanti sans attente ni timeout
+    const otherCached = workingStreams.filter(s => s.id !== active?.id && s.isCached && !s.isDownloading && !s.isDead && !s.directUrl);
+    if (otherCached.length > 0 && token) {
+      await Promise.allSettled(otherCached.map(async (candidate) => {
+        const rawTarget = candidate.originalUrl || candidate.url;
+        if (!rawTarget || !normalizeAllowedUrl(rawTarget)) return;
         try {
-          const check4k = await checkStreamStatus(rawTarget4k, candidate4k.filename || '', { enableAviTranscode, token });
-          if (check4k.ready && check4k.playbackUrl) {
-            const idx4k = workingStreams.findIndex(s => s.id === candidate4k.id);
-            if (idx4k !== -1) {
-              workingStreams[idx4k] = {
-                ...candidate4k,
-                url: check4k.playbackUrl,
-                directUrl: check4k.directUrl || check4k.playbackUrl,
-                originalUrl: rawTarget4k,
+          const check = await checkStreamStatus(rawTarget, candidate.filename || '', { enableAviTranscode, token });
+          const idx = workingStreams.findIndex(s => s.id === candidate.id);
+          if (idx !== -1) {
+            if (check.ready && check.playbackUrl) {
+              const isAviNow = Boolean(candidate.isAvi || check.isAvi);
+              workingStreams[idx] = {
+                ...candidate,
+                url: check.playbackUrl,
+                directUrl: check.directUrl || check.playbackUrl,
+                originalUrl: rawTarget,
                 isCached: true,
                 isDownloading: false,
+                isAvi: isAviNow,
+                isTranscoded: Boolean(isAviNow && enableAviTranscode),
                 verifiedReady: true
               };
+            } else if (check.status === 'error' || check.isDead) {
+              workingStreams[idx].isDead = true;
             }
           }
         } catch {
           // ignore
         }
-      }
+      }));
     }
 
     // Filtrage strict : éliminer toutes les sources mortes ou incompatibles (.avi sans transcodage si d'autres existent)

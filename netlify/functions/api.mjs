@@ -376,17 +376,25 @@ var require_stream_resolver = __commonJS({
       "api.torbox.app",
       "torbox.app",
       "tb-cdn.st",
+      "b-cdn.net",
+      "bunnycdn.com",
       "api.real-debrid.com",
       "real-debrid.com",
+      "rdeb.io",
       "api.alldebrid.com",
       "alldebrid.com",
+      "debrid.it",
       "debrid-link.com",
+      "debrid-link.fr",
       "premiumize.me"
     ];
     function normalizeAllowedUrl2(urlStr) {
       if (typeof urlStr !== "string" || !urlStr || /[\x00-\x1f\x7f]/.test(urlStr)) return null;
       try {
         const u = new URL(urlStr);
+        if (u.protocol === "http:" && (!u.port || u.port === "80")) {
+          u.protocol = "https:";
+        }
         if (u.protocol !== "https:" || u.username || u.password || u.port && u.port !== "443") return null;
         const host = u.hostname.toLowerCase();
         return ALLOWED_POLL_HOSTS.some((h) => host === h || host.endsWith("." + h)) ? u.href : null;
@@ -1172,6 +1180,9 @@ ${inferredRes}` : ""}`,
         };
       }
       let imdbId = typeof initialImdbId === "string" && /^tt\d{5,10}$/.test(initialImdbId.trim()) ? initialImdbId.trim() : null;
+      if (!imdbId && typeof id === "string" && /^tt\d{5,10}$/.test(id.trim())) {
+        imdbId = id.trim();
+      }
       let cleanTitle = (title || "").trim();
       const tmdbKey = tmdbApiKey && String(tmdbApiKey).trim() || process.env.TMDB_API_KEY || "";
       const finalizeStreamUrl = (s) => {
@@ -1521,29 +1532,35 @@ ${inferredRes}` : ""}`,
             active = workingStreams[0];
             initialStatus = "downloading";
           }
-          const candidate4k = workingStreams.find((s) => s.id !== active?.id && s.tierKey === "4k" && s.isCached && !s.isDownloading && !s.isDead && !s.directUrl);
-          if (candidate4k && token) {
-            const rawTarget4k = candidate4k.originalUrl || candidate4k.url;
-            if (rawTarget4k && normalizeAllowedUrl2(rawTarget4k)) {
+          const otherCached = workingStreams.filter((s) => s.id !== active?.id && s.isCached && !s.isDownloading && !s.isDead && !s.directUrl);
+          if (otherCached.length > 0 && token) {
+            await Promise.allSettled(otherCached.map(async (candidate) => {
+              const rawTarget = candidate.originalUrl || candidate.url;
+              if (!rawTarget || !normalizeAllowedUrl2(rawTarget)) return;
               try {
-                const check4k = await checkStreamStatus2(rawTarget4k, candidate4k.filename || "", { enableAviTranscode, token });
-                if (check4k.ready && check4k.playbackUrl) {
-                  const idx4k = workingStreams.findIndex((s) => s.id === candidate4k.id);
-                  if (idx4k !== -1) {
-                    workingStreams[idx4k] = {
-                      ...candidate4k,
-                      url: check4k.playbackUrl,
-                      directUrl: check4k.directUrl || check4k.playbackUrl,
-                      originalUrl: rawTarget4k,
+                const check = await checkStreamStatus2(rawTarget, candidate.filename || "", { enableAviTranscode, token });
+                const idx = workingStreams.findIndex((s) => s.id === candidate.id);
+                if (idx !== -1) {
+                  if (check.ready && check.playbackUrl) {
+                    const isAviNow = Boolean(candidate.isAvi || check.isAvi);
+                    workingStreams[idx] = {
+                      ...candidate,
+                      url: check.playbackUrl,
+                      directUrl: check.directUrl || check.playbackUrl,
+                      originalUrl: rawTarget,
                       isCached: true,
                       isDownloading: false,
+                      isAvi: isAviNow,
+                      isTranscoded: Boolean(isAviNow && enableAviTranscode),
                       verifiedReady: true
                     };
+                  } else if (check.status === "error" || check.isDead) {
+                    workingStreams[idx].isDead = true;
                   }
                 }
               } catch {
               }
-            }
+            }));
           }
           const cleanStreams = workingStreams.filter((s) => !s.isDead);
           const cachedClean = cleanStreams.filter((s) => s.isCached && !s.isDownloading);
@@ -1785,10 +1802,11 @@ async function handleRequest(req) {
       if (!targetUrl) {
         return jsonResponse({ success: false, status: "error", error: "Param\xE8tre url manquant." }, 400);
       }
+      const userToken = req.headers.get("x-debrid-token") || SERVER_DEBRID_TOKEN;
       const streamBackendUrl = getStreamBackendUrl();
       const hasRemoteFfmpeg = Boolean(streamBackendUrl);
       try {
-        const statusData = await checkStreamStatus(targetUrl, "", { enableAviTranscode: hasRemoteFfmpeg });
+        const statusData = await checkStreamStatus(targetUrl, "", { enableAviTranscode: hasRemoteFfmpeg, token: userToken });
         if (hasRemoteFfmpeg && typeof statusData?.playbackUrl === "string" && statusData.playbackUrl.startsWith("/api/video-stream")) {
           statusData.playbackUrl = `${streamBackendUrl}${statusData.playbackUrl}`;
         }

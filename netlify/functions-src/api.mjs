@@ -212,10 +212,11 @@ async function handleRequest(req) {
     if (!targetUrl) {
       return jsonResponse({ success: false, status: 'error', error: 'Paramètre url manquant.' }, 400);
     }
+    const userToken = req.headers.get('x-debrid-token') || SERVER_DEBRID_TOKEN;
     const streamBackendUrl = getStreamBackendUrl();
     const hasRemoteFfmpeg = Boolean(streamBackendUrl);
     try {
-      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: hasRemoteFfmpeg });
+      const statusData = await checkStreamStatus(targetUrl, '', { enableAviTranscode: hasRemoteFfmpeg, token: userToken });
       if (hasRemoteFfmpeg && typeof statusData?.playbackUrl === 'string' && statusData.playbackUrl.startsWith('/api/video-stream')) {
         statusData.playbackUrl = `${streamBackendUrl}${statusData.playbackUrl}`;
       }

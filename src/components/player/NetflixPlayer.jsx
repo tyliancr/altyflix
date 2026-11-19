@@ -115,6 +115,7 @@ export default function NetflixPlayer({
     // (une seule fois par épisode) sur une source au son compatible, sans aucun message.
     const audioFallbackDoneRef = useRef('');
     const [hasTrueVf, setHasTrueVf] = useState(false);
+    const userPickedStreamRef = useRef(false);
     const [rippleEffect, setRippleEffect] = useState(null); // { side: 'left' | 'right', delta: -10 | 10 }
     const lastTapRef = useRef({ time: 0, x: 0 });
     const tapTimerRef = useRef(null);
@@ -815,6 +816,7 @@ export default function NetflixPlayer({
         cuesRef.current = [];
         autoSubAppliedKeyRef.current = '';
         userPickedSubRef.current = false;
+        userPickedStreamRef.current = false;
         selectedSubtitleIdRef.current = 'off';
         userMutedRef.current = false;
         setIsMuted(false);
@@ -1121,6 +1123,7 @@ export default function NetflixPlayer({
     // Changement de flux (qualité) — fermeture propre du panneau, arrêt immédiat de l'ancien flux et zéro écran vert
     const handleSelectStream = (st) => {
         if (!st) return;
+        userPickedStreamRef.current = true;
         setPanel(null);
         failedStreamIdsRef.current.delete(st.id || st.url);
         setErrorMessage('');
@@ -1151,7 +1154,7 @@ export default function NetflixPlayer({
             userPickedSubRef.current = false;
         }
 
-        const directPlaybackUrl = st.directUrl || (typeof st.url === 'string' && (st.url.includes('tb-cdn.st') || st.url.startsWith('/api/video-stream')) ? st.url : null);
+        const directPlaybackUrl = st.directUrl || (typeof st.url === 'string' && !st.url.includes('/resolve/') && (st.url.startsWith('http') || st.url.startsWith('/api/video-stream')) ? st.url : null);
         const effectiveStream = directPlaybackUrl ? { ...st, url: directPlaybackUrl } : st;
 
         setActiveStream(effectiveStream);
@@ -1587,7 +1590,9 @@ export default function NetflixPlayer({
         if (audioFallbackDoneRef.current === key) return undefined;
 
         const checkAudio = () => {
-            if (!video || video.paused || video.muted || (video.currentTime || 0) < 2) return;
+            // Respect absolu du choix manuel de l'utilisateur (qualité 4K ou piste spécifique)
+            if (userPickedStreamRef.current) return;
+            if (!video || video.paused || video.muted || (video.currentTime || 0) < 4 || (video.readyState || 0) < 3) return;
             const isSilentDecode = typeof video.webkitAudioDecodedByteCount === 'number' && video.webkitAudioDecodedByteCount === 0;
             const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
             if (isSilentDecode || isMozSilent) {

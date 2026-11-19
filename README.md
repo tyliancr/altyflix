@@ -111,7 +111,7 @@ Suivez le [guide de déploiement](docs/LIRE-AVANT-DEPLOIEMENT.md). Netlify compi
 
 ## Documentation
 
+- [Architecture Zéro Stockage](docs/ARCHITECTURE-ZERO-STORAGE.md)
 - [API de lecture et fournisseurs](docs/STREAM-API-V1.md)
-- [Encodage et lecteur HLS](docs/VIDEO.md)
 - [Déploiement](docs/LIRE-AVANT-DEPLOIEMENT.md)
 - [Audit](docs/AUDIT-ALTYFLIX.md)

@@ -84,7 +84,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const WatchPage = lazy(() => import('./pages/WatchPage'));
 
-// Développement uniquement : ouvre /watch sans connexion quand l'API tourne avec AUTH_DEV_UID (voir docs/VIDEO.md).
+// Développement uniquement : ouvre /watch sans connexion quand VITE_VIDEO_DEV_NOAUTH est actif.
 const WATCH_WITHOUT_LOGIN = import.meta.env.DEV && import.meta.env.VITE_VIDEO_DEV_NOAUTH === '1';
 
 // Preload high-frequency navigation targets during idle time

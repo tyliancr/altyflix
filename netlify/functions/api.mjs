@@ -1341,11 +1341,11 @@ ${inferredRes}` : ""}`,
         const ALL_PROVIDERS = "yts,eztv,rarbg,1337x,ext,thepiratebay,kickasstorrents,torrentgalaxy,uindex,knaben,magnetdl,horriblesubs,nyaasi,animetosho,tokyotosho,anidex,nekobt,torrent9,rutracker,rutor,cinemaz,ibit,torlock,comando,bludv,micoleaodublado,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,besttorrents";
         console.log(`[Altyflix Stream Resolver] Recherche parall\xE8le des flux pour ${type} ${imdbId} (S${season}E${episode}) via ${provider}...`);
         try {
-          const optionsPriorityFr = `providers=${ALL_PROVIDERS}|sort=qualitysize|foreign_lang=french|${provider}=${encodeURIComponent(token)}`;
+          const optionsPriorityFr = `providers=${ALL_PROVIDERS}|sort=qualitysize|qualityfilter=scr,cam|foreign_lang=french|${provider}=${encodeURIComponent(token)}`;
           const endpointPriorityFr = `https://torrentio.strem.fun/${optionsPriorityFr}/stream/${isTv ? "series" : "movie"}/${streamKey}.json`;
-          const optionsVf = `providers=${ALL_PROVIDERS}|sort=qualitysize|language=french|${provider}=${encodeURIComponent(token)}`;
+          const optionsVf = `providers=${ALL_PROVIDERS}|sort=qualitysize|qualityfilter=scr,cam|language=french|${provider}=${encodeURIComponent(token)}`;
           const endpointVf = `https://torrentio.strem.fun/${optionsVf}/stream/${isTv ? "series" : "movie"}/${streamKey}.json`;
-          const optionsGlobal = `providers=${ALL_PROVIDERS}|sort=qualitysize|${provider}=${encodeURIComponent(token)}`;
+          const optionsGlobal = `providers=${ALL_PROVIDERS}|sort=qualitysize|qualityfilter=scr,cam|${provider}=${encodeURIComponent(token)}`;
           const endpointGlobal = `https://torrentio.strem.fun/${optionsGlobal}/stream/${isTv ? "series" : "movie"}/${streamKey}.json`;
           const fetchTorrentio = async (url, label) => {
             try {
@@ -1360,6 +1360,25 @@ ${inferredRes}` : ""}`,
               }
             } catch (e) {
               console.warn(`[Altyflix Stream Resolver] Timeout ou erreur fetch ${label} :`, e.message);
+            }
+            return [];
+          };
+          const fetchFrenchio = async () => {
+            if (!userFrenchioUrl || typeof userFrenchioUrl !== "string") return [];
+            try {
+              const cleanBase = userFrenchioUrl.trim().replace(/\/+$/, "");
+              const targetUrl = `${cleanBase}/stream/${isTv ? "series" : "movie"}/${streamKey}.json`;
+              const res = await fetch(targetUrl, {
+                headers: { "Accept": "application/json" },
+                redirect: "error",
+                signal: AbortSignal.timeout(4e3)
+              });
+              if (res.ok) {
+                const data = await res.json();
+                return Array.isArray(data?.streams) ? data.streams : [];
+              }
+            } catch (e) {
+              console.warn("[Altyflix Stream Resolver] Erreur fetch Frenchio :", e.message);
             }
             return [];
           };
@@ -1382,15 +1401,16 @@ ${inferredRes}` : ""}`,
               return [];
             }
           };
-          const [priorityFrStreams, vfStreams, globalStreams, mylistStreams] = await Promise.all([
+          const [priorityFrStreams, vfStreams, globalStreams, frenchioStreams, mylistStreams] = await Promise.all([
             fetchTorrentio(endpointPriorityFr, "FR Priority"),
             fetchTorrentio(endpointVf, "VF"),
             fetchTorrentio(endpointGlobal, "Global"),
+            fetchFrenchio(),
             fetchMylist()
           ]);
           const seenUrls = /* @__PURE__ */ new Set();
           const rawStreams = [];
-          for (const s of [...mylistStreams || [], ...priorityFrStreams, ...vfStreams, ...globalStreams]) {
+          for (const s of [...mylistStreams || [], ...frenchioStreams || [], ...priorityFrStreams, ...vfStreams, ...globalStreams]) {
             if (s && s.url && !seenUrls.has(s.url)) {
               seenUrls.add(s.url);
               rawStreams.push(s);

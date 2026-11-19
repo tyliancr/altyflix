@@ -351,7 +351,13 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
         });
 
     const movieHdPool = isMovie ? validAll.filter(s => s.tierKey === '1080p' || s.tierKey === '4k') : [];
-    const valid = (isMovie && movieHdPool.length > 0) ? movieHdPool : validAll;
+    const basePool = (isMovie && movieHdPool.length > 0) ? movieHdPool : validAll;
+
+    // Règle d'or audio : éliminer strictement les flux au son muet si des flux avec son garanti (AAC/Opus/MP3) existent
+    const anyCachedAll = validAll.some(s => s.isCached);
+    const audioSafePool = basePool.filter(s => s.isWebAudioSafe || !s.hasUnsupportedAudio);
+    const hasAudioSafeCached = anyCachedAll ? audioSafePool.some(s => s.isCached) : audioSafePool.length > 0;
+    const valid = hasAudioSafeCached ? audioSafePool : basePool;
 
     if (valid.length === 0) return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false, anyCached: false };
 

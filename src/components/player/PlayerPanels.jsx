@@ -237,6 +237,11 @@ function splitSubtitleLabel(label = '') {
 }
 
 function streamLabel(st) {
+    if (st.qualityLabel) {
+        return st.qualityLabel
+            .replace(/·\s*VF\b/g, '· Français')
+            .replace(/·\s*VO\b/g, '· Version originale');
+    }
     const tier = st.tierKey === '4k' ? '4K Ultra HD' : (st.tierKey === '1080p' ? '1080p FHD' : (st.tierKey === '720p' ? '720p HD' : (st.quality || 'HD')));
     const lang = st.isFrench ? 'Français' : (st.isVostfr ? 'VOSTFR' : 'Version originale');
     return `${tier} · ${lang}`;
@@ -264,13 +269,9 @@ export function AudioSubsPanel({
     const rawPlayable = (Array.isArray(streams) ? streams : [])
         .filter(st => !st.isDead && (st.isCached || st.verifiedReady) && !st.isDownloading && (!st.isAvi || st.isTranscoded));
     
-    // Règle d'or absolue : Ne proposer QUE des sources avec son et vidéo 100% compatibles navigateur
-    // Zéro piège 4K inaudible ou non sélectionnable, zéro MKV HEVC qui plante, zéro codec Dolby/DTS/surround muet
+    // Filtre de compatibilité conteneur : éliminer les formats anciens incompatibles non transcodés
     const playableStreams = rawPlayable.filter(st => {
-        if (st.hasUnsupportedAudio || !st.isWebAudioSafe) return false;
-        if (st.tierKey === '4k') return false; // Jamais de bouton 4K inexploitable ou muet
-        if (st.isMkv && st.isH265) return false;
-        if (/\b(?:7\.1|5\.1|8ch|6ch|surround|atmos|truehd|dts)\b/i.test(`${st.rawTitle || ''} ${st.filename || ''}`)) return false;
+        if (st.isAvi && !st.isTranscoded) return false;
         return true;
     });
     

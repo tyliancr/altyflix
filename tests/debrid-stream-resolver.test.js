@@ -473,3 +473,42 @@ test('Debrid Stream Resolver: Support flux TorBox CDN direct (parsing descriptio
   assert.equal(curated.activeStream.isFrench, true);
   assert.equal(curated.activeStream.url, 'https://tb-cdn.st/dld/encrypted_token_1/fall_guy.mp4');
 });
+
+test('Debrid Stream Resolver: Audio garanti sans faux positifs (LD/HDTV AAC prioritaire sur WEB-DL FW muet)', () => {
+  const fwRelease = parseStreamDetails({
+    name: '[TB+] Torrentio\n1080p',
+    title: '9-1-1.S03.MULTi.1080p.WEB.H264-FW\n9-1-1.S03E15.MULTi.1080p.WEB.H264-FW.mkv\n👤 7 💾 2.73 GB ⚙️ Torrent9\nMulti Audio / 🇫🇷',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/fw/f.mkv'
+  });
+  // FW est un WEB-DL scène sans mention AAC : ne doit PAS être marqué en Web Audio Safe (contient E-AC-3)
+  assert.equal(fwRelease.isWebAudioSafe, false, 'FW sans AAC ne doit pas être faux positif web audio');
+  assert.equal(fwRelease.hasUnsupportedAudio, true);
+
+  const ldRelease = parseStreamDetails({
+    name: '[TB+] Torrentio\nWEB-DL',
+    title: '9-1-1 Saison 3 FRENCH HDTV\n9-1-1.S03E15.FRENCH.LD.AMZN.WEB-DL.x264-FRATERNiTY.mkv\n👤 3 💾 404.42 MB ⚙️ Torrent9\n🇫🇷',
+    url: 'https://torrentio.strem.fun/resolve/torbox/tok/ld/f.mkv'
+  });
+  // FRATERNiTY LD est un rip stéréo garanti
+  assert.equal(ldRelease.isWebAudioSafe, true, 'LD stéréo doit être reconnu en Web Audio Safe');
+  assert.equal(ldRelease.hasUnsupportedAudio, false);
+
+  // Sur Netlify (enableAudioRemux = false), la version avec son universel (LD) doit être active par défaut
+  const curated = curateStreams([
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: '9-1-1.S03.MULTi.1080p.WEB.H264-FW\n9-1-1.S03E15.MULTi.1080p.WEB.H264-FW.mkv\n👤 7 💾 2.73 GB ⚙️ Torrent9\nMulti Audio / 🇫🇷',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/fw/f.mkv'
+    },
+    {
+      name: '[TB+] Torrentio\nWEB-DL',
+      title: '9-1-1 Saison 3 FRENCH HDTV\n9-1-1.S03E15.FRENCH.LD.AMZN.WEB-DL.x264-FRATERNiTY.mkv\n👤 3 💾 404.42 MB ⚙️ Torrent9\n🇫🇷',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/ld/f.mkv'
+    }
+  ], 'torbox', { enableAudioRemux: false, contentType: 'tv' });
+
+  assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/ld/f.mkv', 'La version avec son garanti doit être active');
+  assert.equal(curated.activeStream.isWebAudioSafe, true);
+  // Les deux versions doivent être proposées pour que l'utilisateur puisse choisir Dolby s'il a le matériel
+  assert.equal(curated.streams.length, 2, 'Les deux versions (Stéréo et Dolby) doivent être proposées');
+});

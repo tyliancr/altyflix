@@ -552,7 +552,8 @@ var require_stream_resolver = __commonJS({
       const hasMp3 = /\bmp3\b/i.test(fullText);
       const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
       const hasFlac = /\bflac\b/i.test(fullText);
-      const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st|fw|fr5|batgirl|ulysse|glados|rzp|slay3r|nbdy|duff)\b/i.test(fullText);
+      const hasFrenchStereoRip = /\b(?:ld|md|line[\s._-]*dub(?:bed)?|mic[\s._-]*dub(?:bed)?)\b/i.test(fullText) || /\b(?:hdtv|pdtv|dsr|tvrip)\b/i.test(fullText) && !/\b(?:5\.1|7\.1|ddp|eac3|ac3|dts)\b/i.test(fullText);
+      const isWebAudioGroup = /\b(?:yts|yify|galaxytv|tgx|joy|ozlem|psa|megusta|qxr|tigole|utr|qman|ion10|ion265|kontrast|vyndros|minx|vxt|rapta|pir8|lordvako)\b/i.test(fullText);
       const has71Or8ch = /\b(?:7\.1|8ch)\b/i.test(fullText);
       const hasOpusMultichannel = /\bopus(?:\s*\.?\s*[7]\.?[01]|\s*\.?\s*8ch)\b/i.test(fullText);
       const hasMultichannelSilence = has71Or8ch || hasOpusMultichannel;
@@ -560,10 +561,9 @@ var require_stream_resolver = __commonJS({
       const isDtsOrTrueHd = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x|dts-?ma|lpcm)\b)/i.test(fullText);
       const hasUnsupportedAudioCodec = isAc3OrDdp || isDtsOrTrueHd;
       const hasAtmosOrTrueHdOrDts = isDtsOrTrueHd;
-      const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus && !hasMultichannelSilence || hasFlac);
+      const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || hasOpus && !hasMultichannelSilence || hasFlac || hasFrenchStereoRip);
       const isWebAudioSafe = Boolean(hasExplicitWebAudio && !isDtsOrTrueHd && !hasMultichannelSilence || (isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSilence);
-      const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-      const hasUnsupportedAudio = Boolean(isAc3OrDdp && !hasExplicitWebAudio || isDtsOrTrueHd || hasMultichannelSilence || isMkvWithoutWebAudio || !isWebAudioSafe);
+      const hasUnsupportedAudio = Boolean(!hasExplicitWebAudio && (isAc3OrDdp || !isWebAudioSafe) || isDtsOrTrueHd || hasMultichannelSilence);
       const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
       const isHighQualitySource = /\b(?:bluray|bdrip|brrip|web-?dl|web-?rip|hdtv)\b/i.test(fullText);
       const isCamOrLowQuality = /\b(?:cam|camrip|hdcam|telesync|ts|hdts|telecine|tc|scr|screener|dvdscr|r5|workprint|wp)\b/i.test(fullText);
@@ -756,10 +756,24 @@ var require_stream_resolver = __commonJS({
       };
       ensureLangSlot((s) => s.isFrench);
       ensureLangSlot((s) => !s.isFrench);
+      if (hasTrueVf) {
+        const ensureVfAudioChoice = (wantWebAudio) => {
+          if (selectedList.some((s) => s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio)) return;
+          const cand = scored.find((s) => !seenIds.has(s.id) && s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio && s.isCached && s.tierKey === "1080p") || scored.find((s) => !seenIds.has(s.id) && s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio && s.isCached) || scored.find((s) => !seenIds.has(s.id) && s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio);
+          if (cand) {
+            const key = `${cand.tierKey}:${cand.isFrench ? "vf" : "vo"}:${cand.isWebAudioSafe ? "aac" : "other"}`;
+            seenKeys.add(key);
+            seenIds.add(cand.id);
+            selectedList.push(cand);
+          }
+        };
+        ensureVfAudioChoice(true);
+        ensureVfAudioChoice(false);
+      }
       for (const s of scored) {
         if (selectedList.length >= 6) break;
         if (seenIds.has(s.id)) continue;
-        const key = `${s.tierKey}:${s.isFrench ? "vf" : s.isVostfr ? "vostfr" : "vo"}`;
+        const key = `${s.tierKey}:${s.isFrench ? "vf" : s.isVostfr ? "vostfr" : "vo"}:${s.isWebAudioSafe ? "aac" : "other"}`;
         if (!seenKeys.has(key)) {
           seenKeys.add(key);
           seenIds.add(s.id);
@@ -769,12 +783,8 @@ var require_stream_resolver = __commonJS({
       for (const s of scored) {
         if (selectedList.length >= 4) break;
         if (seenIds.has(s.id)) continue;
-        const keyWithAudio = `${s.tierKey}:${s.isFrench ? "vf" : s.isVostfr ? "vostfr" : "vo"}:${s.isWebAudioSafe ? "aac" : "other"}`;
-        if (!seenKeys.has(keyWithAudio)) {
-          seenKeys.add(keyWithAudio);
-          seenIds.add(s.id);
-          selectedList.push(s);
-        }
+        seenIds.add(s.id);
+        selectedList.push(s);
       }
       const tierOrder = { "4k": 0, "1080p": 1, "720p": 2, "480p": 3 };
       selectedList.sort((a, b) => {
@@ -785,11 +795,23 @@ var require_stream_resolver = __commonJS({
         if (a.isFrench !== b.isFrench) return a.isFrench ? -1 : 1;
         return b.score - a.score;
       });
+      const baseCounts = /* @__PURE__ */ new Map();
+      selectedList.forEach((s) => {
+        const base = `${s.quality} \xB7 ${s.isFrench ? "VF" : s.isVostfr ? "VOSTFR" : "VO"}`;
+        baseCounts.set(base, (baseCounts.get(base) || 0) + 1);
+      });
       const formattedStreams = selectedList.map((s) => {
-        let qLabel = s.quality;
-        if (s.isFrench) qLabel += " \xB7 VF";
-        else if (s.isVostfr) qLabel += " \xB7 VOSTFR";
-        else qLabel += " \xB7 VO";
+        const base = `${s.quality} \xB7 ${s.isFrench ? "VF" : s.isVostfr ? "VOSTFR" : "VO"}`;
+        let qLabel = base;
+        if ((baseCounts.get(base) || 0) > 1) {
+          if (s.isWebAudioSafe) {
+            qLabel += " (St\xE9r\xE9o AAC)";
+          } else if (/ddp|eac3|ac3|atmos/i.test(`${s.filename} ${s.rawTitle}`)) {
+            qLabel += " (Dolby 5.1)";
+          } else {
+            qLabel += " (Option 2)";
+          }
+        }
         const canTranscodeAvi = Boolean(s.isAvi && enableAviTranscode);
         const streamPlaybackUrl = canTranscodeAvi && s.url.startsWith("http") ? `/api/video-stream?url=${encodeURIComponent(s.url)}` : s.url;
         return {

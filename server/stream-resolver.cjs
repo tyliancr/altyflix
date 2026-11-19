@@ -291,7 +291,11 @@ function parseStreamDetails(stream) {
   const hasMp3 = /\bmp3\b/i.test(fullText);
   const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
   const hasFlac = /\bflac\b/i.test(fullText);
-  const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|vxt|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|extreme|pop|f4st|fw|fr5|batgirl|ulysse|glados|rzp|slay3r|nbdy|duff)\b/i.test(fullText);
+  // Rips TV ou pistes stéréo françaises (LD, MD, Line, Mic, HDTV/PDTV sans DDP/5.1)
+  const hasFrenchStereoRip = /\b(?:ld|md|line[\s._-]*dub(?:bed)?|mic[\s._-]*dub(?:bed)?)\b/i.test(fullText) ||
+    (/\b(?:hdtv|pdtv|dsr|tvrip)\b/i.test(fullText) && !/\b(?:5\.1|7\.1|ddp|eac3|ac3|dts)\b/i.test(fullText));
+  // Groupes de micro-encodages web garantissant des pistes AAC/Opus
+  const isWebAudioGroup = /\b(?:yts|yify|galaxytv|tgx|joy|ozlem|psa|megusta|qxr|tigole|utr|qman|ion10|ion265|kontrast|vyndros|minx|vxt|rapta|pir8|lordvako)\b/i.test(fullText);
   
   // 2. Multicanal 7.1 / 8ch ou Opus multicanal sortant muet sans downmix matériel sur PC / navigateur
   const has71Or8ch = /\b(?:7\.1|8ch)\b/i.test(fullText);
@@ -305,15 +309,15 @@ function parseStreamDetails(stream) {
   const isDtsOrTrueHd = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x|dts-?ma|lpcm)\b)/i.test(fullText);
   const hasUnsupportedAudioCodec = isAc3OrDdp || isDtsOrTrueHd;
   const hasAtmosOrTrueHdOrDts = isDtsOrTrueHd;
-  const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac);
+  const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac || hasFrenchStereoRip);
 
   // Son 100 % garanti dans le navigateur (Chrome, Firefox, Safari, Edge, Mobile) :
   const isWebAudioSafe = Boolean((hasExplicitWebAudio && !isDtsOrTrueHd && !hasMultichannelSilence) || 
     ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSilence));
 
-  // Flux nécessitant attention audio
-  const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-  const hasUnsupportedAudio = Boolean((isAc3OrDdp && !hasExplicitWebAudio) || isDtsOrTrueHd || hasMultichannelSilence || isMkvWithoutWebAudio || !isWebAudioSafe);
+  // Flux nécessitant attention audio :
+  // Si le flux a explicitement AAC/MP3 (ou LD), il n'est PAS pénalisé
+  const hasUnsupportedAudio = Boolean((!hasExplicitWebAudio && (isAc3OrDdp || !isWebAudioSafe)) || isDtsOrTrueHd || hasMultichannelSilence);
 
   // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
   const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
@@ -645,11 +649,31 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
   ensureLangSlot(s => s.isFrench);
   ensureLangSlot(s => !s.isFrench);
 
+  // Garantie audio universelle : si la VF est présente, s'assurer qu'au moins une version avec son web garanti (AAC/MP3)
+  // ET une version multicanal Dolby HD (si présente) sont incluses dans les choix
+  if (hasTrueVf) {
+    const ensureVfAudioChoice = (wantWebAudio) => {
+      if (selectedList.some(s => s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio)) return;
+      const cand =
+        scored.find(s => !seenIds.has(s.id) && s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio && s.isCached && s.tierKey === '1080p') ||
+        scored.find(s => !seenIds.has(s.id) && s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio && s.isCached) ||
+        scored.find(s => !seenIds.has(s.id) && s.isFrench && Boolean(s.isWebAudioSafe) === wantWebAudio);
+      if (cand) {
+        const key = `${cand.tierKey}:${cand.isFrench ? 'vf' : 'vo'}:${cand.isWebAudioSafe ? 'aac' : 'other'}`;
+        seenKeys.add(key);
+        seenIds.add(cand.id);
+        selectedList.push(cand);
+      }
+    };
+    ensureVfAudioChoice(true);  // Version avec son web 100% garanti (AAC/MP3)
+    ensureVfAudioChoice(false); // Version Dolby/HD (si présente)
+  }
+
   // 1er passage : Meilleur flux pour chaque combinaison distincte (résolution + langue)
   for (const s of scored) {
     if (selectedList.length >= 6) break;
     if (seenIds.has(s.id)) continue;
-    const key = `${s.tierKey}:${s.isFrench ? 'vf' : (s.isVostfr ? 'vostfr' : 'vo')}`;
+    const key = `${s.tierKey}:${s.isFrench ? 'vf' : (s.isVostfr ? 'vostfr' : 'vo')}:${s.isWebAudioSafe ? 'aac' : 'other'}`;
     if (!seenKeys.has(key)) {
       seenKeys.add(key);
       seenIds.add(s.id);
@@ -657,16 +681,12 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     }
   }
 
-  // 2e passage : Alternatives avec codec sonore distinct (AAC web vs AC3) si moins de 4 choix
+  // 2e passage : Alternatives restantes pour atteindre au moins 4 choix si disponibles
   for (const s of scored) {
     if (selectedList.length >= 4) break;
     if (seenIds.has(s.id)) continue;
-    const keyWithAudio = `${s.tierKey}:${s.isFrench ? 'vf' : (s.isVostfr ? 'vostfr' : 'vo')}:${s.isWebAudioSafe ? 'aac' : 'other'}`;
-    if (!seenKeys.has(keyWithAudio)) {
-      seenKeys.add(keyWithAudio);
-      seenIds.add(s.id);
-      selectedList.push(s);
-    }
+    seenIds.add(s.id);
+    selectedList.push(s);
   }
 
   // Tri propre : Flux en cache D'ABORD, puis 4K -> 1080p -> 720p, puis VF avant VO
@@ -680,12 +700,26 @@ function curateStreams(rawStreams, provider, { enableAviTranscode = true, enable
     return b.score - a.score;
   });
 
+  // Détection des doublons de labels de base pour enrichir le libellé avec l'info audio (AAC vs Dolby)
+  const baseCounts = new Map();
+  selectedList.forEach(s => {
+    const base = `${s.quality} · ${s.isFrench ? 'VF' : (s.isVostfr ? 'VOSTFR' : 'VO')}`;
+    baseCounts.set(base, (baseCounts.get(base) || 0) + 1);
+  });
+
   // Ajout des libellés de qualité et routage transcodage AVI si nécessaire
   const formattedStreams = selectedList.map(s => {
-    let qLabel = s.quality;
-    if (s.isFrench) qLabel += ' · VF';
-    else if (s.isVostfr) qLabel += ' · VOSTFR';
-    else qLabel += ' · VO';
+    const base = `${s.quality} · ${s.isFrench ? 'VF' : (s.isVostfr ? 'VOSTFR' : 'VO')}`;
+    let qLabel = base;
+    if ((baseCounts.get(base) || 0) > 1) {
+      if (s.isWebAudioSafe) {
+        qLabel += ' (Stéréo AAC)';
+      } else if (/ddp|eac3|ac3|atmos/i.test(`${s.filename} ${s.rawTitle}`)) {
+        qLabel += ' (Dolby 5.1)';
+      } else {
+        qLabel += ' (Option 2)';
+      }
+    }
 
     const canTranscodeAvi = Boolean(s.isAvi && enableAviTranscode);
     const streamPlaybackUrl = (canTranscodeAvi && s.url.startsWith('http')) ? `/api/video-stream?url=${encodeURIComponent(s.url)}` : s.url;

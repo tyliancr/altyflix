@@ -28,12 +28,22 @@ const STORAGE_KEY_TOKEN = 'altyflix_stream_token';
 const STORAGE_KEY_FRENCHIO_URL = 'altyflix_frenchio_url';
 
 function checkBrowserAc3Support() {
-    if (typeof document === 'undefined') return false;
+    if (typeof document === 'undefined' || typeof navigator === 'undefined') return false;
     try {
+        const ua = navigator.userAgent || '';
+        // Safari (macOS / iOS), Edge sous Windows (avec codecs Media Foundation intégrés) et Smart TVs décodent l'AC3/E-AC3.
+        const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+        const isEdgeWindows = /Edg\//i.test(ua) && /Windows/i.test(ua);
+        const isSmartTv = /SmartTV|Web0S|Tizen|Android TV|GoogleTV|AppleTV|BRAVIA/i.test(ua);
+
+        if (!isSafari && !isEdgeWindows && !isSmartTv) {
+            return false;
+        }
+
         const v = document.createElement('video');
         const canAc3 = v.canPlayType('audio/mp4; codecs="ac-3"');
         const canEc3 = v.canPlayType('audio/mp4; codecs="ec-3"');
-        return Boolean((canAc3 && canAc3 !== 'no') || (canEc3 && canEc3 !== 'no'));
+        return canAc3 === 'probably' || canEc3 === 'probably' || (isEdgeWindows && canAc3 === 'maybe') || (isSmartTv && canAc3 !== '');
     } catch {
         return false;
     }
@@ -266,7 +276,11 @@ function parseStreamDetails(stream) {
     const hasMp3 = /\bmp3\b/i.test(fullText);
     const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
     const hasFlac = /\bflac\b/i.test(fullText);
-    const isWebAudioGroup = /\b(?:yts|yify|rapta|pir8|joy|ozlem|galaxytv|tgx|qxr|tigole|utr|qman|lordvako|psa|f4st|extreme|pop|fw|fr5|batgirl|ulysse|glados|rzp|slay3r|nbdy|duff)\b/i.test(fullText);
+    // Rips TV ou pistes stéréo françaises (LD, MD, Line, Mic, HDTV/PDTV sans DDP/5.1)
+    const hasFrenchStereoRip = /\b(?:ld|md|line[\s._-]*dub(?:bed)?|mic[\s._-]*dub(?:bed)?)\b/i.test(fullText) ||
+        (/\b(?:hdtv|pdtv|dsr|tvrip)\b/i.test(fullText) && !/\b(?:5\.1|7\.1|ddp|eac3|ac3|dts)\b/i.test(fullText));
+    // Groupes de micro-encodages web garantissant des pistes AAC/Opus
+    const isWebAudioGroup = /\b(?:yts|yify|galaxytv|tgx|joy|ozlem|psa|megusta|qxr|tigole|utr|qman|ion10|ion265|kontrast|vyndros|minx|vxt|rapta|pir8|lordvako)\b/i.test(fullText);
 
     const has71Or8ch = /\b(?:7\.1|8ch)\b/i.test(fullText);
     const hasOpusMultichannel = /\bopus(?:\s*\.?\s*[7]\.?[01]|\s*\.?\s*8ch)\b/i.test(fullText);
@@ -278,7 +292,7 @@ function parseStreamDetails(stream) {
     const hasDts = /dts/i.test(fullText);
     const hasAc3 = /\bac3\b/i.test(fullText);
     const hasUnsupportedAudioCodec = isAc3OrDdp || isDtsOrTrueHd;
-    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac);
+    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac || hasFrenchStereoRip);
 
     // Détection codec vidéo H.264 (universel) vs H.265/HEVC (incompatible sur certains navigateurs sans extension)
     const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
@@ -292,8 +306,7 @@ function parseStreamDetails(stream) {
     // Audio 100% garanti sans coupure sonore dans le navigateur (Chrome, Firefox, Safari, Edge, Mobile)
     const isWebAudioSafe = Boolean((hasExplicitWebAudio && !isDtsOrTrueHd && !hasMultichannelSilence) || 
         ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSilence));
-    const isMkvWithoutWebAudio = Boolean(!isMp4 && !isWebAudioGroup && !hasExplicitWebAudio);
-    const hasBadAudio = Boolean((isAc3OrDdp && !hasExplicitWebAudio) || isDtsOrTrueHd || hasMultichannelSilence || isMkvWithoutWebAudio || !isWebAudioSafe);
+    const hasBadAudio = Boolean((!hasExplicitWebAudio && (isAc3OrDdp || !isWebAudioSafe)) || isDtsOrTrueHd || hasMultichannelSilence);
 
     // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
     const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
@@ -513,10 +526,26 @@ function curateStreams(rawStreams, provider, { contentType = 'movie' } = {}) {
         else if (best1080p.isVostfr) label1080 = '1080p FHD · VOSTFR';
         else label1080 = '1080p FHD · VO';
 
+        // Si deux flux 1080p VF existent avec des codecs audio distincts (AAC vs Dolby), proposer les deux !
+        const altVfAudio = best1080p.isFrench
+            ? tiers['1080p'].find(s => s.isFrench && s.id !== best1080p.id && Boolean(s.isWebAudioSafe) !== Boolean(best1080p.isWebAudioSafe))
+            : null;
+
+        if (altVfAudio) {
+            label1080 = `1080p FHD · VF (${best1080p.isWebAudioSafe ? 'Stéréo Web' : 'Dolby 5.1'})`;
+        }
+
         curated.push({
             ...best1080p,
             qualityLabel: label1080
         });
+
+        if (altVfAudio) {
+            curated.push({
+                ...altVfAudio,
+                qualityLabel: `1080p FHD · VF (${altVfAudio.isWebAudioSafe ? 'Stéréo Web' : 'Dolby 5.1'})`
+            });
+        }
 
         // Si la meilleure version est en VF, on propose aussi une alternative VO en 1080p
         if (best1080p.isFrench) {

@@ -110,24 +110,11 @@ export default function NetflixPlayer({
     const [currentAudioLang, setCurrentAudioLang] = useState('vf');
     const [centerAction, setCenterAction] = useState(null); // 'play' | 'pause' | null
     const autoplayMutedRef = useRef(false);
-    const [isAutoplayMuted, setIsAutoplayMuted] = useState(false);
-    const [showDolbyNotice, setShowDolbyNotice] = useState(true);
-    const [copiedEdgeLink, setCopiedEdgeLink] = useState(false);
     const isAc3Supported = useMemo(() => canBrowserDecodeAc3(), []);
     // Pistes Dolby AC3/E-AC3/DTS que l'appareil ne sait pas décoder : on bascule tout seul
     // (une seule fois par épisode) sur une source au son compatible, sans aucun message.
     const audioFallbackDoneRef = useRef('');
     const [hasTrueVf, setHasTrueVf] = useState(false);
-    const safeWebStream = useMemo(() => {
-        return (availableStreams || []).find(s =>
-            s.id !== activeStream?.id &&
-            s.isWebAudioSafe &&
-            !s.hasUnsupportedAudio &&
-            (s.isCached || s.verifiedReady) &&
-            !s.isDownloading &&
-            (!s.isAvi || s.isTranscoded)
-        );
-    }, [availableStreams, activeStream]);
     const userPickedStreamRef = useRef(false);
     const [rippleEffect, setRippleEffect] = useState(null); // { side: 'left' | 'right', delta: -10 | 10 }
     const lastTapRef = useRef({ time: 0, x: 0 });
@@ -431,7 +418,7 @@ export default function NetflixPlayer({
                 // 3. Son garanti sur Chrome/Edge : Ne basculer QUE sur un flux PRÊT DANS LA MÊME LANGUE
                 // Ne JAMAIS remplacer une VF par de l'anglais pour une question d'audio si la VF existe !
                 if (!isAc3Supported && (selectedStream.hasUnsupportedAudio || !selectedStream.isWebAudioSafe)) {
-                    const safeReady = readyStreams.find(s => (s.isWebAudioSafe || !s.hasUnsupportedAudio) && Boolean(s.isFrench) === Boolean(selectedStream.isFrench));
+                    const safeReady = readyStreams.find(s => s.isWebAudioSafe && !s.hasUnsupportedAudio && Boolean(s.isFrench) === Boolean(selectedStream.isFrench));
                     if (safeReady) {
                         console.log('[Altyflix Player] Optimisation audio Chrome : flux avec son garanti sélectionné :', safeReady.qualityLabel || safeReady.quality);
                         selectedStream = safeReady;
@@ -750,7 +737,6 @@ export default function NetflixPlayer({
                 video.muted = true;
                 autoplayMutedRef.current = true;
                 setIsMuted(true);
-                setIsAutoplayMuted(true);
                 video.play().catch(() => {});
             });
         };
@@ -760,7 +746,6 @@ export default function NetflixPlayer({
             setVolume(video.volume);
             if (!video.muted) {
                 autoplayMutedRef.current = false;
-                setIsAutoplayMuted(false);
             }
         };
 
@@ -850,9 +835,6 @@ export default function NetflixPlayer({
         userMutedRef.current = false;
         setIsMuted(false);
         autoplayMutedRef.current = false;
-        setIsAutoplayMuted(false);
-        setShowDolbyNotice(true);
-        setCopiedEdgeLink(false);
         setCurrentTime(0);
         setDuration(0);
         setBuffered(0);
@@ -924,7 +906,6 @@ export default function NetflixPlayer({
                 video.muted = false;
                 video.volume = volumeRef.current || 1;
                 autoplayMutedRef.current = false;
-                setIsAutoplayMuted(false);
                 setIsMuted(false);
             }
         };
@@ -943,7 +924,6 @@ export default function NetflixPlayer({
             video.muted = false;
             video.volume = volumeRef.current || 1;
             autoplayMutedRef.current = false;
-            setIsAutoplayMuted(false);
             setIsMuted(false);
         }
 
@@ -1069,7 +1049,6 @@ export default function NetflixPlayer({
         userMutedRef.current = shouldMute;
         setIsMuted(shouldMute);
         autoplayMutedRef.current = false;
-        setIsAutoplayMuted(false);
         if (videoRef.current) {
             videoRef.current.volume = v;
             videoRef.current.muted = shouldMute;
@@ -1082,7 +1061,6 @@ export default function NetflixPlayer({
             userMutedRef.current = false;
             setIsMuted(false);
             autoplayMutedRef.current = false;
-            setIsAutoplayMuted(false);
             if (video) {
                 video.muted = false;
                 video.volume = volume || 1;
@@ -1830,77 +1808,6 @@ export default function NetflixPlayer({
                                 )}
                             </div>
                             <p className="absolute bottom-[28%] right-10 text-sm font-medium uppercase tracking-[0.2em] text-white/50 md:right-16">En pause</p>
-                        </div>
-                    )}
-
-                    {/* Alerte son coupé par la politique autoplay du navigateur */}
-                    {isAutoplayMuted && (
-                        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-auto">
-                            <button
-                                type="button"
-                                onClick={toggleMute}
-                                className="liquid-glass-pill flex items-center gap-2.5 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-2xl border border-white/20 hover:scale-105 active:scale-95 transition-all cursor-pointer animate-pulse bg-black/85 backdrop-blur-md"
-                            >
-                                <NetflixVolumeMuteIcon className="h-5 w-5 text-[#e50914]" />
-                                <span>Son coupé par le navigateur — Cliquez pour activer</span>
-                            </button>
-                        </div>
-                    )}
-
-                    {/* Notice Dolby AC-3 (Google Chrome & Brave sans codec sous Windows) */}
-                    {!isAc3Supported && showDolbyNotice && streamState === 'playing' && (activeStream?.hasUnsupportedAudio || !activeStream?.isWebAudioSafe) && (
-                        <div className="absolute top-16 right-4 sm:right-8 z-40 max-w-sm sm:max-w-md rounded-xl bg-black/90 border border-amber-500/40 p-4 text-white shadow-2xl backdrop-blur-md player-fade-in pointer-events-auto">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm">
-                                    <span className="text-base">🔊</span>
-                                    <span>Format audio Dolby (AC-3 / 5.1)</span>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowDolbyNotice(false)}
-                                    className="text-white/50 hover:text-white text-base leading-none p-1 cursor-pointer"
-                                    title="Fermer"
-                                >
-                                    ✕
-                                </button>
-                            </div>
-                            <p className="mt-1.5 text-xs text-white/80 leading-relaxed">
-                                Google Chrome et Brave sous Windows ne prennent pas en charge ce format audio. Pour avoir le son :
-                            </p>
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <a
-                                    href={`microsoft-edge:${typeof window !== 'undefined' ? window.location.href : ''}`}
-                                    className="rounded-lg bg-[#0078d4] hover:bg-[#106ebe] text-white px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                                    title="Ouvrir dans Microsoft Edge (inclus dans Windows avec support Dolby natif)"
-                                >
-                                    <span>Ouvrir dans Edge</span>
-                                </a>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                                            navigator.clipboard.writeText(window.location.href);
-                                            setCopiedEdgeLink(true);
-                                            setTimeout(() => setCopiedEdgeLink(false), 3000);
-                                        }
-                                    }}
-                                    className="rounded-lg bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer"
-                                >
-                                    {copiedEdgeLink ? '✓ Lien copié !' : 'Copier le lien'}
-                                </button>
-                                {safeWebStream && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            handleSelectStream(safeWebStream);
-                                            setShowDolbyNotice(false);
-                                        }}
-                                        className="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer"
-                                    >
-                                        {safeWebStream.isFrench ? 'Passer en Stéréo AAC (VF)' : 'Passer en VOSTFR (Son garanti)'}
-                                    </button>
-                                )}
-                            </div>
                         </div>
                     )}
 

@@ -1,18 +1,10 @@
-import { createRequire as __cr } from 'node:module';
-const require = __cr(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
-var __commonJS = (cb, mod) => function __require2() {
+var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __copyProps = (to, from, except, desc) => {
@@ -344,7 +336,6 @@ ${kept.join("\n\n")}`;
 // server/stream-resolver.cjs
 var require_stream_resolver = __commonJS({
   "server/stream-resolver.cjs"(exports, module) {
-    var crypto = __require("crypto");
     var { HttpError: HttpError2, positiveInteger: positiveInteger2, tmdbUrl: tmdbUrl2, BoundedCache: BoundedCache2 } = require_security();
     var streamResolveCache = /* @__PURE__ */ new Map();
     var inFlightResolves = /* @__PURE__ */ new Map();
@@ -353,7 +344,16 @@ var require_stream_resolver = __commonJS({
     var TORBOX_MYLIST_TTL_MS = 30 * 1e3;
     var ALLOWED_PROVIDERS = /* @__PURE__ */ new Set(["torbox", "realdebrid", "alldebrid", "debridlink", "premiumize"]);
     function sha256Short(str) {
-      return crypto.createHash("sha256").update(String(str || "")).digest("hex").slice(0, 24);
+      const s = String(str || "");
+      let h1 = 3735928559, h2 = 1103515245;
+      for (let i = 0; i < s.length; i++) {
+        const ch = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+      }
+      h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507) ^ Math.imul(h2 ^ h2 >>> 13, 3266489909);
+      h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507) ^ Math.imul(h1 ^ h1 >>> 13, 3266489909);
+      return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(16, "0");
     }
     function getCachedResolve(key) {
       const entry = streamResolveCache.get(key);

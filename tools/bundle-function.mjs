@@ -9,9 +9,7 @@ await esbuild.build({
   format: 'esm',
   outfile: 'netlify/functions/api.mjs',
   minify: false,
-  sourcemap: false,
-  banner: {
-    js: `import { createRequire as __cr } from 'node:module';\nconst require = __cr(import.meta.url);`
-  }
+  sourcemap: false
 });
 console.log('✅ Netlify Function api.mjs successfully bundled.');
+

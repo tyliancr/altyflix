@@ -548,8 +548,8 @@ function curateStreams(rawStreams, provider, {
 
     // 0. ÉLIMINATION RIGOUREUSE DES COPIES DE BASSE QUALITÉ (CAM, Telesync, Screener)
     if (st.isCamOrLowQuality) score -= 600000;
-    // Pénalité massive pour les remux géants / TrueHD Atmos injouables en web direct
-    if (st.isRemuxOrHeavyUnplayable) score -= 400000;
+    // Pénalité pour les remux géants / TrueHD Atmos uniquement en web direct sans remux FFmpeg
+    if (st.isRemuxOrHeavyUnplayable && !enableAudioRemux) score -= 400000;
 
     // 1. PRIORITÉ ABSOLUE : Flux déjà en cache (+100 000) vs Téléchargement (-500 000)
     // Garantit qu'un flux immédiatement lisible est TOUJOURS choisi avant un flux en attente
@@ -558,7 +558,7 @@ function curateStreams(rawStreams, provider, {
 
     // 2. Qualité vidéo : 1080p / 4K fortement privilégiés (1080p minimum sur les films)
     if (st.tierKey === '1080p') score += 45000;
-    else if (st.tierKey === '4k') score += (st.isRemuxOrHeavyUnplayable ? -60000 : 20000);
+    else if (st.tierKey === '4k') score += ((st.isRemuxOrHeavyUnplayable && !enableAudioRemux) ? -60000 : 50000);
     else if (st.tierKey === '720p') score += isMovie ? -40000 : 10000;
     else score += isMovie ? -80000 : 0;
 

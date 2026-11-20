@@ -1,8 +1,22 @@
 @echo off
 title ALTYFLIX Desktop
 cd /d "%~dp0"
+
 echo ========================================================
-echo   Lancement d'ALTYFLIX Desktop (Client Lourd)
-echo   Moteur audio FFmpeg actif - 100%% du son garanti
+echo          ALTYFLIX DESKTOP (Client Lourd)
+echo      4K HDR / Remux / 100%% Son Garanti (FFmpeg)
 echo ========================================================
-npm run app
+echo.
+
+IF NOT EXIST "node_modules" (
+    echo [1/3] Installation des composants requis...
+    call npm install
+)
+
+IF NOT EXIST "dist\index.html" (
+    echo [2/3] Compilation de l'interface Netflix...
+    call npm run build
+)
+
+echo [3/3] Demarrage d'ALTYFLIX Desktop...
+call npm run app

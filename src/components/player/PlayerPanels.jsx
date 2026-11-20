@@ -237,14 +237,24 @@ function splitSubtitleLabel(label = '') {
 }
 
 function streamLabel(st) {
+    let base = '';
     if (st.qualityLabel) {
-        return st.qualityLabel
+        base = st.qualityLabel
             .replace(/·\s*VF\b/g, '· Français')
             .replace(/·\s*VO\b/g, '· Version originale');
+    } else {
+        const tier = st.tierKey === '4k' ? '4K Ultra HD' : (st.tierKey === '1080p' ? '1080p FHD' : (st.tierKey === '720p' ? '720p HD' : (st.quality || 'HD')));
+        const lang = st.isFrench ? 'Français' : (st.isVostfr ? 'VOSTFR' : 'Version originale');
+        base = `${tier} · ${lang}`;
     }
-    const tier = st.tierKey === '4k' ? '4K Ultra HD' : (st.tierKey === '1080p' ? '1080p FHD' : (st.tierKey === '720p' ? '720p HD' : (st.quality || 'HD')));
-    const lang = st.isFrench ? 'Français' : (st.isVostfr ? 'VOSTFR' : 'Version originale');
-    return `${tier} · ${lang}`;
+    if (!base.includes('AAC') && !base.includes('Dolby')) {
+        if (st.isWebAudioSafe && !st.hasUnsupportedAudio) {
+            base += ' (AAC)';
+        } else if (st.hasUnsupportedAudio) {
+            base += ' (Dolby)';
+        }
+    }
+    return base;
 }
 
 /* ------------------------------------------------------------------ */

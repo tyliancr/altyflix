@@ -271,8 +271,9 @@ function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
     /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) ||
     /\b(?:dual.*(?:eng|en))\b/i.test(fullText);
 
-  // Détection des releases Russes ou étrangères où le français n'est pas en piste 0
-  const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
+  // Détection des releases Russes ou étrangères où le français n'est pas en piste 0 (ex: Ita/Eng, Ger/Eng, Spa/Eng)
+  const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText) ||
+    /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|ita[/._-]*ac3|ger[/._-]*ac3|spa[/._-]*ac3)\b/i.test(fullText);
 
   const isNonFrenchDub = /\b(?:german|deutsch|italian|italiano|spanish|espanol|castellano|portuguese|russian|japanese|korean|hindi|tamil)\s*dub\b/i.test(fullText) ||
     /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu)\b/i.test(fullText);

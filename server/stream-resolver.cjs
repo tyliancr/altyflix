@@ -818,25 +818,35 @@ function curateStreams(rawStreams, provider, {
     }
 
     const canTranscodeAvi = Boolean(s.isAvi && enableAviTranscode);
-    const streamPlaybackUrl = (canTranscodeAvi && s.url.startsWith('http')) ? `/api/video-stream?url=${encodeURIComponent(s.url)}` : s.url;
+    const audioLangParam = s.isFrench ? 'vf' : 'vo';
+    const shouldAudioRemux = Boolean(!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe));
+
+    let streamPlaybackUrl = s.url;
+    let isTranscoded = false;
+    let audioRemuxed = false;
+
+    if (canTranscodeAvi && s.url && s.url.startsWith('http')) {
+      streamPlaybackUrl = `/api/video-stream?url=${encodeURIComponent(s.url)}`;
+      isTranscoded = true;
+    } else if (shouldAudioRemux && s.url && s.url.startsWith('http')) {
+      streamPlaybackUrl = `/api/video-stream?audio=aac&lang=${audioLangParam}&url=${encodeURIComponent(s.url)}`;
+      isTranscoded = true;
+      audioRemuxed = true;
+    }
 
     return {
       ...s,
       url: streamPlaybackUrl,
       originalUrl: s.url,
-      isTranscoded: canTranscodeAvi,
+      isTranscoded,
+      audioRemuxed,
+      isWebAudioSafe: audioRemuxed ? true : s.isWebAudioSafe,
+      hasUnsupportedAudio: audioRemuxed ? false : s.hasUnsupportedAudio,
       qualityLabel: qLabel
     };
   });
 
-  const activeCanTranscodeAvi = Boolean(defaultActive?.isAvi && enableAviTranscode);
-  const activeFormatted = defaultActive ? formattedStreams.find(s => s.id === defaultActive.id) || {
-    ...defaultActive,
-    url: (activeCanTranscodeAvi && defaultActive.url.startsWith('http')) ? `/api/video-stream?url=${encodeURIComponent(defaultActive.url)}` : defaultActive.url,
-    originalUrl: defaultActive.url,
-    isTranscoded: activeCanTranscodeAvi,
-    qualityLabel: defaultActive.quality
-  } : null;
+  const activeFormatted = defaultActive ? (formattedStreams.find(s => s.id === defaultActive.id) || formattedStreams[0]) : null;
 
   return {
     streams: formattedStreams,
@@ -1337,13 +1347,15 @@ async function resolveStreamsServer({
         return { ...s, url: `${streamBase}/api/video-stream?transcode=1&lang=${audioLangParam}&url=${encodeURIComponent(rawDirect)}`, isTranscoded: true };
       }
     }
-    if (!s.isAvi && enableAudioRemux && s.hasUnsupportedAudio && s.verifiedReady && s.url && s.url.startsWith('http')) {
+    if (!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe) && (s.verifiedReady || s.isCached || !s.isDownloading) && s.url && s.url.startsWith('http')) {
       return {
         ...s,
         url: `${streamBase}/api/video-stream?audio=aac&lang=${audioLangParam}&url=${encodeURIComponent(s.url)}`,
         directUrl: s.directUrl || s.url,
         isTranscoded: true,
-        audioRemuxed: true
+        audioRemuxed: true,
+        isWebAudioSafe: true,
+        hasUnsupportedAudio: false
       };
     }
     return s;

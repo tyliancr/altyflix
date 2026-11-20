@@ -3,6 +3,10 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 
+// Permettre la lecture vidéo sans restriction d'autoplay ni de son bloqué
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport');
+
 let serverProcess = null;
 let mainWindow = null;
 
@@ -50,14 +54,13 @@ function startBackendServer() {
     });
 
     serverProcess.stdout?.on('data', (d) => {
-      const msg = d.toString();
-      if (msg.includes('démarré sur le port')) {
-        console.log('[Altyflix Backend]', msg.trim());
-      }
+      const msg = d.toString().trim();
+      if (msg) console.log('[Altyflix Backend]', msg);
     });
 
     serverProcess.stderr?.on('data', (d) => {
-      console.error('[Altyflix Backend Error]', d.toString().trim());
+      const msg = d.toString().trim();
+      if (msg) console.error('[Altyflix Backend Error]', msg);
     });
 
     await checkServerReady();

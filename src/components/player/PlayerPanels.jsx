@@ -356,6 +356,50 @@ export function AudioSubsPanel({
                     </div>
                 </section>
             )}
+
+            {Boolean(activeStream) && (
+                <section className="mt-4 border-t border-white/[0.08] pt-3.5">
+                    <SectionTitle>Lecture externe (Infuse / VLC / 4K)</SectionTitle>
+                    <div className="mt-2 flex flex-wrap gap-2 px-1">
+                        {(() => {
+                            const rawUrl = activeStream.directUrl || activeStream.originalUrl || (typeof activeStream.url === 'string' && activeStream.url.startsWith('http') ? activeStream.url : '');
+                            if (!rawUrl) return null;
+                            const infuseUrl = `infuse://x-callback-url/play?url=${encodeURIComponent(rawUrl)}`;
+                            const vlcUrl = `vlc://${rawUrl.replace(/^https?:\/\//, '')}`;
+                            return (
+                                <>
+                                    <a
+                                        href={infuseUrl}
+                                        className="rounded-full bg-[#f35a22]/90 hover:bg-[#f35a22] px-3 py-1.5 text-xs font-semibold text-white transition active:scale-95 inline-flex items-center gap-1.5 shadow-sm"
+                                        title="Ouvrir directement dans Infuse (Mac / Apple TV / iPhone / iPad)"
+                                    >
+                                        <span>🔥</span> Ouvrir dans Infuse
+                                    </a>
+                                    <a
+                                        href={vlcUrl}
+                                        className="rounded-full bg-orange-500/80 hover:bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white transition active:scale-95 inline-flex items-center gap-1.5"
+                                        title="Ouvrir directement dans VLC (Windows / Mac)"
+                                    >
+                                        <span>🟧</span> Ouvrir dans VLC
+                                    </a>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (navigator.clipboard) {
+                                                navigator.clipboard.writeText(rawUrl);
+                                                alert('Lien direct du flux copié dans le presse-papier !');
+                                            }
+                                        }}
+                                        className="rounded-full bg-white/[0.08] hover:bg-white/[0.15] px-3 py-1.5 text-xs font-semibold text-white/80 transition active:scale-95 inline-flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                        <span>📋</span> Copier le lien
+                                    </button>
+                                </>
+                            );
+                        })()}
+                    </div>
+                </section>
+            )}
         </Panel>
     );
 }

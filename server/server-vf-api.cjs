@@ -1139,7 +1139,7 @@ const server = http.createServer(async (req, res) => {
 
   // ALTYFLIX STREAM RESOLVER SECURISE (Torrentio / TorBox avec gestion de cache)
   if (pathname === '/api/stream-resolve') {
-    const { id, imdbId, type = 'movie', season = 1, episode = 1, lang = 'vf', title = '' } = query;
+    const { id, imdbId, type = 'movie', season = 1, episode = 1, lang = 'vf', title = '', clientAc3 } = query;
     const userProvider = req.headers['x-debrid-provider'];
     const userToken = req.headers['x-debrid-token'];
     const userFrenchioUrl = req.headers['x-frenchio-url'] || query.frenchioUrl;
@@ -1158,7 +1158,8 @@ const server = http.createServer(async (req, res) => {
         userFrenchioUrl,
         enableAudioRemux: hasFfmpeg(),
         enableAviTranscode: hasFfmpeg(),
-        tmdbApiKey: TMDB_API_KEY
+        tmdbApiKey: TMDB_API_KEY,
+        clientAc3: clientAc3 !== undefined ? (clientAc3 === '1' || clientAc3 === 'true') : true
       });
       return sendJSON(res, 200, result);
     } catch (err) {

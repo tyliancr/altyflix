@@ -788,19 +788,32 @@ export async function resolvePlaybackStreams({
                     hasTrueVf: Boolean(serverData.hasTrueVf)
                 };
             }
-            if (!serverData.success && (serverData.reason || serverData.message)) {
-                backendError = {
-                    success: false,
-                    reason: serverData.reason || 'NO_STREAMS_FOUND',
-                    message: serverData.message || serverData.error || 'Aucun flux direct disponible pour ce titre actuellement.',
-                    imdbId: serverData.imdbId || imdbId,
-                    streams: []
-                };
-            }
+            backendError = {
+                success: false,
+                reason: serverData.reason || 'NO_STREAMS_FOUND',
+                message: serverData.message || serverData.error || 'Aucun flux direct disponible pour ce titre actuellement.',
+                imdbId: serverData.imdbId || imdbId,
+                streams: []
+            };
+        } else {
+            backendError = {
+                success: false,
+                reason: 'SERVER_ERROR',
+                message: 'Le serveur de diffusion est momentanément indisponible. Veuillez réessayer dans quelques instants.',
+                imdbId,
+                streams: []
+            };
         }
     } catch (backendErr) {
         if (callerSignal?.aborted) return { success: false, aborted: true, streams: [] };
         console.warn('[Altyflix Stream Resolver] Backend non disponible, tentative directe...', backendErr.message);
+        backendError = {
+            success: false,
+            reason: 'NETWORK_ERROR',
+            message: 'Connexion au serveur de diffusion impossible. Veuillez vérifier votre connexion réseau.',
+            imdbId,
+            streams: []
+        };
     }
 
     // 2. FALLBACK DIRECT CLIENT : Utilisé si le backend est momentanément inaccessible

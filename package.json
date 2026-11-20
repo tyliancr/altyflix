@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "app": "electron electron/main.cjs",
     "dev": "vite",
     "server": "node server/server-vf-api.cjs",
     "start": "node server/server-vf-api.cjs",
@@ -40,6 +41,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.5.0",
+    "electron": "^41.7.1",
     "eslint": "^8.57.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^4.6.2",

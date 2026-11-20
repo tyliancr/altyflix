@@ -1612,21 +1612,14 @@ export default function NetflixPlayer({
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
                 const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
-                // 1. Chercher d'abord un flux alternatif dans la MÊME langue (VF) avec son web garanti
+                // 1. Chercher un flux alternatif dans la MÊME langue (VF) avec son web garanti
                 const safeSameLang = (availableStreams || []).find(s => s.id !== activeStream?.id && s.isWebAudioSafe && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench));
                 if (safeSameLang) {
                     console.log('[Altyflix Player] Flux muet détecté sans décodage audio, bascule automatique vers un flux sonore (même langue) :', safeSameLang.qualityLabel || safeSameLang.quality);
                     handleSelectStreamRef.current(safeSameLang);
                     return;
                 }
-                // 2. Si aucun flux de la même langue avec son web n'existe, basculer vers un flux sonore VOSTFR pour éviter le film muet
-                const safeAnyLang = (availableStreams || []).find(s => s.id !== activeStream?.id && s.isWebAudioSafe && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
-                if (safeAnyLang) {
-                    console.log('[Altyflix Player] Piste VF muette (codec Dolby non supporté par le navigateur), bascule vers VOSTFR sonore :', safeAnyLang.qualityLabel || safeAnyLang.quality);
-                    handleSelectStreamRef.current(safeAnyLang);
-                    const frSub = (availableSubtitlesRef.current || []).find(sub => sub.lang === 'fr');
-                    if (frSub) setSelectedSubtitleId(frSub.id);
-                }
+                // Si aucun flux de la même langue n'existe, NE PAS forcer le passage en anglais (l'utilisateur reste maître de son choix via le sélecteur audio)
             }
         };
 

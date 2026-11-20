@@ -530,7 +530,7 @@ var require_stream_resolver = __commonJS({
       const cleanFilename = filename.toLowerCase().replace(/_/g, " ");
       const nameNoMultiSub = mainReleaseName.replace(/\bmulti[\s._-]*subs?\b/gi, "");
       const fileNoMultiSub = cleanFilename.replace(/\bmulti[\s._-]*subs?\b/gi, "");
-      const isExplicitVostfr = /\b(?:vostfr|subfrench|fansub[\s._-]*vostfr|vost)\b/i.test(fullText) || /\b(?:vostfr|subfrench)\b/i.test(filename) || metaLines.includes("subfrench") || metaLines.includes("multi subs") || metaLines.includes("vostfr");
+      const isExplicitVostfr = /\b(?:vostfr|subfrench|fansub[\s._-]*vostfr|vost)\b/i.test(fullText) || /\b(?:vostfr|subfrench)\b/i.test(filename) || metaLines.includes("subfrench") || metaLines.includes("vostfr") || metaLines.includes("multi subs") && !metaLines.includes("multi audio") && !rawTitle.toLowerCase().includes("multi audio");
       const hasFrenchFlag = rawTitle.includes("\u{1F1EB}\u{1F1F7}");
       const isTorrent9 = fullText.includes("torrent9");
       const isFrenchGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|ulysse|batgirl|glados|slay3r|nbdy|rzp|jaskier)\b/i.test(fullText);
@@ -538,7 +538,7 @@ var require_stream_resolver = __commonJS({
       const isSceneMulti = /\b(?:multi|multisite)\b/i.test(mainReleaseName) || /\b(?:multi)\b/i.test(cleanFilename);
       const isForeignOnlyMulti = /\b(?:tam\s*\+\s*hin|dub\s*\+\s*(?:\d+x\s*)?mvo|ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu|rus\s*[-/]\s*eng)\b/i.test(fullText);
       const isFrenchMulti = isSceneMulti && !isForeignOnlyMulti && (isTorrent9 || hasFrenchFlag || hasFrenchDubInName || isFrenchGroup || /\b(?:fr|fre|francais|vff|vf2|vfq)\b/i.test(fullText));
-      const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle);
+      const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle) || /multi\s*audio/i.test(rawTitle) && hasFrenchFlag || /\b(?:esp\/fre|fre\/deu|ita\/fre|eng\/fre|fre-aac)\b/i.test(rawTitle);
       const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(rawTitle) || /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) || /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) || /\b(?:dual.*(?:eng|en))\b/i.test(fullText);
       const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
       const isNonFrenchDub = /\b(?:german|deutsch|italian|italiano|spanish|espanol|castellano|portuguese|russian|japanese|korean|hindi|tamil)\s*dub\b/i.test(fullText) || /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu)\b/i.test(fullText);
@@ -684,7 +684,15 @@ var require_stream_resolver = __commonJS({
         return true;
       };
       const playablePool = basePool.filter(isPlayableInBrowser);
-      const valid = playablePool.length > 0 ? playablePool : basePool.filter((s) => !s.isDead);
+      let valid;
+      if (playablePool.length === 0) {
+        valid = basePool.filter((s) => !s.isDead);
+      } else if (!preferVo && validAll.some((s) => s.isFrench) && !playablePool.some((s) => s.isFrench)) {
+        const frenchCandidates = basePool.filter((s) => s.isFrench && !s.isDead);
+        valid = Array.from(/* @__PURE__ */ new Set([...playablePool, ...frenchCandidates.length > 0 ? frenchCandidates : validAll.filter((s) => s.isFrench && !s.isDead)]));
+      } else {
+        valid = playablePool;
+      }
       if (valid.length === 0) {
         return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };
       }

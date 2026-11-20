@@ -233,8 +233,8 @@ function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
   const isExplicitVostfr = /\b(?:vostfr|subfrench|fansub[\s._-]*vostfr|vost)\b/i.test(fullText) ||
     /\b(?:vostfr|subfrench)\b/i.test(filename) ||
     metaLines.includes('subfrench') ||
-    metaLines.includes('multi subs') ||
-    metaLines.includes('vostfr');
+    metaLines.includes('vostfr') ||
+    (metaLines.includes('multi subs') && !metaLines.includes('multi audio') && !rawTitle.toLowerCase().includes('multi audio'));
 
   const hasFrenchFlag = rawTitle.includes('🇫🇷');
   const isTorrent9 = fullText.includes('torrent9');
@@ -260,7 +260,9 @@ function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
     /\b(?:fr|fre|francais|vff|vf2|vfq)\b/i.test(fullText)
   );
 
-  const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle);
+  const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle) ||
+    (/multi\s*audio/i.test(rawTitle) && hasFrenchFlag) ||
+    /\b(?:esp\/fre|fre\/deu|ita\/fre|eng\/fre|fre-aac)\b/i.test(rawTitle);
 
   // Détection des releases Multi où l'anglais est sur Track 0 :
   // Ex: "EN/ITA/FR/ES", "EN/FR", "EN/ES", "English/French", "Multi5", "Multi7"
@@ -481,8 +483,18 @@ function curateStreams(rawStreams, provider, {
   };
 
   const playablePool = basePool.filter(isPlayableInBrowser);
-  // Le pool valide contient les flux lisibles sans sacrifier la VF
-  const valid = (playablePool.length > 0) ? playablePool : basePool.filter(s => !s.isDead);
+  // Le pool valide contient les flux lisibles sans JAMAIS sacrifier la VF
+  let valid;
+  if (playablePool.length === 0) {
+    valid = basePool.filter(s => !s.isDead);
+  } else if (!preferVo && validAll.some(s => s.isFrench) && !playablePool.some(s => s.isFrench)) {
+    // Si des flux VF existent mais ont été écartés par isPlayableInBrowser (ex: MKV HEVC ou 720p),
+    // on les réintègre pour ne JAMAIS sacrifier la version française !
+    const frenchCandidates = basePool.filter(s => s.isFrench && !s.isDead);
+    valid = Array.from(new Set([...playablePool, ...(frenchCandidates.length > 0 ? frenchCandidates : validAll.filter(s => s.isFrench && !s.isDead))]));
+  } else {
+    valid = playablePool;
+  }
 
   if (valid.length === 0) {
     return { streams: [], activeStream: null, hasTrueVf: false, allDownloading: false };

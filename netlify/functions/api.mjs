@@ -562,7 +562,7 @@ var require_stream_resolver = __commonJS({
       const sizeMatch = rawTitle.match(/💾\s*([\d.]+\s*[KMGT]B)/i);
       const size = sizeMatch ? sizeMatch[1] : "";
       const sizeBytes = size ? parseBytes(size) : 0;
-      const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
+      const hasAac = /\b(?:he-?)?aac(?:\s*[-_.]?\s*[257](?:\s*[-_.]?\s*[01])?)?\b/i.test(fullText);
       const hasMp3 = /\bmp3\b/i.test(fullText);
       const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
       const hasFlac = /\bflac\b/i.test(fullText);
@@ -725,7 +725,7 @@ var require_stream_resolver = __commonJS({
         } else if (st.isWebAudioSafe) {
           score += !clientAc3 || !enableAudioRemux ? 65e3 : 25e3;
         } else if (st.hasUnsupportedAudio) {
-          score -= !clientAc3 || !enableAudioRemux ? 55e3 : 15e3;
+          score -= !clientAc3 && !enableAudioRemux ? 28e4 : 15e3;
         }
         if (preferVo) {
           if (!st.isFrench) score += 13e4;
@@ -762,23 +762,25 @@ var require_stream_resolver = __commonJS({
       const anyCached = scored.some((s) => s.isCached);
       const allDownloading = !anyCached && scored.every((s) => s.isDownloading);
       const matchesPrefLang = (s) => preferVo ? !s.isFrench : s.isFrench;
-      const audioPlayable = (s) => enableAudioRemux || s.isWebAudioSafe || !s.hasUnsupportedAudio;
+      const isAudioPlayable = (s) => enableAudioRemux || (clientAc3 ? !s.isDtsOrTrueHdWithoutAac && !s.hasMultichannelSilence : Boolean(s.isWebAudioSafe && !s.hasUnsupportedAudio));
+      const audioPlayable = isAudioPlayable;
       let defaultActive = null;
       if (anyCached) {
         const cachedPreferred = !enableAudioRemux ? (
-          // Quand aucun remux audio FFmpeg n'est disponible (Netlify/navigateur),
-          // priorité aux flux avec son 100% garanti (AAC/Opus) : 1080p puis 4K
-          scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe) || // Ensuite les flux avec audio AC3/DDP : 1080p puis 4K
-          scored.find((s) => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s) && audioPlayable(s)) || // Autre VF
-          scored.find((s) => s.isCached && matchesPrefLang(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s)) || // Repli VO
-          scored.find((s) => s.isCached && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => s.isCached && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.isCached && s.isWebAudioSafe) || scored.find((s) => s.isCached && audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && audioPlayable(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && audioPlayable(s)) || scored.find((s) => s.isCached && s.tierKey === "1080p") || scored.find((s) => s.isCached && s.tierKey === "4k") || scored.find((s) => s.isCached)
+          // 1. Priorité absolue sur Netlify : flux en cache dans la langue demandée avec Web Audio 100% garanti (AAC/Opus) : 1080p puis 4K puis autre
+          scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe) || // 2. Flux dans la langue demandée décodables par ce client (AC-3/DDP si clientAc3 est true, ex: Safari/Edge/Smart TV)
+          scored.find((s) => s.isCached && matchesPrefLang(s) && isAudioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && isAudioPlayable(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s) && isAudioPlayable(s)) || // 3. Si AUCUN flux dans la langue demandée n'a de son décodable sur cet appareil (ex: Raiponce en AC3 sur Chrome sans transcodeur),
+          // repli automatique vers le meilleur flux 1080p au son garanti (VOSTFR avec sous-titres FR automatiques) !
+          // Ne JAMAIS servir un flux muet par défaut !
+          scored.find((s) => s.isCached && isAudioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && isAudioPlayable(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && isAudioPlayable(s)) || // 4. Repli ultime si aucun flux au son garanti n'existe nulle part
+          scored.find((s) => s.isCached && matchesPrefLang(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s)) || scored.find((s) => s.isCached && s.tierKey === "1080p") || scored.find((s) => s.isCached && s.tierKey === "4k") || scored.find((s) => s.isCached)
         ) : (
           // Avec remux audio actif : 1080p est le format roi, même en AC3
           scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && matchesPrefLang(s) && s.isWebAudioSafe) || scored.find((s) => s.isCached && matchesPrefLang(s) && audioPlayable(s)) || scored.find((s) => s.isCached && matchesPrefLang(s)) || scored.find((s) => s.isCached && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => s.isCached && audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.isCached && s.tierKey === "1080p") || scored.find((s) => s.isCached && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.isCached && audioPlayable(s) && s.tierKey === "4k") || scored.find((s) => s.isCached && s.tierKey === "4k") || scored.find((s) => s.isCached && audioPlayable(s)) || scored.find((s) => s.isCached)
         );
         defaultActive = cachedPreferred || scored[0];
       } else {
-        defaultActive = !enableAudioRemux ? scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe) || scored.find((s) => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && audioPlayable(s)) || scored.find((s) => matchesPrefLang(s) && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s)) || scored.find((s) => s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.isWebAudioSafe) || scored[0] : scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe) || scored.find((s) => matchesPrefLang(s) && audioPlayable(s)) || scored.find((s) => matchesPrefLang(s)) || scored.find((s) => s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.tierKey === "1080p") || scored.find((s) => s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.tierKey === "4k") || scored.find((s) => s.isWebAudioSafe) || scored[0];
+        defaultActive = !enableAudioRemux ? scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe) || scored.find((s) => matchesPrefLang(s) && isAudioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && isAudioPlayable(s) && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && isAudioPlayable(s)) || scored.find((s) => isAudioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => isAudioPlayable(s) && s.tierKey === "4k") || scored.find((s) => isAudioPlayable(s)) || scored.find((s) => matchesPrefLang(s)) || scored[0] : scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && s.tierKey === "1080p") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && audioPlayable(s) && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && s.tierKey === "4k") || scored.find((s) => matchesPrefLang(s) && s.isWebAudioSafe) || scored.find((s) => matchesPrefLang(s) && audioPlayable(s)) || scored.find((s) => matchesPrefLang(s)) || scored.find((s) => s.isWebAudioSafe && s.tierKey === "1080p") || scored.find((s) => audioPlayable(s) && s.tierKey === "1080p") || scored.find((s) => s.tierKey === "1080p") || scored.find((s) => s.isWebAudioSafe && s.tierKey === "4k") || scored.find((s) => s.tierKey === "4k") || scored.find((s) => s.isWebAudioSafe) || scored[0];
       }
       const selectedList = [];
       const seenKeys = /* @__PURE__ */ new Set();
@@ -1153,7 +1155,7 @@ var require_stream_resolver = __commonJS({
         };
       }
     }
-    async function findStreamsInTorboxLibrary({ title, type, season = 1, episode = 1, torboxToken }) {
+    async function findStreamsInTorboxLibrary({ title, titleVariants = [], type, season = 1, episode = 1, torboxToken }) {
       if (!torboxToken || !title) return [];
       try {
         let torrents = null;
@@ -1174,15 +1176,16 @@ var require_stream_resolver = __commonJS({
         }
         if (!torrents || torrents.length === 0) return [];
         const norm = (str) => (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, " ").trim();
-        const searchWords = norm(title).split(/\s+/).filter((w) => w.length > 2);
-        if (searchWords.length === 0) return [];
+        const allTitles = Array.from(new Set([title, ...Array.isArray(titleVariants) ? titleVariants : [titleVariants]].filter(Boolean)));
+        const searchVariants = allTitles.map((t) => norm(t).split(/\s+/).filter((w) => w.length > 2)).filter((words) => words.length > 0);
+        if (searchVariants.length === 0) return [];
         const videoExts = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".ts", ".m4v"];
         const episodePattern = /\b(?:s\d{1,2}e\d{1,2}|\d{1,2}x\d{2}|saison\s*\d+|season\s*\d+|integrale?|complete\s*series)\b/i;
         const candidateFiles = [];
         for (const t of torrents) {
           if (!t.download_present && t.download_state !== "completed") continue;
           const tNorm = norm(t.name);
-          const isTitleMatch = searchWords.every((w) => tNorm.includes(w));
+          const isTitleMatch = searchVariants.some((words) => words.every((w) => tNorm.includes(w)));
           if (!isTitleMatch) continue;
           if (type === "movie" && episodePattern.test(t.name || "")) continue;
           const files = Array.isArray(t.files) ? t.files : [];
@@ -1515,7 +1518,7 @@ ${fName}
         };
       }
       const streamKey = isTv ? `${imdbId}:${season}:${episode}` : `${imdbId}`;
-      const cacheKey = `${provider}:${sha256Short(token)}:${streamKey}:${normalizedLang}:${enableAudioRemux ? "remux" : "direct"}:${enableAviTranscode ? "avi" : "noavi"}:${sha256Short(streamBase)}`;
+      const cacheKey = `${provider}:${sha256Short(token)}:${streamKey}:${normalizedLang}:${enableAudioRemux ? "remux" : "direct"}:${enableAviTranscode ? "avi" : "noavi"}:${Boolean(clientAc3) ? "ac3" : "noac3"}:${sha256Short(streamBase)}`;
       const cachedResult = getCachedResolve(cacheKey);
       if (cachedResult) {
         console.log(`[Altyflix Stream Resolver] R\xE9ponse instantan\xE9e depuis le cache m\xE9moire pour ${streamKey}.`);
@@ -1574,6 +1577,7 @@ ${fName}
             try {
               const streams = await findStreamsInTorboxLibrary({
                 title: cleanTitle,
+                titleVariants: [originalTitle, cinemetaTitle, ...Array.isArray(titleVariants) ? titleVariants : [titleVariants]].filter(Boolean),
                 type,
                 season,
                 episode,
@@ -1700,9 +1704,12 @@ ${fName}
           const matchesLang = (s) => wantVo ? !s.isFrench : s.isFrench;
           const isPlayableFormat = (s) => (!s.isAvi || enableAviTranscode) && !s.isRemuxOrHeavyUnplayable;
           const pickBestCandidate = (list) => {
-            if (!supportsAc3) {
-              return list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) || list.find((s) => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s)) || // Repli VO/autre langue UNIQUEMENT si aucun flux de la langue demandée n'existe
-              list.find((s) => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) || list.find((s) => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && !s.hasUnsupportedAudio) || list.find((s) => isPlayableFormat(s) && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s)) || list[0];
+            if (!supportsAc3 && !enableAudioRemux) {
+              return list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) || // 2. Si AUCUN flux VF n'a de son Web Audio (ex: Raiponce en AC3 5.1),
+              // repli immédiat vers le flux 1080p au son garanti (VOSTFR avec sous-titres FR automatiques) !
+              // Ne JAMAIS servir un flux muet à l'utilisateur !
+              list.find((s) => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) || // 3. Repli ultime si aucun flux web audio n'existe du tout
+              list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s)) || list[0];
             }
             return list.find((s) => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && !s.hasUnsupportedAudio) || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s)) || // Repli VO
             list.find((s) => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && !s.hasUnsupportedAudio) || list.find((s) => isPlayableFormat(s) && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s)) || list[0];

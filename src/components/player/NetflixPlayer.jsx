@@ -1619,7 +1619,14 @@ export default function NetflixPlayer({
                     handleSelectStreamRef.current(safeSameLang);
                     return;
                 }
-                // Si aucun flux de la même langue n'existe, NE PAS forcer le passage en anglais (l'utilisateur reste maître de son choix via le sélecteur audio)
+                // 2. Si aucun flux VF n'a de son décodable sur ce navigateur (ex: tous les torrents VF sont en AC3 sur Chrome sans transcodeur),
+                // bascule de secours automatique vers le flux au son garanti avec sous-titres FR pour éviter un film muet !
+                const safeAnyLang = (availableStreams || []).find(s => s.id !== activeStream?.id && s.isWebAudioSafe && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
+                if (safeAnyLang) {
+                    console.log('[Altyflix Player] Flux muet détecté sans décodage audio, bascule automatique de secours vers un flux sonore :', safeAnyLang.qualityLabel || safeAnyLang.quality);
+                    handleSelectStreamRef.current(safeAnyLang);
+                    return;
+                }
             }
         };
 

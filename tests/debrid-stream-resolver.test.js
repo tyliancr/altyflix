@@ -585,3 +585,44 @@ test('Debrid Stream Resolver: Protection anti-japonais / multi international (re
   assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/pap/yts.mp4', 'Le film doit se lancer en VOSTFR AAC propre au lieu du faux Multi');
   assert.equal(curated.activeStream.isWebAudioSafe, true);
 });
+
+test('Debrid Stream Resolver: Aucun flux muet sur Chrome/Brave (Raiponce AC3 repli vers 1080p AAC si clientAc3=false, ou VF AC3 si clientAc3=true)', () => {
+  const raiponceStreams = [
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Collection Disney Pixar - 1080p French VFF\n[101] Raiponce (2010).mkv\n👤 6 💾 1.83 GB\n🇫🇷',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/r1/disney_ac3.mkv'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Tangled (2010) 1080p BrRip x264 - YIFY\n👤 415 💾 1.44 GB ⚙️ ThePirateBay',
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/r2/yify_aac.mp4'
+    }
+  ];
+
+  // 1. Sur Chrome / Brave (clientAc3 = false, sans remux) :
+  // Le flux AC3 est muet à 100%. L'utilisateur doit OBLIGATOIREMENT recevoir le flux AAC avec son audible !
+  const chromeChoice = curateStreams(raiponceStreams, 'torbox', {
+    contentType: 'movie',
+    preferredLang: 'vf',
+    clientAc3: false,
+    enableAudioRemux: false
+  });
+
+  assert.equal(chromeChoice.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/r2/yify_aac.mp4', 'Chrome sans AC3 doit sélectionner le flux AAC sonore');
+  assert.equal(chromeChoice.activeStream.isWebAudioSafe, true);
+  assert.equal(chromeChoice.hasTrueVf, true, 'La VF reste disponible dans la liste des pistes pour les appareils compatibles');
+
+  // 2. Sur Safari / Edge / Smart TV (clientAc3 = true) :
+  // Le codec AC3 est nativement décodé par l'OS -> La VF Dolby 5.1 est sélectionnée par défaut
+  const edgeChoice = curateStreams(raiponceStreams, 'torbox', {
+    contentType: 'movie',
+    preferredLang: 'vf',
+    clientAc3: true,
+    enableAudioRemux: false
+  });
+
+  assert.equal(edgeChoice.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/r1/disney_ac3.mkv', 'Edge avec AC3 doit sélectionner la VF');
+  assert.equal(edgeChoice.activeStream.isFrench, true);
+});
+

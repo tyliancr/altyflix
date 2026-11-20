@@ -236,59 +236,75 @@ function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
     metaLines.includes('vostfr') ||
     (metaLines.includes('multi subs') && !metaLines.includes('multi audio') && !rawTitle.toLowerCase().includes('multi audio'));
 
+  // Détection des flags de langue Torrentio
   const hasFrenchFlag = rawTitle.includes('🇫🇷');
-  const isTorrent9 = fullText.includes('torrent9');
+  const hasEnglishFlag = rawTitle.includes('🇬🇧') || rawTitle.includes('🇺🇸');
+  const hasForeignFlag = rawTitle.includes('🇮🇹') || rawTitle.includes('🇪🇸') || rawTitle.includes('🇩🇪') || rawTitle.includes('🇷🇺') || rawTitle.includes('🇯🇵') || rawTitle.includes('🇧🇷') || rawTitle.includes('🇵🇹') || rawTitle.includes('🇮🇳');
+
+  // Si le flux porte le drapeau anglais/étranger ET le drapeau français (ex: 🇬🇧 / 🇪🇸 / 🇫🇷),
+  // c'est une release internationale avec l'anglais en piste 0 et des sous-titres FR -> VOSTFR, PAS VF !
+  const isMultiFlagVostfr = hasFrenchFlag && (hasEnglishFlag || hasForeignFlag);
+
+  const isTorrent9 = fullText.includes('torrent9') || fullText.includes('oxtorrent') || fullText.includes('cpasbien');
 
   // Groupes de releases et trackers francophones reconnus
-  const isFrenchGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|ulysse|batgirl|glados|slay3r|nbdy|rzp|jaskier)\b/i.test(fullText);
+  const isFrenchGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|ulysse|batgirl|glados|slay3r|nbdy|rzp|jaskier|andremor|zone-telechargement|zt|wawa)\b/i.test(fullText);
 
   // Détection explicite du doublage audio français dans le nom
-  const hasFrenchDubInName = /\b(?:truefrench|vff|vfq|vfi|vf2|french|francais|audio[\s._-]*fr|vf[\s._-]*hd|fr-en|en-fr|fr-ca)\b/i.test(nameNoMultiSub) ||
-    /\b(?:truefrench|vff|vfq|vfi|vf2|french|francais|audio[\s._-]*fr|vf[\s._-]*hd|fr-en|en-fr|fr-ca)\b/i.test(fileNoMultiSub) ||
-    /\b(?:truefrench|vff|vfq|vfi|vf2|french|francais)\b/i.test(fullText) ||
+  const hasFrenchDubInName = /\b(?:truefrench|vff|vfq|vfi|vf2|french|francais|audio[\s._-]*fr|vf[\s._-]*hd|fr-ca)\b/i.test(nameNoMultiSub) ||
+    /\b(?:truefrench|vff|vfq|vfi|vf2|french|francais|audio[\s._-]*fr|vf[\s._-]*hd|fr-ca)\b/i.test(fileNoMultiSub) ||
+    /\b(?:truefrench|vff|vfq|vfi|vf2|french|francais)\b/i.test(mainReleaseName) ||
     /\bvf\b/i.test(mainReleaseName) ||
     /\bvf\b/i.test(cleanFilename) ||
-    /\b(?:fre)\b/i.test(fullText) ||
-    /\b(?:fr|fre)\b/i.test(nameNoMultiSub);
+    /\b(?:fr-en|en-fr|fr\/en|en\/fr|fre-aac)\b/i.test(mainReleaseName);
 
   // Scene MULTI : un MULTI scene est français s'il provient d'un tracker/groupe français ou porte des indices FR
-  const isSceneMulti = /\b(?:multi|multisite)\b/i.test(mainReleaseName) || /\b(?:multi)\b/i.test(cleanFilename) || /\bmulti\s*audio\b/i.test(fullText);
+  const isSceneMulti = /\b(?:multi|multisite)\b/i.test(mainReleaseName) || /\b(?:multi)\b/i.test(cleanFilename);
   const isForeignOnlyMulti = /\b(?:tam\s*\+\s*hin|dub\s*\+\s*(?:\d+x\s*)?mvo|ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu|rus\s*[-/]\s*eng)\b/i.test(fullText);
-  const isFrenchMulti = isSceneMulti && !isForeignOnlyMulti && (
+
+  // Détection des releases Multi internationales (ThePirateBay, 1337x, etc.) où le français n'est PAS en piste 0
+  // Dans un conteneur MKV sans transcodeur serveur, Chromium joue la piste 0 (ou première supportée) -> l'utilisateur entendait du japonais/anglais !
+  const isInternationalMultiWithoutFr = isMultiFlagVostfr || (
+    (isSceneMulti || /\bmulti\s*audio\b/i.test(fullText)) &&
+    !isTorrent9 &&
+    !isFrenchGroup &&
+    !hasFrenchDubInName &&
+    !isFrenchOriginal
+  );
+
+  const isFrenchMulti = isSceneMulti && !isForeignOnlyMulti && !isInternationalMultiWithoutFr && (
     isTorrent9 ||
-    hasFrenchFlag ||
-    hasFrenchDubInName ||
     isFrenchGroup ||
-    /\b(?:fr|fre|francais|vff|vf2|vfq|vfi)\b/i.test(fullText) ||
-    /multi\s*audio/i.test(rawTitle) ||
-    Boolean(stream?._isFromFrenchQuery)
+    hasFrenchDubInName ||
+    /\b(?:vff|vf2|vfq|vfi|truefrench)\b/i.test(fullText) ||
+    (hasFrenchFlag && !isMultiFlagVostfr && !/\b(?:thepiratebay|1337x|rarbg|torrentgalaxy|rutor|rutracker)\b/i.test(fullText))
   );
 
   const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(rawTitle) ||
-    (/multi\s*audio/i.test(rawTitle) && (hasFrenchFlag || isTorrent9 || !isForeignOnlyMulti)) ||
-    /\b(?:esp\/fre|fre\/deu|ita\/fre|eng\/fre|fre-aac|en\/fr|fr\/en|en\s*fr)\b/i.test(rawTitle);
+    (/\b(?:esp\/fre|fre\/deu|ita\/fre|eng\/fre|fre-aac|en\/fr|fr\/en|en\s*fr)\b/i.test(rawTitle) && !isInternationalMultiWithoutFr);
 
-  // Détection des releases Multi où l'anglais est sur Track 0 :
-  // Ex: "EN/ITA/FR/ES", "EN/FR", "EN/ES", "English/French", "Multi5", "Multi7"
-  const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(rawTitle) ||
+  // Détection des releases Multi où l'anglais ou une langue étrangère est sur Track 0 :
+  // Ex: "EN/ITA/FR/ES", "EN/FR", "EN/ES", "English/French", "Multi5", "Multi7", TPB Multi Audio
+  const isEnglishPrimaryMulti = isInternationalMultiWithoutFr ||
+    /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(rawTitle) ||
     /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) ||
     /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) ||
     /\b(?:dual.*(?:eng|en))\b/i.test(fullText);
 
-  // Détection des releases Russes ou étrangères où le français n'est pas en piste 0 (ex: Ita/Eng, Ger/Eng, Spa/Eng)
-  const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText) ||
+  // Détection des releases étrangères où le français n'est pas en piste 0 (ex: Ita/Eng, Ger/Eng, Spa/Eng)
+  const isForeignPrimaryMulti = isEnglishPrimaryMulti ||
+    /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText) ||
     /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|ita[/._-]*ac3|ger[/._-]*ac3|spa[/._-]*ac3)\b/i.test(fullText);
 
   const isNonFrenchDub = /\b(?:german|deutsch|italian|italiano|spanish|espanol|castellano|portuguese|russian|japanese|korean|hindi|tamil)\s*dub\b/i.test(fullText) ||
     /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu)\b/i.test(fullText);
 
-  // La VF doit être une vraie version française (jamais une VOSTFR !)
+  // La VF doit être une vraie version française avec piste 0 en français (jamais une fausse VF qui sort en japonais ou anglais !)
   const hasFrenchAudio = Boolean(!isExplicitVostfr && !isForeignPrimaryMulti && (
     hasFrenchDubInName ||
     isFrenchMulti ||
-    hasFrenchAudioInAudioLine ||
     (isTorrent9 && !isExplicitVostfr) ||
-    (hasFrenchFlag && !isExplicitVostfr) ||
+    (hasFrenchFlag && !isMultiFlagVostfr && !isInternationalMultiWithoutFr && !isExplicitVostfr) ||
     (isFrenchOriginal && !isNonFrenchDub)
   ));
   const isPureFrench = Boolean(hasFrenchAudio && !isEnglishPrimaryMulti);
@@ -296,9 +312,12 @@ function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
 
   const isVostfr = !isFrench && Boolean(
     isExplicitVostfr ||
-    (hasFrenchFlag && isExplicitVostfr) ||
+    isMultiFlagVostfr ||
+    isEnglishPrimaryMulti ||
     metaLines.includes('subfrench') ||
-    metaLines.includes('multi subs')
+    metaLines.includes('multi subs') ||
+    metaLines.includes('vostfr') ||
+    hasFrenchFlag
   );
 
   const isMp4 = /\.mp4(?:\?|$)/i.test(stream?.url || '') || /\.mp4(?:$|\?|\s|["')\]])/i.test(filename);

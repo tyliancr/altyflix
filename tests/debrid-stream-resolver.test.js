@@ -554,3 +554,34 @@ test('Debrid Stream Resolver: Films français (isFrenchOriginal), réconciliatio
   assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/bac/vxt.mp4', 'Le flux AAC universel doit être le flux actif par défaut');
   assert.equal(curated.activeStream.isWebAudioSafe, true);
 });
+
+test('Debrid Stream Resolver: Protection anti-japonais / multi international (rejet fausse VF sur TPB Multi)', () => {
+  const multiStreams = [
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Pride.And.Prejudice.2005.BDRip.1080p.x264.Multi + Extras [MKV]\nPride.&.Prejudice.2005.BDRip.1080p.x264.[Multi].mkv\n👤 8 💾 5.94 GB ⚙️ ThePirateBay\nMulti Audio',
+      behaviorHints: { filename: 'Pride.&.Prejudice.2005.BDRip.1080p.x264.[Multi].mkv' },
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/pap/tpb_multi.mkv'
+    },
+    {
+      name: '[TB+] Torrentio\n1080p',
+      title: 'Pride.and.Prejudice.2005.1080p.BrRip.x264.BOKUTOX.YIFY\n👤 66 💾 1.8 GB ⚙️ ThePirateBay',
+      behaviorHints: { filename: 'Pride.and.Prejudice.2005.1080p.BrRip.x264.BOKUTOX.YIFY.mp4' },
+      url: 'https://torrentio.strem.fun/resolve/torbox/tok/pap/yts.mp4'
+    }
+  ];
+
+  const parsedTpb = parseStreamDetails(multiStreams[0], 'Pride and Prejudice');
+  assert.equal(parsedTpb.isFrench, false, 'Un Multi de ThePirateBay sans marqueur VF explicite ne doit JAMAIS être classé en VF');
+  assert.equal(parsedTpb.isVostfr, true, 'Le flux Multi international doit être classé en VOSTFR');
+
+  const curated = curateStreams(multiStreams, 'torbox', {
+    contentType: 'movie',
+    preferredLang: 'vf',
+    enableAudioRemux: false
+  });
+
+  assert.equal(curated.hasTrueVf, false, 'Aucune vraie VF ne doit être détectée s\'il n\'y a que des releases internationales');
+  assert.equal(curated.activeStream.url, 'https://torrentio.strem.fun/resolve/torbox/tok/pap/yts.mp4', 'Le film doit se lancer en VOSTFR AAC propre au lieu du faux Multi');
+  assert.equal(curated.activeStream.isWebAudioSafe, true);
+});

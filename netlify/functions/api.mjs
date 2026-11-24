@@ -554,8 +554,11 @@ var require_stream_resolver = __commonJS({
       "api.torbox.app",
       "torbox.app",
       "tb-cdn.st",
+      "torbox-cdn.com",
       "b-cdn.net",
       "bunnycdn.com",
+      "bunny.net",
+      "cloudflarestorage.com",
       "api.real-debrid.com",
       "real-debrid.com",
       "rdeb.io",
@@ -715,7 +718,8 @@ var require_stream_resolver = __commonJS({
       const isPlayableInBrowser = (s) => {
         if (s.isAvi && !s.isTranscoded && !enableAviTranscode) return false;
         if (s.tierKey === "4k" && s.isAvi) return false;
-        if (s.isRemuxOrHeavyUnplayable && !enableAudioRemux) return false;
+        const isGiantRemux = Boolean(/\b(?:remux|bdremux|uhd[\s._-]*remux)\b/i.test(s.rawTitle || "") || s.sizeBytes && s.sizeBytes > 35 * 1024 * 1024 * 1024);
+        if (isGiantRemux && !enableAudioRemux) return false;
         return true;
       };
       const playablePool = basePool.filter(isPlayableInBrowser);
@@ -900,6 +904,7 @@ var require_stream_resolver = __commonJS({
           originalUrl: s.url,
           isTranscoded,
           audioRemuxed,
+          needsAudioRemux: shouldAudioRemux,
           isWebAudioSafe: audioRemuxed ? true : s.isWebAudioSafe,
           hasUnsupportedAudio: audioRemuxed ? false : s.hasUnsupportedAudio,
           qualityLabel: qLabel
@@ -1357,16 +1362,23 @@ ${fName}
             return { ...s, url: `${streamBase}/api/video-stream?transcode=1&lang=${audioLangParam}&url=${encodeURIComponent(rawDirect)}`, isTranscoded: true };
           }
         }
-        if (!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe || s.isMulti) && (s.verifiedReady || s.isCached || !s.isDownloading) && s.url && s.url.startsWith("http")) {
-          return {
-            ...s,
-            url: `${streamBase}/api/video-stream?audio=aac&lang=${audioLangParam}&url=${encodeURIComponent(s.url)}`,
-            directUrl: s.directUrl || s.url,
-            isTranscoded: true,
-            audioRemuxed: true,
-            isWebAudioSafe: true,
-            hasUnsupportedAudio: false
-          };
+        if (!s.isAvi && enableAudioRemux && (s.needsAudioRemux || s.audioRemuxed || s.hasUnsupportedAudio || !s.isWebAudioSafe || s.isMulti) && (s.verifiedReady || s.isCached || !s.isDownloading)) {
+          if (typeof s.url === "string" && s.url.includes("/api/video-stream")) {
+            const finalUrl = streamBase && s.url.startsWith("/api/") ? `${streamBase}${s.url}` : s.url;
+            return { ...s, url: finalUrl, isTranscoded: true, audioRemuxed: true, isWebAudioSafe: true, hasUnsupportedAudio: false };
+          }
+          const remuxTarget = typeof s.url === "string" && s.url.startsWith("http") ? s.url : rawDirect;
+          if (typeof remuxTarget === "string" && remuxTarget.startsWith("http")) {
+            return {
+              ...s,
+              url: `${streamBase}/api/video-stream?audio=aac&lang=${audioLangParam}&url=${encodeURIComponent(remuxTarget)}`,
+              directUrl: s.directUrl || remuxTarget,
+              isTranscoded: true,
+              audioRemuxed: true,
+              isWebAudioSafe: true,
+              hasUnsupportedAudio: false
+            };
+          }
         }
         return s;
       };
@@ -1790,7 +1802,7 @@ ${fName}
                   isCached: true,
                   isDownloading: false,
                   isAvi: isAviNow,
-                  isTranscoded: Boolean(isAviNow && enableAviTranscode),
+                  isTranscoded: Boolean(isAviNow && enableAviTranscode || candidate.needsAudioRemux),
                   verifiedReady: true
                 };
                 const idx = workingStreams.findIndex((s) => s.id === candidate.id);
@@ -1833,7 +1845,7 @@ ${fName}
                       isCached: true,
                       isDownloading: false,
                       isAvi: isAviNow,
-                      isTranscoded: Boolean(isAviNow && enableAviTranscode),
+                      isTranscoded: Boolean(isAviNow && enableAviTranscode || candidate.needsAudioRemux),
                       verifiedReady: true
                     };
                   } else if (check.status === "error" || check.isDead) {

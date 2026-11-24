@@ -177,6 +177,7 @@ export default function NetflixPlayer({
     const nextEpTargetRef = useRef(null);
     const skipNextCleanupSaveRef = useRef(false);
     const seekingTranscodeRef = useRef(false);
+    const preservedSeekPosRef = useRef(0);
 
     useEffect(() => {
         let live = true;
@@ -601,9 +602,12 @@ export default function NetflixPlayer({
         const engine = new UnifiedStreamingEngine();
         engineRef.current = engine;
 
-        // Reprise de lecture exacte depuis l'historique de visionnage ou position en cours
+        // Reprise de lecture exacte depuis la position conservée (changement audio/qualité) ou l'historique
         let startPos = 0;
-        if (currentTimeRef.current > 5) {
+        if (preservedSeekPosRef.current > 5) {
+            startPos = preservedSeekPosRef.current;
+            preservedSeekPosRef.current = 0;
+        } else if (currentTimeRef.current > 5) {
             startPos = Math.round(currentTimeRef.current);
         } else {
             const historyList = watchHistoryRef.current || [];
@@ -675,6 +679,7 @@ export default function NetflixPlayer({
         };
 
         const onTimeUpdate = () => {
+            if (pendingResumeSeek || seekingTranscodeRef.current) return;
             const currentOffset = transcodeOffsetRef.current || 0;
             const realCurrent = (video.currentTime || 0) + currentOffset;
             setCurrentTime(realCurrent);
@@ -831,6 +836,7 @@ export default function NetflixPlayer({
         saveCurrentProgress();
         skipNextCleanupSaveRef.current = Boolean(loadedUrlRef.current);
         resolvedKeyRef.current = '';
+        preservedSeekPosRef.current = 0;
         currentTimeRef.current = 0;
         transcodeOffsetRef.current = 0;
         loadedUrlRef.current = null;
@@ -1173,6 +1179,11 @@ export default function NetflixPlayer({
             try { video.pause(); } catch { /* ignore */ }
         }
         saveCurrentProgress();
+        // Sauvegarder la position actuelle AVANT de remettre l'offset transcodage à 0
+        const exactCurrentSec = Math.round(currentTimeRef.current || 0);
+        if (exactCurrentSec > 5) {
+            preservedSeekPosRef.current = exactCurrentSec;
+        }
         skipNextCleanupSaveRef.current = Boolean(loadedUrlRef.current);
         loadedUrlRef.current = null;
         transcodeOffsetRef.current = 0;
@@ -1180,7 +1191,11 @@ export default function NetflixPlayer({
             userPickedSubRef.current = false;
         }
 
-        const directPlaybackUrl = st.directUrl || (typeof st.url === 'string' && !st.url.includes('/resolve/') && (st.url.startsWith('http') || st.url.startsWith('/api/video-stream')) ? st.url : null);
+        // NE JAMAIS écraser une URL remuxée (/api/video-stream) par directUrl !
+        const isRemuxOrTranscodedUrl = typeof st.url === 'string' && st.url.includes('/api/video-stream');
+        const directPlaybackUrl = (st.isTranscoded || isRemuxOrTranscodedUrl)
+            ? st.url
+            : (st.directUrl || (typeof st.url === 'string' && !st.url.includes('/resolve/') && (st.url.startsWith('http') || st.url.startsWith('/api/video-stream')) ? st.url : null));
         const effectiveStream = directPlaybackUrl ? { ...st, url: directPlaybackUrl } : st;
 
         setActiveStream(effectiveStream);
@@ -1411,12 +1426,6 @@ export default function NetflixPlayer({
         };
 
         if (lang === 'vf') {
-            setCurrentAudioLang('vf');
-            userPickedSubRef.current = false;
-            if (!subtitlesAlwaysOnRef.current) {
-                const forcedFr = subs.find(s => s.lang === 'fr' && s.forced && s.embedded);
-                handleSelectSubtitle(forcedFr ? forcedFr.id : 'off', subs);
-            }
             const vfStream =
                 (availableStreams || []).find(s => s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && !s.hasUnsupportedAudio && s.tierKey === '1080p') ||
                 (availableStreams || []).find(s => s.isFrench && (s.isCached || s.verifiedReady) && !s.isDownloading && !s.hasUnsupportedAudio) ||
@@ -1427,6 +1436,13 @@ export default function NetflixPlayer({
                 (availableStreams || []).find(s => s.isFrench && s.tierKey === '1080p') ||
                 (availableStreams || []).find(s => s.isFrench) ||
                 (isMultiStream(activeStream) ? withRemuxLang(activeStream, 'vf') : null);
+            if (!vfStream && !activeStream?.isFrench) return;
+            setCurrentAudioLang('vf');
+            userPickedSubRef.current = false;
+            if (!subtitlesAlwaysOnRef.current) {
+                const forcedFr = subs.find(s => s.lang === 'fr' && s.forced && s.embedded);
+                handleSelectSubtitle(forcedFr ? forcedFr.id : 'off', subs);
+            }
             if (vfStream && vfStream.url !== activeStream?.url) {
                 handleSelectStream(vfStream);
             }

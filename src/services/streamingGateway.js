@@ -12,7 +12,10 @@ import streamParser from '../../server/stream-parser.cjs';
 const { isTorrentioErrorStream, parseStreamDetails } = streamParser;
 export { isTorrentioErrorStream };
 
-const API_BASE = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const DEFAULT_PROD_API_BASE = (typeof window !== 'undefined' && /netlify\.app$/i.test(window.location.hostname))
+    ? 'https://altyflix-production.up.railway.app'
+    : '';
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || DEFAULT_PROD_API_BASE || '').replace(/\/+$/, '');
 export const apiUrl = (path) => (typeof path === 'string' && path.startsWith('/api/') && API_BASE ? `${API_BASE}${path}` : path);
 
 export const DEBRID_PROVIDERS = [

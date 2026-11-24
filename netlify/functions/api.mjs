@@ -660,8 +660,10 @@ var require_stream_resolver = __commonJS({
       const allVariants = Array.from(new Set([cleanTitle, ...Array.isArray(titleVariants) ? titleVariants : [titleVariants]].filter(Boolean)));
       const validAll = rawStreams.filter((s) => {
         if (typeof s.url !== "string" || normalizeAllowedUrl2(s.url) === null || isTorrentioErrorStream(s)) return false;
-        const combined = `${s.filename || ""} ${s.title || ""} ${s.name || ""}`;
-        if (allVariants.length > 0 && !isTorrentRelevantToTitle(combined, allVariants)) return false;
+        if (s.isTorboxLibrary && allVariants.length > 0) {
+          const combined = `${s.filename || ""} ${s.title || ""} ${s.name || ""}`;
+          if (!isTorrentRelevantToTitle(combined, allVariants)) return false;
+        }
         return true;
       }).map((s, idx) => {
         const normalizedUrl = normalizeAllowedUrl2(s.url);
@@ -677,6 +679,9 @@ var require_stream_resolver = __commonJS({
           isVostfr: details.isVostfr,
           isWebAudioSafe: details.isWebAudioSafe,
           hasUnsupportedAudio: details.hasUnsupportedAudio,
+          isDtsOrTrueHdWithoutAac: details.isDtsOrTrueHdWithoutAac,
+          hasMultichannelSilence: details.hasMultichannelSilence,
+          isRemuxOrHeavyUnplayable: details.isRemuxOrHeavyUnplayable,
           isH264: details.isH264,
           isH265: details.isH265,
           isAv1: details.isAv1,
@@ -703,7 +708,10 @@ var require_stream_resolver = __commonJS({
       });
       const movieHdPool = isMovie ? validAll.filter(isHd1080Plus) : [];
       const anyCachedAll = validAll.some((s) => s.isCached);
-      const basePool = isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some((s) => s.isCached)) ? movieHdPool : validAll;
+      let basePool = isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some((s) => s.isCached)) ? movieHdPool : validAll;
+      if (basePool !== validAll && validAll.some((s) => s.isFrench) && !basePool.some((s) => s.isFrench)) {
+        basePool = Array.from(/* @__PURE__ */ new Set([...basePool, ...validAll.filter((s) => s.isFrench)]));
+      }
       const isPlayableInBrowser = (s) => {
         if (s.isAvi && !s.isTranscoded && !enableAviTranscode) return false;
         if (s.tierKey === "4k" && s.isAvi) return false;
@@ -866,17 +874,15 @@ var require_stream_resolver = __commonJS({
         const base = `${s.quality} \xB7 ${s.isFrench ? "VF" : s.isVostfr ? "VOSTFR" : "VO"}`;
         let qLabel = base;
         if ((baseCounts.get(base) || 0) > 1) {
-          if (s.isWebAudioSafe) {
-            qLabel += " (St\xE9r\xE9o AAC)";
-          } else if (/ddp|eac3|ac3|atmos/i.test(`${s.filename} ${s.rawTitle}`)) {
-            qLabel += " (Dolby 5.1)";
-          } else {
+          if (/ddp|eac3|ac3|atmos|truehd|dts/i.test(`${s.filename} ${s.rawTitle}`)) {
+            qLabel += " (Dolby)";
+          } else if (!s.isWebAudioSafe) {
             qLabel += " (Option 2)";
           }
         }
         const canTranscodeAvi = Boolean(s.isAvi && enableAviTranscode);
         const audioLangParam = s.isFrench ? "vf" : "vo";
-        const shouldAudioRemux = Boolean(!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe));
+        const shouldAudioRemux = Boolean(!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe || s.isMulti));
         let streamPlaybackUrl = s.url;
         let isTranscoded = false;
         let audioRemuxed = false;
@@ -1351,7 +1357,7 @@ ${fName}
             return { ...s, url: `${streamBase}/api/video-stream?transcode=1&lang=${audioLangParam}&url=${encodeURIComponent(rawDirect)}`, isTranscoded: true };
           }
         }
-        if (!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe) && (s.verifiedReady || s.isCached || !s.isDownloading) && s.url && s.url.startsWith("http")) {
+        if (!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe || s.isMulti) && (s.verifiedReady || s.isCached || !s.isDownloading) && s.url && s.url.startsWith("http")) {
           return {
             ...s,
             url: `${streamBase}/api/video-stream?audio=aac&lang=${audioLangParam}&url=${encodeURIComponent(s.url)}`,
@@ -1567,7 +1573,7 @@ ${fName}
               const res = await fetch(url, {
                 headers: { "Accept": "application/json" },
                 redirect: "error",
-                signal: AbortSignal.timeout(7500)
+                signal: AbortSignal.timeout(1e4)
               });
               if (res.ok) {
                 const data = await res.json();
@@ -1641,6 +1647,17 @@ ${fName}
               rawStreams.push(s);
             }
           }
+          if (rawStreams.length === 0) {
+            const optionsUnfiltered = `providers=${ALL_PROVIDERS}|sort=qualitysize|${provider}=${encodeURIComponent(token)}`;
+            const endpointUnfiltered = `https://torrentio.strem.fun/${optionsUnfiltered}/stream/${isTv ? "series" : "movie"}/${streamKey}.json`;
+            const extraStreams = await fetchTorrentio(endpointUnfiltered, "Unfiltered Fallback");
+            for (const s of extraStreams) {
+              if (s && s.url && !seenUrls.has(s.url)) {
+                seenUrls.add(s.url);
+                rawStreams.push(s);
+              }
+            }
+          }
           const errorStream = rawStreams.find((s) => isTorrentioErrorStream(s) && !isDownloadingUrl(s?.url));
           if (errorStream && rawStreams.length === 1) {
             return {
@@ -1656,10 +1673,12 @@ ${fName}
             try {
               const hashRegex = /\/resolve\/torbox\/[^/]+\/([a-fA-F0-9]{40})\//i;
               const hashesSet = /* @__PURE__ */ new Set();
-              const orderedForCacheCheck = type === "tv" ? rawStreams : [...rawStreams].sort((a, b) => {
-                const aHd = /2160p|4k|uhd|1080p/i.test(`${a.name || ""} ${a.title || ""}`) ? 1 : 0;
-                const bHd = /2160p|4k|uhd|1080p/i.test(`${b.name || ""} ${b.title || ""}`) ? 1 : 0;
-                return bHd - aHd;
+              const orderedForCacheCheck = [...rawStreams].sort((a, b) => {
+                const aText = `${a.name || ""} ${a.title || ""}`;
+                const bText = `${b.name || ""} ${b.title || ""}`;
+                const aScore = (a._isFromFrenchQuery ? 2 : 0) + (/2160p|4k|uhd|1080p/i.test(aText) ? 1 : 0);
+                const bScore = (b._isFromFrenchQuery ? 2 : 0) + (/2160p|4k|uhd|1080p/i.test(bText) ? 1 : 0);
+                return bScore - aScore;
               });
               const extractTorrentHash = (s) => {
                 const m = (s.url || "").match(hashRegex);
@@ -1674,7 +1693,7 @@ ${fName}
                 if (s.isTorboxLibrary) continue;
                 const h = extractTorrentHash(s);
                 if (h) hashesSet.add(h);
-                if (hashesSet.size >= 40) break;
+                if (hashesSet.size >= 60) break;
               }
               if (hashesSet.size > 0) {
                 const hashesParam = Array.from(hashesSet).join(",");
@@ -1727,7 +1746,7 @@ ${fName}
           const supportsAc3 = Boolean(clientAc3);
           const wantVo = normalizedLang === "vo";
           const matchesLang = (s) => wantVo ? !s.isFrench : s.isFrench;
-          const isPlayableFormat = (s) => (!s.isAvi || enableAviTranscode) && !s.isRemuxOrHeavyUnplayable;
+          const isPlayableFormat = (s) => (!s.isAvi || enableAviTranscode) && (!s.isRemuxOrHeavyUnplayable || enableAudioRemux && (!s.sizeBytes || s.sizeBytes <= 50 * 1024 * 1024 * 1024));
           const pickBestCandidate = (list) => {
             if (!supportsAc3 && !enableAudioRemux) {
               return list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "1080p") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio && s.tierKey === "4k") || list.find((s) => isPlayableFormat(s) && matchesLang(s) && s.isWebAudioSafe && !s.hasUnsupportedAudio) || // 2. Si AUCUN flux VF n'a de son Web Audio (ex: Raiponce en AC3 5.1),

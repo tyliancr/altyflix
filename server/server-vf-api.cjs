@@ -52,7 +52,7 @@ function hasFfprobe() {
     return false;
   }
 }
-const MAX_CONCURRENT_FFMPEG = 4;
+const MAX_CONCURRENT_FFMPEG = 12;
 let activeFfmpegJobs = 0;
 const mediaProbeCache = new BoundedCache(200, 30 * 60 * 1000);
 const TEXT_SUB_CODECS = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text']);
@@ -280,7 +280,7 @@ const memoryCache = new BoundedCache(250);
 const getCache = key => memoryCache.get(key);
 const setCache = (key, value, ttl) => memoryCache.set(key, value, ttl);
 const allowRequest = createRateLimiter();
-const allowRemuxRequest = createRateLimiter(30, 60000);
+const allowRemuxRequest = createRateLimiter(90, 60000);
 
 
 
@@ -537,13 +537,10 @@ const server = http.createServer(async (req, res) => {
         '-analyzeduration', '2000000'
       ];
 
-      // -noaccurate_seek + -ss + -copyts -start_at_zero AVANT -i :
-      // préserve exactement les timestamps d'origine vidéo ET audio au keyframe (sans couper l'audio pré-seek
-      // ni créer de trou de 1,8 s à 8 s dans le fMP4 qui décale le son sur Brave/Chromium).
+      // Seek avant -i avec remise à zéro propre des timestamps (évite les blocages de timeline fMP4 dans Chrome)
       if (seekSec > 0) {
-        ffmpegArgs.push('-noaccurate_seek', '-ss', String(seekSec));
+        ffmpegArgs.push('-ss', String(seekSec));
       }
-      ffmpegArgs.push('-copyts', '-start_at_zero');
 
       ffmpegArgs.push('-i', inputUrl);
       if (copyVideo) {
@@ -576,6 +573,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       ffmpegArgs.push(
+        '-avoid_negative_ts', 'make_zero',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets',
         '-f', 'mp4',
         'pipe:1'
@@ -631,6 +629,7 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
+      req.on('aborted', cleanupProc);
       req.on('close', cleanupProc);
       res.on('close', cleanupProc);
       res.on('error', cleanupProc);

@@ -14,7 +14,7 @@ export default function WatchPage() {
     const [searchParams] = useSearchParams();
     const location = useLocation();
     const navigate = useNavigate();
-    const { watchHistory, addToHistory } = useProfile();
+    const { currentProfile, watchHistory, addToHistory } = useProfile();
     const watchHistoryRef = useRef(watchHistory);
     watchHistoryRef.current = watchHistory;
 
@@ -110,7 +110,7 @@ export default function WatchPage() {
                 type={isTv ? 'tv' : 'movie'}
                 initialSeason={initialSeason}
                 initialEpisode={initialEpisode}
-                preferredLang="VF"
+                preferredLang={currentProfile?.preferredAudio || (currentProfile?.language === 'en' ? 'VOST' : 'VF')}
                 onClose={goBack}
                 watchHistory={watchHistory}
                 remember={addToHistory}

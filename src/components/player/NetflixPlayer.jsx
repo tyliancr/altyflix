@@ -44,7 +44,7 @@ export default function NetflixPlayer({
     type: initialType,
     initialSeason = 1,
     initialEpisode = 1,
-    preferredLang: _preferredLang = 'VF',
+    preferredLang = 'VF',
     onClose,
     onNext,
     watchHistory = [],
@@ -366,13 +366,14 @@ export default function NetflixPlayer({
         const cleanTitle = titleRef.current && titleRef.current !== 'Lecture' ? titleRef.current : '';
 
         try {
+            const wantsVo = /^vost|^en/i.test(String(preferredLang || ''));
             const res = await resolvePlaybackStreams({
                 id,
                 imdbId,
                 type: isTv ? 'tv' : 'movie',
                 season,
                 episode,
-                lang: 'vf',
+                lang: wantsVo ? 'vo' : 'vf',
                 title: cleanTitle,
                 signal: abortCtrl.signal
             });
@@ -436,8 +437,8 @@ export default function NetflixPlayer({
                         if (anyPlayable) {
                             selectedStream = anyPlayable;
                         } else {
-                            // Seul le format .avi est disponible : on conserve le flux pour permettre l'ouverture dans VLC ou le téléchargement
-                            setErrorMessage("Ce titre utilise un format vidéo ancien (.avi) qui n'est pas pris en charge nativement par votre navigateur Web.");
+                            // Seul le format non lisible dans le navigateur est disponible : on conserve le flux pour permettre l'ouverture dans VLC ou le téléchargement
+                            setErrorMessage("Cette vidéo n'est pas compatible avec votre navigateur. Vous pouvez l'ouvrir dans VLC ou la télécharger.");
                             setActiveStream(selectedStream);
                             setStreamState('error');
                             return;
@@ -476,7 +477,7 @@ export default function NetflixPlayer({
             setErrorMessage('Impossible de lancer la lecture pour le moment. Veuillez réessayer plus tard.');
             setStreamState('error');
         }
-    }, [id, isTv, season, episode, isAc3Supported, startStreamPolling]);
+    }, [id, isTv, season, episode, preferredLang, isAc3Supported, startStreamPolling]);
 
     useEffect(() => {
         resolveStream();
@@ -1604,13 +1605,12 @@ export default function NetflixPlayer({
         if (audioFallbackDoneRef.current === key) return undefined;
 
         const checkAudio = () => {
-            // Respect absolu du choix manuel de l'utilisateur (qualité 4K ou piste spécifique)
-            if (userPickedStreamRef.current) return;
             if (!video || video.paused || video.muted || (video.currentTime || 0) < 1.5 || (video.readyState || 0) < 3) return;
             const isSilentDecode = typeof video.webkitAudioDecodedByteCount === 'number' && video.webkitAudioDecodedByteCount === 0;
             const isMozSilent = typeof video.mozHasAudio === 'boolean' && !video.mozHasAudio;
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
+                userPickedStreamRef.current = false;
                 const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
                 // 1. Chercher un flux alternatif dans la MÊME langue (VF) avec son web garanti
                 const safeSameLang = (availableStreams || []).find(s => s.id !== activeStream?.id && s.isWebAudioSafe && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench));

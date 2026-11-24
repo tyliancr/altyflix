@@ -112,7 +112,7 @@ const Navbar = () => {
                 {/* Center: Pill Navigation — masqué sur la page Paramètres (style Netflix) */}
                 {!isSettings && (
                     <div className="flex items-center gap-2 md:gap-4 transition-all duration-500">
-                        <div className="hidden lg:flex items-center bg-white/[0.05] backdrop-blur-2xl border border-white/10 rounded-full p-1">
+                        <div className="hidden md:flex items-center bg-white/[0.05] backdrop-blur-2xl border border-white/10 rounded-full p-1">
                             {navLinks.map((link) => {
                                 const isActive = location.pathname === link.path;
                                 return (
@@ -121,7 +121,7 @@ const Navbar = () => {
                                         to={link.path}
                                         aria-current={isActive ? 'page' : undefined}
                                         onMouseEnter={!isActive ? playHoverSound : undefined}
-                                        className={`relative px-4 xl:px-5 py-2 rounded-full text-[13.5px] font-semibold whitespace-nowrap transition-colors duration-300
+                                        className={`relative px-2.5 lg:px-4 xl:px-5 py-2 rounded-full text-xs lg:text-[13.5px] font-semibold whitespace-nowrap transition-colors duration-300
                                             ${isActive ? 'text-black' : 'text-white/65 hover:text-white'}`}
                                     >
                                         {isActive && (

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card, SectionHeader, SubmitBtn, Row, Toggle, Field } from './SettingsUI';
 import { SUBTITLE_SIZE_MAP, SUBTITLE_COLOR_MAP } from './SettingsConstants';
@@ -16,6 +17,8 @@ export default function PreferencesTab({
     setSubtitlesAlwaysOn,
     videoQuality,
     setVideoQuality,
+    preferredAudio,
+    setPreferredAudio,
     subtitlesSize,
     setSubtitlesSize,
     subtitlesColor,
@@ -29,6 +32,8 @@ export default function PreferencesTab({
     loading,
     t
 }) {
+    const [showAdvanced, setShowAdvanced] = useState(false);
+
     return (
         <motion.form
             onSubmit={handlePreferencesSave}
@@ -51,6 +56,17 @@ export default function PreferencesTab({
                     <Row title={t('settings.autoplayTrailers')} description={t('settings.autoplayTrailersDesc')}>
                         <Toggle checked={autoplayTrailers} onChange={setAutoplayTrailers} label={t('settings.autoplayTrailers')} />
                     </Row>
+                    <Row title={t('settings.preferredAudio') || 'Langue audio par défaut'} description="Version choisie automatiquement au lancement d’un film ou d’une série.">
+                        <select
+                            aria-label={t('settings.preferredAudio') || 'Langue audio par défaut'}
+                            value={preferredAudio || 'VF'}
+                            onChange={e => setPreferredAudio?.(e.target.value)}
+                            className="field-select h-10"
+                        >
+                            <option value="VF">Français</option>
+                            <option value="VOST">Version originale sous-titrée</option>
+                        </select>
+                    </Row>
                     <Row title={t('settings.preferredQuality')} description="« Automatique » s’adapte à votre connexion.">
                         <select
                             aria-label={t('settings.preferredQuality')}
@@ -59,8 +75,8 @@ export default function PreferencesTab({
                             className="field-select h-10"
                         >
                             <option value="auto">Automatique</option>
-                            <option value="1080p">1080p</option>
-                            <option value="720p">720p</option>
+                            <option value="1080p">Haute définition (1080p)</option>
+                            <option value="720p">Standard (720p)</option>
                         </select>
                     </Row>
                 </div>
@@ -140,51 +156,66 @@ export default function PreferencesTab({
                 </div>
             </Card>
 
-            <Card>
-                <SectionHeader
-                    icon={<Icon name="globe" />}
-                    title="Diffusion et qualité vidéo"
-                    subtitle="Paramètres de diffusion haute performance. Le service haute fidélité est activé par défaut."
-                />
-                <div className="space-y-5 p-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div>
-                            <label className="block text-xs font-semibold text-white/70 mb-2">Passerelle de diffusion</label>
-                            <select
-                                value={debridProvider || 'torbox'}
-                                onChange={e => setDebridProvider(e.target.value)}
-                                className="field-select h-14 w-full text-sm"
-                            >
-                                <option value="torbox">Réseau Ultra HD (Recommandé)</option>
-                                <option value="realdebrid">Réseau Haute Vitesse 1</option>
-                                <option value="alldebrid">Réseau Haute Vitesse 2</option>
-                                <option value="debridlink">Réseau Haute Vitesse 3</option>
-                                <option value="premiumize">Réseau Haute Vitesse 4</option>
-                            </select>
-                        </div>
-                        <div className="sm:col-span-2">
-                            <Field
-                                label="Clé d'accès avancée (Optionnel)"
-                                type="password"
-                                autoComplete="new-password"
-                                value={debridToken || ''}
-                                onChange={e => setDebridToken(e.target.value)}
-                                hint="Votre clé d'accès personnelle dédiée si vous disposez d'un compte individuel. Si laissé vide, la connexion automatique haute fidélité est active par défaut."
-                            />
-                        </div>
-                    </div>
+            <div className="pt-1">
+                <button
+                    type="button"
+                    onClick={() => setShowAdvanced(v => !v)}
+                    className="flex items-center gap-2 text-xs font-semibold text-white/45 hover:text-white/80 transition-colors"
+                >
+                    <Icon name="sliders" className="h-3.5 w-3.5" />
+                    <span>{showAdvanced ? 'Masquer les options avancées' : 'Options avancées'}</span>
+                </button>
 
-                    <div className="border-t border-white/[0.07] pt-5">
-                        <Field
-                            label="Serveur miroir secondaire (Optionnel)"
-                            type="text"
-                            value={frenchioUrl || ''}
-                            onChange={e => setFrenchioUrl(e.target.value)}
-                            hint="Adresse de relais optionnelle pour les catalogues alternatifs."
-                        />
+                {showAdvanced && (
+                    <div className="mt-4">
+                        <Card>
+                            <SectionHeader
+                                icon={<Icon name="globe" />}
+                                title="Accès personnel"
+                                subtitle="Uniquement si vous disposez d’un accès personnel. Par défaut, tout est déjà configuré."
+                            />
+                            <div className="space-y-5 p-6">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-white/70 mb-2">Service</label>
+                                        <select
+                                            value={debridProvider || 'torbox'}
+                                            onChange={e => setDebridProvider(e.target.value)}
+                                            className="field-select h-12 w-full text-sm"
+                                        >
+                                            <option value="torbox">Automatique (Recommandé)</option>
+                                            <option value="realdebrid">Option 1</option>
+                                            <option value="alldebrid">Option 2</option>
+                                            <option value="debridlink">Option 3</option>
+                                            <option value="premiumize">Option 4</option>
+                                        </select>
+                                    </div>
+                                    <div className="sm:col-span-2">
+                                        <Field
+                                            label="Clé personnelle (Optionnel)"
+                                            type="password"
+                                            autoComplete="new-password"
+                                            value={debridToken || ''}
+                                            onChange={e => setDebridToken(e.target.value)}
+                                            hint="Laissez vide pour utiliser la lecture automatique."
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="border-t border-white/[0.07] pt-5">
+                                    <Field
+                                        label="Source secondaire (Optionnel)"
+                                        type="text"
+                                        value={frenchioUrl || ''}
+                                        onChange={e => setFrenchioUrl(e.target.value)}
+                                        hint="Laissez vide si vous ne savez pas quoi mettre."
+                                    />
+                                </div>
+                            </div>
+                        </Card>
                     </div>
-                </div>
-            </Card>
+                )}
+            </div>
 
             <SubmitBtn loading={loading} label={t('settings.save')} />
         </motion.form>

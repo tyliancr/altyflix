@@ -304,8 +304,9 @@ function sendJSON(res, statusCode, data) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     ...SECURITY_HEADERS,
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url'
   });
   res.end(JSON.stringify(data));
 }
@@ -461,6 +462,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       ...SECURITY_HEADERS,
+      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-debrid-token, x-debrid-provider, x-frenchio-url'
     });
@@ -472,6 +474,10 @@ const server = http.createServer(async (req, res) => {
   catch { return sendJSON(res, 400, { error: 'URL invalide.' }); }
   const pathname = parsedUrl.pathname;
   const query = Object.fromEntries(parsedUrl.searchParams);
+
+  if (pathname === '/health') {
+    return sendJSON(res, 200, { ok: true, ffmpeg: hasFfmpeg(), uptime: Math.round(process.uptime()) });
+  }
 
   if (req.method === 'POST' && pathname !== '/api/playback/progress') {
     return sendJSON(res, 405, { error: 'Méthode non autorisée.' });
@@ -1401,3 +1407,13 @@ if (require.main === module) server.listen(PORT, '0.0.0.0', () => {
     } catch {}
   });
 });
+
+if (require.main === module) {
+  const shutdown = (signal) => {
+    console.log(`[ALTYFLIX] Arrêt propre (${signal})...`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}

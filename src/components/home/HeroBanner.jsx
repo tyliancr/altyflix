@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayer } from '../../contexts/PlayerContext';
+import { useProfile } from '../../contexts/ProfileContext';
 import { getContentType, formatRuntime } from '../../utils/helpers';
 import tmdb from '../../services/tmdb';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -48,6 +49,7 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
     const [logos, setLogos] = useState({});
     const navigate = useNavigate();
     const { play } = usePlayer();
+    const { isInMyList, addToMyList, removeFromMyList } = useProfile();
 
     const paused = hovered || showTrailer;
 
@@ -165,6 +167,11 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
     const movieId = idOf(movie);
     const effectiveTv = detailedMovie ? isTvItem(detailedMovie) : isTv;
     const effectiveType = effectiveTv ? 'tv' : 'movie';
+    const inList = isInMyList({ ...movie, id: movieId, media_type: effectiveType });
+    const toggleMyList = () => {
+        if (inList) removeFromMyList(movieId, effectiveType);
+        else addToMyList({ ...movie, id: movieId, media_type: effectiveType });
+    };
     const title = movie.title || movie.name || movie.original_title || movie.original_name;
     const description = movie.overview;
     const logo = logos[movieId];
@@ -341,6 +348,25 @@ const HeroBanner = ({ movie: propMovie, movies: propMovies, rankLabel }) => {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             <span>{"Plus d'infos"}</span>
+                        </motion.button>
+
+                        <motion.button
+                            whileHover={{ scale: 1.06 }}
+                            whileTap={{ scale: 0.94 }}
+                            onClick={toggleMyList}
+                            aria-label={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}
+                            title={inList ? 'Dans ma liste' : 'Ma liste'}
+                            className="grid place-items-center w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full border border-white/30 hover:border-white bg-black/30 hover:bg-white/10 backdrop-blur-xl text-white transition-colors duration-200"
+                        >
+                            {inList ? (
+                                <svg className="w-5 h-5 text-[#46d369]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                            ) : (
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                                </svg>
+                            )}
                         </motion.button>
 
                         <AnimatePresence>

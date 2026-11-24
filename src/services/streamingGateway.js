@@ -7,6 +7,13 @@
  */
 
 import { getMovieDetails, getSeriesDetails } from './tmdb.js';
+import streamParser from '../../server/stream-parser.cjs';
+
+const { isTorrentioErrorStream, parseStreamDetails } = streamParser;
+export { isTorrentioErrorStream };
+
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const apiUrl = (path) => (typeof path === 'string' && path.startsWith('/api/') && API_BASE ? `${API_BASE}${path}` : path);
 
 export const DEBRID_PROVIDERS = [
     { id: 'torbox', name: 'Torbox (Recommandé amis / multi-IP)', docsUrl: 'https://torbox.app' },
@@ -145,233 +152,7 @@ export function saveGatewayConfig({ provider, token, frenchioUrl }) {
     }));
 }
 
-/**
- * Détecte si un flux retourné par Torrentio est un flux d'erreur (vidéo clip d'erreur, clé invalide, etc.)
- */
-export function isTorrentioErrorStream(stream) {
-    if (!stream) return true;
-    const url = String(stream.url || '');
-    const title = String(stream.title || '');
-    const name = String(stream.name || '');
-
-    if (url.includes('failed_access') || url.includes('/videos/failed_') || url.includes('slate.elfhosted.com') || url.includes('slate.') || url.includes('docs.elfhosted.com')) return true;
-    if (name.toLowerCase().includes('error') || name.toLowerCase().includes('tb error') || name.toLowerCase().includes('rd error') || name.toLowerCase().includes('obsolete configuration')) return true;
-    if (title.toLowerCase().includes('invalid') || title.toLowerCase().includes('failed') || title.toLowerCase().includes('rate limit') || title.toLowerCase().includes('couldn\'t start this stream')) return true;
-
-    // Filtre les vidéos de téléchargement ou clips d'erreur : ne jamais les considérer comme une vidéo de film valide
-    if (url.includes('downloading_') || url.includes('/videos/downloading') || url.includes('downloading.mp4') || url.includes('slate.mp4') || url.includes('slate.m3u8')) return true;
-
-    return false;
-}
-
-/**
- * Convertit une chaîne de taille lisible (ex: 2.1 GB) en octets
- */
-function parseBytes(str) {
-    if (!str) return 0;
-    const m = str.match(/([\d.]+)\s*([KMGT]B)/i);
-    if (!m) return 0;
-    const val = parseFloat(m[1]);
-    const unit = m[2].toUpperCase();
-    if (unit === 'KB') return val * 1024;
-    if (unit === 'MB') return val * 1024 * 1024;
-    if (unit === 'GB') return val * 1024 * 1024 * 1024;
-    if (unit === 'TB') return val * 1024 * 1024 * 1024 * 1024;
-    return val;
-}
-
-/**
- * Analyse les informations d'un flux Torrentio
- */
-function parseStreamDetails(stream, { isFrenchOriginal = false } = {}) {
-    const titleText = stream.title || '';
-    const nameText = stream.name || '';
-    const filename = stream.behaviorHints?.filename || titleText.split('\n')[0] || '';
-    const fullText = (titleText + ' ' + nameText + ' ' + filename).toLowerCase();
-
-    // Détection Debrid : flux en cache ([TB+], [TB⚡], [RD+], etc.) vs flux en cours de téléchargement
-    const isCached = /\[(?:tb|rd|ad|pm|dl)?(?:\+|⚡)\]/i.test(nameText) || /\[\+\]/.test(nameText) || nameText.includes('⚡') || /\b\+\b/.test(nameText);
-    const isDownloading = !isCached && (nameText.includes('⬇️') || /\[(?:tb|rd|ad|pm|dl)\s+download\]/i.test(nameText) || /download/i.test(nameText));
-
-    // Décomposition des lignes Torrentio pour isoler le nom de la release des métadonnées
-    const titleLines = titleText.split('\n');
-    const mainReleaseName = (titleLines[0] || '').toLowerCase();
-    const metaLines = titleLines.slice(1).join('\n').toLowerCase();
-    const cleanFilename = filename.toLowerCase();
-
-    // Détection de la résolution (4K, 1080p, 720p, etc.)
-    let resolution = '1080p FHD';
-    let tierKey = '1080p';
-    if (/4k|2160p|uhd/i.test(fullText)) {
-        resolution = '4K Ultra HD';
-        tierKey = '4k';
-    } else if (/1080p|fhd/i.test(fullText)) {
-        resolution = '1080p FHD';
-        tierKey = '1080p';
-    } else if (/720p|hd/i.test(fullText)) {
-        resolution = '720p HD';
-        tierKey = '720p';
-    } else if (/480p|sd|xvid/i.test(fullText)) {
-        resolution = '480p SD';
-        tierKey = '480p';
-    }
-
-    // 1. DÉTECTION VRAIE PISTE AUDIO FRANÇAISE (VF / VFF / TRUEFRENCH / VFQ / VFI / MULTI / Torrent9)
-    const isExplicitVostfr = /\b(?:vostfr|subfrench|fansub[\s._-]*vostfr|vost)\b/i.test(fullText) ||
-        /\b(?:vostfr|subfrench)\b/i.test(filename) ||
-        metaLines.includes('subfrench') ||
-        metaLines.includes('multi subs') ||
-        metaLines.includes('vostfr');
-
-    const hasFrenchFlag = titleText.includes('🇫🇷');
-    const isTorrent9 = fullText.includes('torrent9');
-    const isFrenchGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|ulysse|batgirl|glados|slay3r|nbdy|rzp|jaskier)\b/i.test(fullText);
-
-    const hasFrenchDubInName = /\b(?:truefrench|vff|vfq|vfi|vf2|french|audio[\s._-]*fr|vf[\s._-]*hd|fr-en)\b/i.test(mainReleaseName) ||
-        /\b(?:truefrench|vff|vfq|vfi|vf2|french|audio[\s._-]*fr|vf[\s._-]*hd|fr-en)\b/i.test(cleanFilename) ||
-        /\b(?:truefrench|vff|vfq|vfi|vf2|french)\b/i.test(fullText) ||
-        /\bvf\b/i.test(mainReleaseName) ||
-        /\bvf\b/i.test(cleanFilename);
-
-    const isSceneMulti = /\b(?:multi|multisite)\b/i.test(mainReleaseName) || /\b(?:multi)\b/i.test(cleanFilename);
-    const isForeignOnlyMulti = /\b(?:tam\s*\+\s*hin|dub\s*\+\s*(?:\d+x\s*)?mvo|ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu|rus\s*[-/]\s*eng)\b/i.test(fullText);
-    const isFrenchMulti = isSceneMulti && !isForeignOnlyMulti && (
-        isTorrent9 ||
-        hasFrenchFlag ||
-        hasFrenchDubInName ||
-        isFrenchGroup ||
-        /\b(?:fr|fre|francais|vff|vf2|vfq)\b/i.test(fullText)
-    );
-
-    const hasFrenchAudioInAudioLine = /(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b).*🇫🇷|🇫🇷.*(?:multi\s*audio|\bfr\b|\bfre\b|\bfrancais\b|\bfrench\b)/i.test(titleText);
-
-    const isEnglishPrimaryMulti = /\b(?:en(?:g)?\s*[/|-]\s*(?:ita|es|fr|de|ger|spa|multi))\b/i.test(titleText) ||
-        /\b(?:en\/ita\/fr|en\/fr|en\/es|english.*french|eng\s*[/|-]\s*fre)\b/i.test(fullText) ||
-        /\b(?:multi(?:ple)?\s*audio.*(?:en|eng|english))\b/i.test(fullText) ||
-        /\b(?:dual.*(?:eng|en))\b/i.test(fullText);
-
-    // Détection des releases Russes ou étrangères où le français n'est pas en piste 0
-    const isForeignPrimaryMulti = /\b(?:dub\s*\+\s*(?:\d+x\s*)?mvo|rus\s*[/|-]\s*eng)\b/i.test(fullText);
-
-    const isNonFrenchDub = /\b(?:german|deutsch|italian|italiano|spanish|espanol|castellano|portuguese|russian|japanese|korean|hindi|tamil)\s*dub\b/i.test(fullText) ||
-        /\b(?:ita\s*[-/]\s*eng|ger\s*[-/]\s*eng|spa\s*[-/]\s*eng|latino|hindi|tamil|telugu)\b/i.test(fullText);
-
-    const hasFrenchAudio = Boolean(!isExplicitVostfr && !isForeignPrimaryMulti && (
-        hasFrenchDubInName ||
-        isFrenchMulti ||
-        hasFrenchAudioInAudioLine ||
-        (isTorrent9 && !isExplicitVostfr) ||
-        (hasFrenchFlag && !isExplicitVostfr) ||
-        (isFrenchOriginal && !isNonFrenchDub)
-    ));
-    const isPureFrench = Boolean(hasFrenchAudio && !isEnglishPrimaryMulti);
-    const isFrench = hasFrenchAudio;
-
-    // 2. SOUS-TITRES FRANÇAIS (VOSTFR)
-    const isVostfr = !isFrench && Boolean(
-        isExplicitVostfr ||
-        (hasFrenchFlag && isExplicitVostfr) ||
-        metaLines.includes('subfrench') ||
-        metaLines.includes('multi subs')
-    );
-
-    // Détection compatibilité audio navigateur (AAC, MP3, Opus, FLAC...)
-    const hasAac = /\b(?:he-?)?aac(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
-    const hasMp3 = /\bmp3\b/i.test(fullText);
-    const hasOpus = /\bopus(?:\s*\.?\s*[257]\.?[01])?\b/i.test(fullText);
-    const hasFlac = /\bflac\b/i.test(fullText);
-    // Rips TV ou pistes stéréo françaises (LD, MD, Line, Mic, HDTV/PDTV sans DDP/5.1)
-    const hasFrenchStereoRip = /\b(?:ld|md|line[\s._-]*dub(?:bed)?|mic[\s._-]*dub(?:bed)?)\b/i.test(fullText) ||
-        (/\b(?:hdtv|pdtv|dsr|tvrip)\b/i.test(fullText) && !/\b(?:5\.1|7\.1|ddp|eac3|ac3|dts)\b/i.test(fullText));
-    // Groupes de micro-encodages web garantissant des pistes AAC/Opus
-    const isWebAudioGroup = /\b(?:yts|yify|galaxytv|tgx|joy|ozlem|psa|megusta|qxr|tigole|utr|qman|ion10|ion265|kontrast|vyndros|minx|vxt|rapta|pir8|lordvako)\b/i.test(fullText);
-
-    const has71Or8ch = /\b(?:7\.1|8ch)\b/i.test(fullText);
-    const hasOpusMultichannel = /\bopus(?:\s*\.?\s*[7]\.?[01]|\s*\.?\s*8ch)\b/i.test(fullText);
-    const hasMultichannelSilence = has71Or8ch || hasOpusMultichannel;
-
-    const isAc3OrDdp = /(?:\bdd\+(?![a-z])|\b(?:ac3|ac-3|e-?ac-?3|eac3|ddp(?:\s*\.?\s*[257]\.?[01])?|dd\s*\.?\s*[257]\.?[01])\b)/i.test(fullText);
-    const isDtsOrTrueHd = /(?:\b(?:truehd|atmos|dts(?:-?hd)?|dts-?x|dts-?ma|lpcm)\b)/i.test(fullText);
-    const hasDdp = /ddp|eac3|atmos/i.test(fullText);
-    const hasDts = /dts/i.test(fullText);
-    const hasAc3 = /\bac3\b/i.test(fullText);
-    const hasUnsupportedAudioCodec = isAc3OrDdp || isDtsOrTrueHd;
-    const hasExplicitWebAudio = Boolean(hasAac || hasMp3 || (hasOpus && !hasMultichannelSilence) || hasFlac || hasFrenchStereoRip);
-
-    // Détection codec vidéo H.264 (universel) vs H.265/HEVC (incompatible sur certains navigateurs sans extension)
-    const isH264 = /\b(?:[xh][.\s_-]?264|avc(?:-?1)?)\b/i.test(fullText);
-    const isH265 = /\b(?:[xh][.\s_-]?265|hevc|10bit)\b/i.test(fullText);
-    const isAv1 = /\b(?:av1|d?av1nci|av01)\b/i.test(fullText);
-
-    const isMp4 = /\.mp4(\?|$)/i.test(stream?.url || '') || /\.mp4/i.test(filename);
-    const isAvi = /\.avi(\?|$)/i.test(stream?.url || '') || /\.avi/i.test(filename) || /xvid|divx/i.test(fullText);
-    const isMkv = /\.mkv(\?|$)/i.test(stream?.url || '') || /\.mkv/i.test(filename) || (!isMp4 && !isAvi);
-
-    // Audio 100% garanti sans coupure sonore dans le navigateur (Chrome, Firefox, Safari, Edge, Mobile)
-    const isWebAudioSafe = Boolean((hasExplicitWebAudio && !isDtsOrTrueHd && !hasMultichannelSilence) || 
-        ((isWebAudioGroup || isMp4) && !hasUnsupportedAudioCodec && !hasMultichannelSilence));
-    const hasBadAudio = Boolean((!hasExplicitWebAudio && (isAc3OrDdp || !isWebAudioSafe)) || isDtsOrTrueHd || hasMultichannelSilence);
-
-    // Compatibilité MKV / HEVC navigateur : Chrome ne sait PAS démultiplexer le HEVC (H.265) dans un conteneur MKV
-    const isMkvHevcUnplayable = Boolean(isMkv && isH265 && !isAv1);
-    const isVffOrTrueFrench = /\b(truefrench|vff)\b/i.test(fullText);
-    const isHighQualitySource = /\b(?:bluray|bdrip|brrip|web-?dl|web-?rip|hdtv)\b/i.test(fullText);
-    const isCamOrLowQuality = /\b(?:cam|camrip|hdcam|telesync|ts|hdts|telecine|tc|scr|screener|dvdscr|r5|workprint|wp)\b/i.test(fullText);
-    const isMulti = /\bmulti\b/i.test(fullText);
-    const isProper = /\b(?:proper|repack|rerip)\b/i.test(fullText);
-    const isTrustedGroup = /\b(?:extreme|pop|f4st|supply|bll|fw|fr5|wawacity|torrent9|qtz|dav1nci|gh0st|duff|yts|yify|vxt|galaxytv|tgx|qxr|tigole|utr|joy|psa|bone|minx|flux|ntb)\b/i.test(fullText);
-
-    // Extraction de la taille du fichier (ex: 2.1 GB)
-    const sizeMatch = titleText.match(/💾\s*([\d.]+\s*[KMGT]B)/i);
-    const size = sizeMatch ? sizeMatch[1] : '';
-    const sizeBytes = size ? parseBytes(size) : 0;
-
-    // Extraction des seeders
-    const seedsMatch = titleText.match(/👤\s*(\d+)/);
-    const seeds = seedsMatch ? parseInt(seedsMatch[1], 10) : 0;
-
-    let languageLabel = 'Version Originale';
-    if (isPureFrench) {
-        languageLabel = 'Français (VF)';
-    } else if (isFrench) {
-        languageLabel = 'Français (MULTI · VF)';
-    } else if (isVostfr) {
-        languageLabel = 'VOSTFR (Sous-titres FR)';
-    }
-
-    return {
-        resolution,
-        tierKey,
-        isCached,
-        isDownloading,
-        isFrench,
-        isVostfr,
-        isWebAudioSafe,
-        hasBadAudio,
-        isH264,
-        isH265,
-        isAv1,
-        isMp4,
-        isAvi,
-        isMkv,
-        isMkvHevcUnplayable,
-        isPureFrench,
-        isVffOrTrueFrench,
-        isHighQualitySource,
-        isCamOrLowQuality,
-        isMulti,
-        isProper,
-        isTrustedGroup,
-        hasDdp,
-        hasDts,
-        hasAc3,
-        languageLabel,
-        size,
-        sizeBytes,
-        seeds,
-        filename: filename || 'Vidéo'
-    };
-}
+// isTorrentioErrorStream, parseBytes et parseStreamDetails sont partagés depuis server/stream-parser.cjs
 
 /**
  * Sélectionne et dédouble intelligemment les flux pour offrir une interface épurée style Netflix :
@@ -766,7 +547,7 @@ export async function resolvePlaybackStreams({
         console.log(`[Altyflix Stream Resolver] Résolution sécurisée via backend pour ${type} ${imdbId}...`);
         let serverRes;
         try {
-            serverRes = await fetch(`/api/stream-resolve?${queryParams.toString()}`, {
+            serverRes = await fetch(apiUrl(`/api/stream-resolve?${queryParams.toString()}`), {
                 headers,
                 cache: 'no-store',
                 signal: reqSig.signal
@@ -779,12 +560,13 @@ export async function resolvePlaybackStreams({
             const serverData = await serverRes.json();
             if (serverData.success && Array.isArray(serverData.streams) && serverData.streams.length > 0) {
                 console.log(`[Altyflix Stream Resolver] Résolution backend réussie : statut=${serverData.status}, ${serverData.streams.length} flux.`);
+                const prefixStream = (s) => (s && typeof s.url === 'string' && s.url.startsWith('/api/') ? { ...s, url: apiUrl(s.url) } : s);
                 return {
                     success: true,
                     status: serverData.status || 'ready',
                     imdbId: serverData.imdbId || imdbId,
-                    streams: serverData.streams,
-                    activeStream: serverData.activeStream,
+                    streams: serverData.streams.map(prefixStream),
+                    activeStream: prefixStream(serverData.activeStream),
                     hasTrueVf: Boolean(serverData.hasTrueVf)
                 };
             }
@@ -963,7 +745,7 @@ export async function pollStreamStatus({
             const pollSig = createTimeoutSignal(10000, signal);
             let res;
             try {
-                res = await fetch(`/api/stream-poll?url=${encodeURIComponent(streamUrl)}`, {
+                res = await fetch(apiUrl(`/api/stream-poll?url=${encodeURIComponent(streamUrl)}`), {
                     signal: pollSig.signal,
                     cache: 'no-store'
                 });
@@ -980,7 +762,7 @@ export async function pollStreamStatus({
                     console.log(`[Altyflix Stream Poll] Flux pret apres ${elapsedSec}s (${attempts} verifications)`);
                     return {
                         ready: true,
-                        playbackUrl: data.playbackUrl,
+                        playbackUrl: apiUrl(data.playbackUrl),
                         directUrl: data.directUrl || '',
                         isAvi: Boolean(data.isAvi),
                         isTranscoded: Boolean(data.isTranscoded),
@@ -1171,10 +953,10 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
         if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) return [];
         const s = createTimeoutSignal(3500);
         try {
-            const res = await fetch(`/api/embedded-subtitles?url=${encodeURIComponent(streamUrl)}`, { signal: s.signal });
+            const res = await fetch(apiUrl(`/api/embedded-subtitles?url=${encodeURIComponent(streamUrl)}`), { signal: s.signal });
             if (!res.ok) return [];
             const data = await res.json();
-            return Array.isArray(data?.subtitles) ? data.subtitles : [];
+            return Array.isArray(data?.subtitles) ? data.subtitles.map(sub => sub?.url ? { ...sub, url: apiUrl(sub.url) } : sub) : [];
         } catch {
             return [];
         } finally {
@@ -1195,7 +977,7 @@ export async function fetchSubtitlesForContent({ id, imdbId: initialImdbId, type
             if (id) q.set('id', String(id));
             if (cleanImdbId) q.set('imdbId', cleanImdbId);
             if (filename) q.set('filename', String(filename).slice(0, 260));
-            const res = await fetch(`/api/subtitles?${q.toString()}`, {
+            const res = await fetch(apiUrl(`/api/subtitles?${q.toString()}`), {
                 signal: s.signal
             });
             if (!res.ok) return [];

@@ -20,7 +20,7 @@ const MainLayout = () => {
     const footerLinks = isKid ? FOOTER_LINKS.filter(l => !l.adultOnly) : FOOTER_LINKS;
 
     return (
-        <div className="min-h-screen bg-[var(--ALTYFLIX-black)] text-white pb-16 md:pb-0 selection:bg-ALTYFLIX-primary selection:text-white w-full max-w-full overflow-x-clip relative">
+        <div className={`min-h-screen bg-[var(--ALTYFLIX-black)] text-white ${hideNav ? '' : 'pb-16 md:pb-0'} selection:bg-ALTYFLIX-primary selection:text-white w-full max-w-full overflow-x-clip relative`}>
             {!hideNav && <Navbar />}
             <main className="relative z-0 w-full max-w-full overflow-x-clip">
                 <Outlet />
@@ -35,12 +35,12 @@ const MainLayout = () => {
                         ))}
                     </nav>
                     <p className="mt-6 max-w-2xl text-xs leading-relaxed text-white/30">
-                        Les fiches, images et bandes-annonces proviennent de TMDB. Ce produit utilise l’API TMDB mais n’est ni approuvé ni certifié par TMDB.
+                        Fiches, images et bandes-annonces fournies par TMDB.
                     </p>
                     <p className="mt-2 text-xs text-white/30">© {new Date().getFullYear()} ALTYFLIX</p>
                 </footer>
             )}
-            <MobileBottomNav />
+            {!hideNav && <MobileBottomNav />}
         </div>
     );
 };

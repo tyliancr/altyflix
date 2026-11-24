@@ -136,6 +136,37 @@ const MobileBottomNav = () => {
                                 </button>
 
                                 <button
+                                    onClick={() => { navigate('/films'); setProfileMenuOpen(false); }}
+                                    className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl hover:bg-white/5 active:bg-white/10 transition-all text-left"
+                                >
+                                    <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white flex-shrink-0">
+                                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <p className="text-white font-semibold text-sm sm:text-base">Films</p>
+                                        <p className="text-white/40 text-xs">Tout le catalogue cinéma</p>
+                                    </div>
+                                </button>
+
+                                <button
+                                    onClick={() => { navigate('/series'); setProfileMenuOpen(false); }}
+                                    className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl hover:bg-white/5 active:bg-white/10 transition-all text-left"
+                                >
+                                    <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white flex-shrink-0">
+                                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                            <rect x="2" y="7" width="20" height="14" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+                                            <path d="M17 2l-5 5-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <p className="text-white font-semibold text-sm sm:text-base">Séries</p>
+                                        <p className="text-white/40 text-xs">Saisons et épisodes</p>
+                                    </div>
+                                </button>
+
+                                <button
                                     onClick={() => { navigate('/documentaires'); setProfileMenuOpen(false); }}
                                     className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl hover:bg-white/5 active:bg-white/10 transition-all text-left"
                                 >

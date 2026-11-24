@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getSeasonDetails } from '../../services/tmdb';
 import { getSeasons, seasonLabel } from '../../utils/seasons';
 import { getPosterUrl } from '../../utils/helpers';
-import { formatClock, SPEEDS } from './playerUtils';
+import { formatClock, SPEEDS, canBrowserDecodeAc3 } from './playerUtils';
 
 export function SpeedIcon({ className = 'w-6 h-6' }) {
     return (
@@ -243,16 +243,12 @@ function streamLabel(st) {
             .replace(/·\s*VF\b/g, '· Français')
             .replace(/·\s*VO\b/g, '· Version originale');
     } else {
-        const tier = st.tierKey === '4k' ? '4K Ultra HD' : (st.tierKey === '1080p' ? '1080p FHD' : (st.tierKey === '720p' ? '720p HD' : (st.quality || 'HD')));
-        const lang = st.isFrench ? 'Français' : (st.isVostfr ? 'VOSTFR' : 'Version originale');
+        const tier = st.tierKey === '4k' ? '4K Ultra HD' : (st.tierKey === '1080p' ? 'Full HD' : (st.tierKey === '720p' ? 'HD' : (st.quality || 'HD')));
+        const lang = st.isFrench ? 'Français' : (st.isVostfr ? 'Sous-titré' : 'Version originale');
         base = `${tier} · ${lang}`;
     }
-    if (!base.includes('AAC') && !base.includes('Dolby')) {
-        if (st.isWebAudioSafe && !st.hasUnsupportedAudio) {
-            base += ' (AAC)';
-        } else if (st.hasUnsupportedAudio) {
-            base += ' (Dolby)';
-        }
+    if (st.hasUnsupportedAudio && !base.includes('Dolby')) {
+        base += ' (Dolby)';
     }
     return base;
 }
@@ -275,15 +271,16 @@ export function AudioSubsPanel({
     subtitlesAlwaysOn,
     onToggleAlwaysOn
 }) {
+    const [copiedLink, setCopiedLink] = useState(false);
+
     // Ne proposer QUE des sources réellement prêtes, en cache, fonctionnelles et non mortes
     const rawPlayable = (Array.isArray(streams) ? streams : [])
         .filter(st => !st.isDead && (st.isCached || st.verifiedReady) && !st.isDownloading && (!st.isAvi || st.isTranscoded));
-    
-    // Filtre de compatibilité conteneur : éliminer les formats anciens incompatibles non transcodés
-    const playableStreams = rawPlayable.filter(st => {
-        if (st.isAvi && !st.isTranscoded) return false;
-        return true;
-    });
+
+    // Filtrer les pistes Dolby (AC-3/E-AC-3) non transcodées si le navigateur ne sait pas les décoder (sinon vidéo muette)
+    const ac3Supported = canBrowserDecodeAc3();
+    const browserAudioPlayable = rawPlayable.filter(st => ac3Supported || st.isTranscoded || !st.hasUnsupportedAudio);
+    const playableStreams = browserAudioPlayable.length > 0 ? browserAudioPlayable : rawPlayable;
     
     // Déduplication par label pour garantir que chaque bouton est unique et actionnable
     const distinctStreams = [];
@@ -359,7 +356,7 @@ export function AudioSubsPanel({
 
             {Boolean(activeStream) && (
                 <section className="mt-4 border-t border-white/[0.08] pt-3.5">
-                    <SectionTitle>Lecture externe (Infuse / VLC / 4K)</SectionTitle>
+                    <SectionTitle>Lire dans une autre application</SectionTitle>
                     <div className="mt-2 flex flex-wrap gap-2 px-1">
                         {(() => {
                             const rawUrl = activeStream.directUrl || activeStream.originalUrl || (typeof activeStream.url === 'string' && activeStream.url.startsWith('http') ? activeStream.url : '');
@@ -371,28 +368,30 @@ export function AudioSubsPanel({
                                     <a
                                         href={infuseUrl}
                                         className="rounded-full bg-[#f35a22]/90 hover:bg-[#f35a22] px-3 py-1.5 text-xs font-semibold text-white transition active:scale-95 inline-flex items-center gap-1.5 shadow-sm"
-                                        title="Ouvrir directement dans Infuse (Mac / Apple TV / iPhone / iPad)"
+                                        title="Ouvrir dans Infuse"
                                     >
-                                        <span>🔥</span> Ouvrir dans Infuse
+                                        Ouvrir dans Infuse
                                     </a>
                                     <a
                                         href={vlcUrl}
                                         className="rounded-full bg-orange-500/80 hover:bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white transition active:scale-95 inline-flex items-center gap-1.5"
-                                        title="Ouvrir directement dans VLC (Windows / Mac)"
+                                        title="Ouvrir dans VLC"
                                     >
-                                        <span>🟧</span> Ouvrir dans VLC
+                                        Ouvrir dans VLC
                                     </a>
                                     <button
                                         type="button"
                                         onClick={() => {
                                             if (navigator.clipboard) {
-                                                navigator.clipboard.writeText(rawUrl);
-                                                alert('Lien direct du flux copié dans le presse-papier !');
+                                                navigator.clipboard.writeText(rawUrl).then(() => {
+                                                    setCopiedLink(true);
+                                                    setTimeout(() => setCopiedLink(false), 2000);
+                                                }).catch(() => {});
                                             }
                                         }}
                                         className="rounded-full bg-white/[0.08] hover:bg-white/[0.15] px-3 py-1.5 text-xs font-semibold text-white/80 transition active:scale-95 inline-flex items-center gap-1.5 cursor-pointer"
                                     >
-                                        <span>📋</span> Copier le lien
+                                        {copiedLink ? '✓ Lien copié' : 'Copier le lien'}
                                     </button>
                                 </>
                             );

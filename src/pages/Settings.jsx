@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, formatAuthErrorMessage } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
 import { deleteUser, verifyBeforeUpdateEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -7,9 +7,6 @@ import { Helmet } from 'react-helmet-async';
 import { Link, useNavigate } from 'react-router-dom';
 import { playHaptic } from '../utils/interactions';
 import AvatarSelector from '../components/settings/AvatarSelector';
-import { db } from '../config/firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import tmdb from '../services/tmdb';
 import { useTranslation } from '../hooks/useTranslation';
 import Icon from '../components/ui/Icons';
 import { getGatewayConfig, saveGatewayConfig } from '../services/streamingGateway';
@@ -20,7 +17,6 @@ import ProfileTab from '../components/settings/ProfileTab';
 import PreferencesTab from '../components/settings/PreferencesTab';
 import AccountTab from '../components/settings/AccountTab';
 import StatsTab from '../components/settings/StatsTab';
-import DiagnosticsTab from '../components/settings/DiagnosticsTab';
 
 /* ─── Main Page ────────────────────────────────────────────────── */
 const Settings = () => {
@@ -68,14 +64,6 @@ const Settings = () => {
     const [emailForm, setEmailForm] = useState({ newEmail: '', password: '' });
     const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
 
-    // Live Diagnostics States
-    const [firestorePing, setFirestorePing] = useState({ status: 'checking', ms: 0 });
-    const [tmdbPing, setTmdbPing] = useState({ status: 'checking', ms: 0 });
-    const [pwaStatus, setPwaStatus] = useState('checking');
-    const [httpsStatus, setHttpsStatus] = useState(false);
-    const [loadTime, setLoadTime] = useState(0);
-    const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
-
     // Synchronize if profile changes
     useEffect(() => {
         if (currentProfile) {
@@ -101,70 +89,7 @@ const Settings = () => {
             setVideoQuality(currentProfile.videoQuality || 'auto');
             setPreferredAudio(currentProfile.preferredAudio || (currentProfile.language === 'en' ? 'VOST' : 'VF'));
         }
-        // Load actual timing
-        if (window.performance && window.performance.timing) {
-            const perfTime = window.performance.timing;
-            const diff = perfTime.loadEventEnd - perfTime.navigationStart;
-            setLoadTime(diff > 0 ? diff : 0);
-        }
     }, [currentProfile]);
-
-    /* ─── Diagnostics runner (extracted & re-usable) ─── */
-    const runDiagnostics = useCallback(async () => {
-        setDiagnosticsRunning(true);
-        setFirestorePing({ status: 'checking', ms: 0 });
-        setTmdbPing({ status: 'checking', ms: 0 });
-        setPwaStatus('checking');
-
-        // Dynamic HTTPS check
-        const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        setHttpsStatus(isSecure);
-
-        // Test Firestore Connectivity
-        const testFirestore = async () => {
-            const start = performance.now();
-            try {
-                const testRef = doc(db, 'profiles', currentProfile?.id || 'test');
-                await getDoc(testRef);
-                const end = performance.now();
-                setFirestorePing({ status: 'success', ms: Math.round(end - start) });
-            } catch {
-                setFirestorePing({ status: 'error', ms: 0 });
-            }
-        };
-
-        // Test TMDB API Latency
-        const testTMDB = async () => {
-            const start = performance.now();
-            try {
-                await tmdb.getMovieDetails(550); // Fight Club as test probe
-                const end = performance.now();
-                setTmdbPing({ status: 'success', ms: Math.round(end - start) });
-            } catch {
-                setTmdbPing({ status: 'error', ms: 0 });
-            }
-        };
-
-        // Check PWA service worker
-        const checkPWA = () => {
-            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-                setPwaStatus('active');
-            } else {
-                setPwaStatus('inactive');
-            }
-        };
-
-        await Promise.all([testFirestore(), testTMDB()]);
-        checkPWA();
-        setDiagnosticsRunning(false);
-    }, [currentProfile]);
-
-    // Auto-run when switching to diagnostics tab
-    useEffect(() => {
-        if (activeTab === 'diagnostics') {
-            runDiagnostics();
-        }
-    }, [activeTab, runDiagnostics]);
 
     const toastTimerRef = useRef(null);
     useEffect(() => () => clearTimeout(toastTimerRef.current), []);
@@ -311,7 +236,6 @@ const Settings = () => {
         { id: 'preferences', label: t('settings.preferencesTab'), icon: 'sliders' },
         { id: 'account', label: t('settings.accountTab'), icon: 'shield' },
         { id: 'stats', label: t('settings.statsTab'), icon: 'chart' },
-        { id: 'diagnostics', label: t('settings.diagnosticsTab'), icon: 'pulse' },
     ];
 
     return (
@@ -438,6 +362,8 @@ const Settings = () => {
                                     setSubtitlesAlwaysOn={setSubtitlesAlwaysOn}
                                     videoQuality={videoQuality}
                                     setVideoQuality={setVideoQuality}
+                                    preferredAudio={preferredAudio}
+                                    setPreferredAudio={setPreferredAudio}
                                     subtitlesSize={subtitlesSize}
                                     setSubtitlesSize={setSubtitlesSize}
                                     subtitlesColor={subtitlesColor}
@@ -482,19 +408,6 @@ const Settings = () => {
                                 />
                             )}
 
-                            {activeTab === 'diagnostics' && (
-                                <DiagnosticsTab
-                                    key="diagnostics"
-                                    loadTime={loadTime}
-                                    diagnosticsRunning={diagnosticsRunning}
-                                    runDiagnostics={runDiagnostics}
-                                    firestorePing={firestorePing}
-                                    tmdbPing={tmdbPing}
-                                    pwaStatus={pwaStatus}
-                                    httpsStatus={httpsStatus}
-                                    t={t}
-                                />
-                            )}
                         </AnimatePresence>
                     </div>
                 </div>

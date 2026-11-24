@@ -13,7 +13,7 @@ const { isTorrentioErrorStream, parseStreamDetails } = streamParser;
 export { isTorrentioErrorStream };
 
 const API_BASE = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
-const apiUrl = (path) => (typeof path === 'string' && path.startsWith('/api/') && API_BASE ? `${API_BASE}${path}` : path);
+export const apiUrl = (path) => (typeof path === 'string' && path.startsWith('/api/') && API_BASE ? `${API_BASE}${path}` : path);
 
 export const DEBRID_PROVIDERS = [
     { id: 'torbox', name: 'Torbox (Recommandé amis / multi-IP)', docsUrl: 'https://torbox.app' },
@@ -720,7 +720,7 @@ export async function resolvePlaybackStreams({
 export async function pollStreamStatus({
     streamUrl,
     signal,
-    maxAttempts = 8,
+    maxAttempts = 20,
     intervalMs = 2500,
     onProgress = () => {}
 }) {

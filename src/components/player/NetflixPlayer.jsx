@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { getMovieDetails, getSeasonDetails, getSeriesDetails } from '../../services/tmdb';
 import { recordView } from '../../services/statsService';
-import { resolvePlaybackStreams, pollStreamStatus, fetchSubtitlesForContent, fetchSubtitleCues } from '../../services/streamingGateway';
+import { resolvePlaybackStreams, pollStreamStatus, fetchSubtitlesForContent, fetchSubtitleCues, apiUrl } from '../../services/streamingGateway';
 import { Scrubber, AudioSubsPanel, SpeedPanel, EpisodesPanel, SpeedIcon } from './PlayerPanels';
 import { formatClock, canBrowserDecodeAc3 } from './playerUtils';
 import { IN_TV_APP, moveFocusWithin } from '../../hooks/useTVNavigation';
@@ -286,12 +286,21 @@ export default function NetflixPlayer({
                 console.log('[Altyflix Player] Débridage terminé avec succès');
                 loadedUrlRef.current = null;
                 const directUrl = result.directUrl || (typeof result.playbackUrl === 'string' && /^https?:\/\//i.test(result.playbackUrl) ? result.playbackUrl : null);
+                const prevActive = activeStreamRef.current;
+                const needsRemux = Boolean(!result.isTranscoded && prevActive && (prevActive.hasUnsupportedAudio || !prevActive.isWebAudioSafe || prevActive.isMulti) && directUrl);
+                const finalPlaybackUrl = needsRemux
+                    ? apiUrl(`/api/video-stream?audio=aac&lang=${prevActive.isFrench ? 'vf' : 'vo'}&url=${encodeURIComponent(directUrl)}`)
+                    : result.playbackUrl;
+                const finalTranscoded = Boolean(prevActive?.isTranscoded || result.isTranscoded || needsRemux);
                 setActiveStream(prev => ({
                     ...(prev || {}),
-                    url: result.playbackUrl,
+                    url: finalPlaybackUrl,
                     directUrl: directUrl || prev?.directUrl,
                     isAvi: Boolean(prev?.isAvi || result.isAvi),
-                    isTranscoded: Boolean(prev?.isTranscoded || result.isTranscoded),
+                    isTranscoded: finalTranscoded,
+                    audioRemuxed: Boolean(prev?.audioRemuxed || needsRemux),
+                    isWebAudioSafe: needsRemux ? true : prev?.isWebAudioSafe,
+                    hasUnsupportedAudio: needsRemux ? false : prev?.hasUnsupportedAudio,
                     isDownloading: false,
                     isCached: true
                 }));
@@ -299,10 +308,13 @@ export default function NetflixPlayer({
                 setAvailableStreams(prevList => (prevList || []).map(s => {
                     const match = (activeStreamRef.current?.id && s.id === activeStreamRef.current.id) || s.url === targetUrl || s.originalUrl === targetUrl;
                     if (!match) return s;
+                    const sNeedsRemux = Boolean(!result.isTranscoded && (s.hasUnsupportedAudio || !s.isWebAudioSafe || s.isMulti) && directUrl);
                     return {
                         ...s,
-                        url: result.playbackUrl,
+                        url: sNeedsRemux ? apiUrl(`/api/video-stream?audio=aac&lang=${s.isFrench ? 'vf' : 'vo'}&url=${encodeURIComponent(directUrl)}`) : result.playbackUrl,
                         directUrl: directUrl || s.directUrl,
+                        isTranscoded: Boolean(s.isTranscoded || result.isTranscoded || sNeedsRemux),
+                        audioRemuxed: Boolean(s.audioRemuxed || sNeedsRemux),
                         isCached: true,
                         isDownloading: false,
                         verifiedReady: true
@@ -490,14 +502,13 @@ export default function NetflixPlayer({
         if (current) {
             failedStreamIdsRef.current.add(current.id || current.url);
         }
-        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
-        // RÈGLE D'OR : On ne bascule QUE sur un autre flux RÉELLEMENT EN CACHE ET FONCTIONNEL.
-        // On ne bascule JAMAIS sur un torrent en téléchargement pour éviter de bloquer l'utilisateur dans un spinner infini !
-        // Priorité absolue à la même langue (VF) si disponible en cache
+        const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isTranscoded || !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`));
+        // Priorité absolue à la même langue (VF) en cache, puis autre flux en cache, puis téléchargement si aucun cache disponible
         const nextStream = (current?.isFrench
             ? list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && s.isFrench && isSafeToPlay(s))
             : null)
-            || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s));
+            || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s))
+            || list.find(s => !failedStreamIdsRef.current.has(s.id || s.url) && isSafeToPlay(s));
         if (!nextStream) {
             setErrorMessage('La lecture de cette vidéo a rencontré un problème. Veuillez réessayer plus tard.');
             setStreamState('error');
@@ -1611,7 +1622,24 @@ export default function NetflixPlayer({
             if (isSilentDecode || isMozSilent) {
                 audioFallbackDoneRef.current = key;
                 userPickedStreamRef.current = false;
-                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isWebAudioSafe || !s.hasUnsupportedAudio) && !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`);
+                const rawSrc = activeStream?.directUrl || activeStream?.originalUrl || activeStream?.url;
+                if (!activeStream?.isTranscoded && typeof rawSrc === 'string' && /^https?:\/\//i.test(rawSrc)) {
+                    const langParam = activeStream?.isFrench ? 'vf' : 'vo';
+                    const remuxedUrl = apiUrl(`/api/video-stream?audio=aac&lang=${langParam}&url=${encodeURIComponent(rawSrc)}`);
+                    console.log('[Altyflix Player] Flux muet détecté -> Activation automatique du remux audio FFmpeg...');
+                    handleSelectStreamRef.current({
+                        ...activeStream,
+                        id: `${activeStream.id || 'stream'}-remux`,
+                        url: remuxedUrl,
+                        directUrl: rawSrc,
+                        isTranscoded: true,
+                        audioRemuxed: true,
+                        isWebAudioSafe: true,
+                        hasUnsupportedAudio: false
+                    });
+                    return;
+                }
+                const isSafeToPlay = (s) => (!s.isAvi || s.isTranscoded) && !s.isDead && (s.isTranscoded || ((s.isWebAudioSafe || !s.hasUnsupportedAudio) && !/\b(?:truehd|dts(?:-?hd|-?x|-?ma)?|lpcm)\b/i.test(`${s.rawTitle || ''} ${s.filename || ''}`)));
                 // 1. Chercher un flux alternatif dans la MÊME langue (VF) avec son web garanti
                 const safeSameLang = (availableStreams || []).find(s => s.id !== activeStream?.id && s.isWebAudioSafe && (s.isCached || s.verifiedReady) && !s.isDownloading && isSafeToPlay(s) && Boolean(s.isFrench) === Boolean(activeStream?.isFrench));
                 if (safeSameLang) {

@@ -164,8 +164,12 @@ function curateStreams(rawStreams, provider, {
   const validAll = rawStreams
     .filter(s => {
       if (typeof s.url !== 'string' || normalizeAllowedUrl(s.url) === null || isTorrentioErrorStream(s)) return false;
-      const combined = `${s.filename || ''} ${s.title || ''} ${s.name || ''}`;
-      if (allVariants.length > 0 && !isTorrentRelevantToTitle(combined, allVariants)) return false;
+      // Ne filtrer par mots-clés de titre QUE la bibliothèque perso TorBox (recherche par nom).
+      // Les résultats Torrentio / Frenchio sont déjà résolus par IMDb ID exact (évite de perdre des titres FR vs VO).
+      if (s.isTorboxLibrary && allVariants.length > 0) {
+        const combined = `${s.filename || ''} ${s.title || ''} ${s.name || ''}`;
+        if (!isTorrentRelevantToTitle(combined, allVariants)) return false;
+      }
       return true;
     })
     .map((s, idx) => {
@@ -182,6 +186,9 @@ function curateStreams(rawStreams, provider, {
         isVostfr: details.isVostfr,
         isWebAudioSafe: details.isWebAudioSafe,
         hasUnsupportedAudio: details.hasUnsupportedAudio,
+        isDtsOrTrueHdWithoutAac: details.isDtsOrTrueHdWithoutAac,
+        hasMultichannelSilence: details.hasMultichannelSilence,
+        isRemuxOrHeavyUnplayable: details.isRemuxOrHeavyUnplayable,
         isH264: details.isH264,
         isH265: details.isH265,
         isAv1: details.isAv1,
@@ -207,10 +214,13 @@ function curateStreams(rawStreams, provider, {
       };
     });
 
-  // Pour les films, imposer 1080p minimum (1080p / 4K) dès qu'une source >= 1080p est exploitable (sans sacrifier un 720p en cache face à du 1080p non caché)
+  // Pour les films, privilégier 1080p / 4K, mais ne jamais perdre la seule VF disponible en 720p/480p
   const movieHdPool = isMovie ? validAll.filter(isHd1080Plus) : [];
   const anyCachedAll = validAll.some(s => s.isCached);
-  const basePool = (isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some(s => s.isCached))) ? movieHdPool : validAll;
+  let basePool = (isMovie && movieHdPool.length > 0 && (!anyCachedAll || movieHdPool.some(s => s.isCached))) ? movieHdPool : validAll;
+  if (basePool !== validAll && validAll.some(s => s.isFrench) && !basePool.some(s => s.isFrench)) {
+    basePool = Array.from(new Set([...basePool, ...validAll.filter(s => s.isFrench)]));
+  }
 
   // RÈGLE D'OR : Filtrage intelligent des flux compatibles dans le navigateur
   const isPlayableInBrowser = (s) => {
@@ -510,18 +520,16 @@ function curateStreams(rawStreams, provider, {
     const base = `${s.quality} · ${s.isFrench ? 'VF' : (s.isVostfr ? 'VOSTFR' : 'VO')}`;
     let qLabel = base;
     if ((baseCounts.get(base) || 0) > 1) {
-      if (s.isWebAudioSafe) {
-        qLabel += ' (Stéréo AAC)';
-      } else if (/ddp|eac3|ac3|atmos/i.test(`${s.filename} ${s.rawTitle}`)) {
-        qLabel += ' (Dolby 5.1)';
-      } else {
+      if (/ddp|eac3|ac3|atmos|truehd|dts/i.test(`${s.filename} ${s.rawTitle}`)) {
+        qLabel += ' (Dolby)';
+      } else if (!s.isWebAudioSafe) {
         qLabel += ' (Option 2)';
       }
     }
 
     const canTranscodeAvi = Boolean(s.isAvi && enableAviTranscode);
     const audioLangParam = s.isFrench ? 'vf' : 'vo';
-    const shouldAudioRemux = Boolean(!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe));
+    const shouldAudioRemux = Boolean(!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe || s.isMulti));
 
     let streamPlaybackUrl = s.url;
     let isTranscoded = false;
@@ -1049,7 +1057,7 @@ async function resolveStreamsServer({
         return { ...s, url: `${streamBase}/api/video-stream?transcode=1&lang=${audioLangParam}&url=${encodeURIComponent(rawDirect)}`, isTranscoded: true };
       }
     }
-    if (!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe) && (s.verifiedReady || s.isCached || !s.isDownloading) && s.url && s.url.startsWith('http')) {
+    if (!s.isAvi && enableAudioRemux && (s.hasUnsupportedAudio || !s.isWebAudioSafe || s.isMulti) && (s.verifiedReady || s.isCached || !s.isDownloading) && s.url && s.url.startsWith('http')) {
       return {
         ...s,
         url: `${streamBase}/api/video-stream?audio=aac&lang=${audioLangParam}&url=${encodeURIComponent(s.url)}`,
@@ -1291,7 +1299,7 @@ async function resolveStreamsServer({
         const res = await fetch(url, {
           headers: { 'Accept': 'application/json' },
           redirect: 'error',
-          signal: AbortSignal.timeout(7500)
+          signal: AbortSignal.timeout(10000)
         });
         if (res.ok) {
           const data = await res.json();
@@ -1372,6 +1380,19 @@ async function resolveStreamsServer({
       }
     }
 
+    // Fallback sans filtre scr/cam si aucun flux trouvé sur les titres rares ou anciens
+    if (rawStreams.length === 0) {
+      const optionsUnfiltered = `providers=${ALL_PROVIDERS}|sort=qualitysize|${provider}=${encodeURIComponent(token)}`;
+      const endpointUnfiltered = `https://torrentio.strem.fun/${optionsUnfiltered}/stream/${isTv ? 'series' : 'movie'}/${streamKey}.json`;
+      const extraStreams = await fetchTorrentio(endpointUnfiltered, 'Unfiltered Fallback');
+      for (const s of extraStreams) {
+        if (s && s.url && !seenUrls.has(s.url)) {
+          seenUrls.add(s.url);
+          rawStreams.push(s);
+        }
+      }
+    }
+
     // Détection d'erreurs de clé (sans confondre un clip downloading avec une erreur de clé)
     const errorStream = rawStreams.find(s => isTorrentioErrorStream(s) && !isDownloadingUrl(s?.url));
     if (errorStream && rawStreams.length === 1) {
@@ -1390,14 +1411,14 @@ async function resolveStreamsServer({
       try {
         const hashRegex = /\/resolve\/torbox\/[^/]+\/([a-fA-F0-9]{40})\//i;
         const hashesSet = new Set();
-        // Pour les films, vérifier d'abord les hashes 1080p/4K dans le quota de 35 hashes
-        const orderedForCacheCheck = type === 'tv'
-          ? rawStreams
-          : [...rawStreams].sort((a, b) => {
-              const aHd = /2160p|4k|uhd|1080p/i.test(`${a.name || ''} ${a.title || ''}`) ? 1 : 0;
-              const bHd = /2160p|4k|uhd|1080p/i.test(`${b.name || ''} ${b.title || ''}`) ? 1 : 0;
-              return bHd - aHd;
-            });
+        // Vérifier d'abord les hashes VF + 1080p/4K (films et séries) dans le quota de 60 hashes
+        const orderedForCacheCheck = [...rawStreams].sort((a, b) => {
+          const aText = `${a.name || ''} ${a.title || ''}`;
+          const bText = `${b.name || ''} ${b.title || ''}`;
+          const aScore = (a._isFromFrenchQuery ? 2 : 0) + (/2160p|4k|uhd|1080p/i.test(aText) ? 1 : 0);
+          const bScore = (b._isFromFrenchQuery ? 2 : 0) + (/2160p|4k|uhd|1080p/i.test(bText) ? 1 : 0);
+          return bScore - aScore;
+        });
         const extractTorrentHash = (s) => {
           const m = (s.url || '').match(hashRegex);
           if (m && m[1]) return m[1].toLowerCase();
@@ -1412,7 +1433,7 @@ async function resolveStreamsServer({
           if (s.isTorboxLibrary) continue;
           const h = extractTorrentHash(s);
           if (h) hashesSet.add(h);
-          if (hashesSet.size >= 40) break;
+          if (hashesSet.size >= 60) break;
         }
         if (hashesSet.size > 0) {
           const hashesParam = Array.from(hashesSet).join(',');
@@ -1470,7 +1491,7 @@ async function resolveStreamsServer({
     const supportsAc3 = Boolean(clientAc3);
     const wantVo = normalizedLang === 'vo';
     const matchesLang = (s) => (wantVo ? !s.isFrench : s.isFrench);
-    const isPlayableFormat = (s) => (!s.isAvi || enableAviTranscode) && !s.isRemuxOrHeavyUnplayable;
+    const isPlayableFormat = (s) => (!s.isAvi || enableAviTranscode) && (!s.isRemuxOrHeavyUnplayable || (enableAudioRemux && (!s.sizeBytes || s.sizeBytes <= 50 * 1024 * 1024 * 1024)));
 
     const pickBestCandidate = (list) => {
       if (!supportsAc3 && !enableAudioRemux) {

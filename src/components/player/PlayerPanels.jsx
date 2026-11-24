@@ -241,7 +241,8 @@ function streamLabel(st) {
     if (st.qualityLabel) {
         base = st.qualityLabel
             .replace(/·\s*VF\b/g, '· Français')
-            .replace(/·\s*VO\b/g, '· Version originale');
+            .replace(/·\s*VO\b/g, '· Version originale')
+            .replace(/\s*\(Stéréo AAC\)/gi, '');
     } else {
         const tier = st.tierKey === '4k' ? '4K Ultra HD' : (st.tierKey === '1080p' ? 'Full HD' : (st.tierKey === '720p' ? 'HD' : (st.quality || 'HD')));
         const lang = st.isFrench ? 'Français' : (st.isVostfr ? 'Sous-titré' : 'Version originale');
@@ -271,8 +272,6 @@ export function AudioSubsPanel({
     subtitlesAlwaysOn,
     onToggleAlwaysOn
 }) {
-    const [copiedLink, setCopiedLink] = useState(false);
-
     // Ne proposer QUE des sources réellement prêtes, en cache, fonctionnelles et non mortes
     const rawPlayable = (Array.isArray(streams) ? streams : [])
         .filter(st => !st.isDead && (st.isCached || st.verifiedReady) && !st.isDownloading && (!st.isAvi || st.isTranscoded));
@@ -354,51 +353,6 @@ export function AudioSubsPanel({
                 </section>
             )}
 
-            {Boolean(activeStream) && (
-                <section className="mt-4 border-t border-white/[0.08] pt-3.5">
-                    <SectionTitle>Lire dans une autre application</SectionTitle>
-                    <div className="mt-2 flex flex-wrap gap-2 px-1">
-                        {(() => {
-                            const rawUrl = activeStream.directUrl || activeStream.originalUrl || (typeof activeStream.url === 'string' && activeStream.url.startsWith('http') ? activeStream.url : '');
-                            if (!rawUrl) return null;
-                            const infuseUrl = `infuse://x-callback-url/play?url=${encodeURIComponent(rawUrl)}`;
-                            const vlcUrl = `vlc://${rawUrl.replace(/^https?:\/\//, '')}`;
-                            return (
-                                <>
-                                    <a
-                                        href={infuseUrl}
-                                        className="rounded-full bg-[#f35a22]/90 hover:bg-[#f35a22] px-3 py-1.5 text-xs font-semibold text-white transition active:scale-95 inline-flex items-center gap-1.5 shadow-sm"
-                                        title="Ouvrir dans Infuse"
-                                    >
-                                        Ouvrir dans Infuse
-                                    </a>
-                                    <a
-                                        href={vlcUrl}
-                                        className="rounded-full bg-orange-500/80 hover:bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white transition active:scale-95 inline-flex items-center gap-1.5"
-                                        title="Ouvrir dans VLC"
-                                    >
-                                        Ouvrir dans VLC
-                                    </a>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            if (navigator.clipboard) {
-                                                navigator.clipboard.writeText(rawUrl).then(() => {
-                                                    setCopiedLink(true);
-                                                    setTimeout(() => setCopiedLink(false), 2000);
-                                                }).catch(() => {});
-                                            }
-                                        }}
-                                        className="rounded-full bg-white/[0.08] hover:bg-white/[0.15] px-3 py-1.5 text-xs font-semibold text-white/80 transition active:scale-95 inline-flex items-center gap-1.5 cursor-pointer"
-                                    >
-                                        {copiedLink ? '✓ Lien copié' : 'Copier le lien'}
-                                    </button>
-                                </>
-                            );
-                        })()}
-                    </div>
-                </section>
-            )}
         </Panel>
     );
 }

@@ -7,7 +7,7 @@ process.on('unhandledRejection', reason => {
 
 const streamApi = require('./stream-api.cjs');
 const { resolveNativeStream, getDemoVtt } = require('./nativeStreamingEngine.cjs');
-const { resolveStreamsServer, checkStreamStatus, normalizeAllowedUrl } = require('./stream-resolver.cjs');
+const { resolveStreamsServer, checkStreamStatus, normalizeAllowedUrl, normalizeTrustedRedirectUrl } = require('./stream-resolver.cjs');
 const { SECURITY_HEADERS, DOCUMENTARY_CATEGORIES, HttpError, positiveInteger, validateStreams, arteLimit, tmdbUrl, BoundedCache, fetchJson, createRateLimiter, normalizeAllowedSubtitleUrl, readBoundedBuffer, decodeSubtitleBuffer, cleanSubtitleToVtt, rankOpenSubtitles } = require('./security.cjs');
 /**
  * ALTYFLIX Backend Server - Node.js (Built-in HTTP, Zero Dependances External)
@@ -62,7 +62,7 @@ async function resolveSafeRedirects(startUrl) {
   if (!current) return null;
   try {
     for (let hop = 0; hop < 4; hop++) {
-      const safeHop = normalizeAllowedUrl(current);
+      const safeHop = hop === 0 ? normalizeAllowedUrl(current) : await normalizeTrustedRedirectUrl(current);
       if (!safeHop) return null;
       const headRes = await fetch(safeHop, {
         method: 'HEAD',
@@ -80,15 +80,15 @@ async function resolveSafeRedirects(startUrl) {
   } catch {
     // HEAD non supporté par le CDN : on garde l'URL déjà validée
   }
-  return normalizeAllowedUrl(current);
+  return normalizeTrustedRedirectUrl(current);
 }
 
-function probeMediaStreams(resolvedUrl) {
-  if (!hasFfprobe()) return Promise.resolve([]);
-  const safeUrl = normalizeAllowedUrl(resolvedUrl);
-  if (!safeUrl) return Promise.resolve([]);
+async function probeMediaStreams(resolvedUrl) {
+  if (!hasFfprobe()) return [];
+  const safeUrl = await normalizeTrustedRedirectUrl(resolvedUrl);
+  if (!safeUrl) return [];
   const cached = mediaProbeCache.get(safeUrl);
-  if (cached) return Promise.resolve(cached);
+  if (cached) return cached;
 
   return new Promise((resolve) => {
     let settled = false;
@@ -509,7 +509,7 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
-    const spawnFfmpegRemux = (rawInputUrl, { copyVideo, audioStreamIndex = null }) => {
+    const spawnFfmpegRemux = async (rawInputUrl, { copyVideo, audioStreamIndex = null }) => {
       if (res.destroyed || res.writableEnded) return;
       if (!hasFfmpeg()) {
         return sendJSON(res, 503, { error: 'Remux audio indisponible sur ce serveur.' });
@@ -521,9 +521,10 @@ const server = http.createServer(async (req, res) => {
       if (activeFfmpegJobs >= MAX_CONCURRENT_FFMPEG) {
         return sendJSON(res, 503, { error: 'Trop de flux en cours de conversion. Réessayez dans un instant.' });
       }
-      const inputUrl = normalizeAllowedUrl(rawInputUrl);
+      const inputUrl = await normalizeTrustedRedirectUrl(rawInputUrl);
+      if (res.destroyed || res.writableEnded) return;
       if (!inputUrl) {
-        return sendJSON(res, 400, { error: 'Hôte vidéo non autorisé.' });
+        return sendJSON(res, 403, { error: 'Hôte vidéo non autorisé.' });
       }
 
       const seekSec = Math.max(0, parseInt(query.t || query.start || '0', 10) || 0);
@@ -670,7 +671,7 @@ const server = http.createServer(async (req, res) => {
       const probedStreams = await probeMediaStreams(resolvedRemuxUrl);
       const audioStreamIndex = pickAudioStreamIndex(probedStreams, desiredAudioLang);
       console.log(`[Video Stream Proxy] Remux audio instantané (piste ${audioStreamIndex ?? 'défaut'} / ${desiredAudioLang.toUpperCase()} -> AAC)...`);
-      spawnFfmpegRemux(resolvedRemuxUrl, { copyVideo: true, audioStreamIndex });
+      await spawnFfmpegRemux(resolvedRemuxUrl, { copyVideo: true, audioStreamIndex });
       return;
     }
 
@@ -690,7 +691,7 @@ const server = http.createServer(async (req, res) => {
       let currentUrl = targetUrl;
       let upstreamRes = null;
       for (let hop = 0; hop < 4; hop++) {
-        const safeHop = normalizeAllowedUrl(currentUrl);
+        const safeHop = hop === 0 ? normalizeAllowedUrl(currentUrl) : await normalizeTrustedRedirectUrl(currentUrl);
         if (!safeHop) {
           return sendJSON(res, 403, { error: 'Hôte de redirection non autorisé.' });
         }
@@ -755,7 +756,7 @@ const server = http.createServer(async (req, res) => {
         const probedStreams = await probeMediaStreams(finalUrl);
         if (res.destroyed || res.writableEnded) return;
         const audioStreamIndex = pickAudioStreamIndex(probedStreams, desiredAudioLang);
-        spawnFfmpegRemux(finalUrl, { copyVideo: false, audioStreamIndex });
+        await spawnFfmpegRemux(finalUrl, { copyVideo: false, audioStreamIndex });
         return;
       }
 
@@ -818,7 +819,7 @@ const server = http.createServer(async (req, res) => {
       const resolvedUrl = await resolveSafeRedirects(rawTarget);
       if (!resolvedUrl) return sendJSON(res, 200, { success: true, subtitles: [] });
       const streams = await probeMediaStreams(resolvedUrl);
-      const subtitles = extractEmbeddedTextSubtitles(streams, encodeURIComponent(resolvedUrl));
+      const subtitles = extractEmbeddedTextSubtitles(streams, encodeURIComponent(rawTarget));
       return sendJSON(res, 200, { success: true, subtitles });
     } catch {
       return sendJSON(res, 200, { success: true, subtitles: [] });

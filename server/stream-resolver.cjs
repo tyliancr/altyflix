@@ -10,6 +10,8 @@
  * 5. Protection SSRF stricte sur toutes les requêtes sortantes.
  */
 
+const dns = require('node:dns').promises;
+const ipaddr = require('ipaddr.js');
 const { HttpError, positiveInteger, tmdbUrl, BoundedCache } = require('./security.cjs');
 const { parseBytes, isDownloadingUrl, isTorrentioErrorStream, parseStreamDetails } = require('./stream-parser.cjs');
 
@@ -93,6 +95,41 @@ function normalizeAllowedUrl(urlStr) {
 
 function isAllowedUrl(urlStr) {
   return normalizeAllowedUrl(urlStr) !== null;
+}
+
+function isPublicIpAddress(ip) {
+  try {
+    let addr = ipaddr.parse(ip);
+    if (addr.kind() === 'ipv6' && addr.isIPv4MappedAddress()) {
+      addr = addr.toIPv4Address();
+    }
+    return addr.range() === 'unicast';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Valide une destination de redirection HTTPS renvoyée par un fournisseur debrid de confiance
+ * (bloque tout hôte local, IP littérale ou résolution DNS vers une IP privée/réservée).
+ */
+async function normalizeTrustedRedirectUrl(urlStr) {
+  const whitelisted = normalizeAllowedUrl(urlStr);
+  if (whitelisted) return whitelisted;
+  if (typeof urlStr !== 'string' || !urlStr || /[\x00-\x1f\x7f]/.test(urlStr)) return null;
+  try {
+    const u = new URL(urlStr);
+    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return null;
+    const host = u.hostname.toLowerCase();
+    if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return null;
+    if (ipaddr.isValid(host)) return null;
+    const records = await dns.lookup(host, { all: true });
+    if (!Array.isArray(records) || records.length === 0) return null;
+    if (!records.every(r => isPublicIpAddress(r.address))) return null;
+    return u.href;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -632,7 +669,7 @@ async function autoRepairTorboxTorrent(torrentioUrl, token) {
     });
     if (head.status >= 300 && head.status < 400 && head.headers.get('location')) {
       const loc = head.headers.get('location');
-      return normalizeAllowedUrl(loc) || dlUrl;
+      return (await normalizeTrustedRedirectUrl(loc)) || dlUrl;
     }
     if (head.status === 200) {
       return dlUrl;
@@ -668,7 +705,7 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
     if (res.status >= 300 && res.status < 400 && location) {
       let resolvedLocation;
       try {
-        resolvedLocation = normalizeAllowedUrl(new URL(location, safeStreamUrl).toString());
+        resolvedLocation = await normalizeTrustedRedirectUrl(new URL(location, safeStreamUrl).toString());
       } catch {
         return { success: false, status: 'error', isDead: true, statusCode: 502, error: 'Redirection invalide.' };
       }
@@ -694,13 +731,13 @@ async function checkStreamStatus(streamUrl, knownFilename = '', { enableAviTrans
         try {
           let probeUrl = resolvedLocation;
           for (let hop = 0; hop < 3; hop++) {
-            const safeProbe = normalizeAllowedUrl(probeUrl);
+            const safeProbe = await normalizeTrustedRedirectUrl(probeUrl);
             if (!safeProbe) break;
             const headTarget = await fetch(safeProbe, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(4000) });
             const nextLoc = headTarget.headers.get('location') || '';
             if (headTarget.status >= 300 && headTarget.status < 400 && nextLoc) {
               try { await headTarget.body?.cancel(); } catch {}
-              const resolvedNext = normalizeAllowedUrl(new URL(nextLoc, safeProbe).toString());
+              const resolvedNext = await normalizeTrustedRedirectUrl(new URL(nextLoc, safeProbe).toString());
               if (!resolvedNext) {
                 return { success: false, status: 'error', isDead: true, statusCode: 403, error: 'Hôte de redirection non autorisé.' };
               }
@@ -1695,6 +1732,7 @@ async function resolveStreamsServer({
 
 module.exports = {
   normalizeAllowedUrl,
+  normalizeTrustedRedirectUrl,
   isAllowedUrl,
   isDownloadingUrl,
   isTorrentioErrorStream,

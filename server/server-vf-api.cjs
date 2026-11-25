@@ -530,6 +530,8 @@ const server = http.createServer(async (req, res) => {
       const seekSec = Math.max(0, parseInt(query.t || query.start || '0', 10) || 0);
       const audioMap = Number.isInteger(audioStreamIndex) ? `0:${audioStreamIndex}` : '0:a:0?';
       const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'warning',
         '-protocol_whitelist', 'https,tls,tcp',
         '-rw_timeout', '15000000',
         '-reconnect', '1',
@@ -538,56 +540,52 @@ const server = http.createServer(async (req, res) => {
         '-analyzeduration', '2000000'
       ];
 
-      // Seek avant -i avec remise à zéro propre des timestamps (évite les blocages de timeline fMP4 dans Chrome)
+      // Avec -c:v copy, -noaccurate_seek empêche FFmpeg de tronquer l'audio jusqu'à seekSec pendant que la vidéo repart de l'image clé précédente (sinon décalage A/V de 2 à 8s).
       if (seekSec > 0) {
+        if (copyVideo) {
+          ffmpegArgs.push('-noaccurate_seek');
+        }
         ffmpegArgs.push('-ss', String(seekSec));
       }
 
-      ffmpegArgs.push('-i', inputUrl);
-      if (copyVideo) {
-        ffmpegArgs.push(
-          '-map', '0:v:0',
-          '-map', audioMap,
-          '-map_chapters', '-1',
-          '-c:v', 'copy',
-          '-c:a', 'aac',
-          '-ac', '2',
-          '-b:a', '192k',
-          '-af', 'aresample=async=1',
-          '-max_muxing_queue_size', '1024'
-        );
-      } else {
-        ffmpegArgs.push(
-          '-map', '0:v:0',
-          '-map', audioMap,
-          '-map_chapters', '-1',
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-tune', 'zerolatency',
-          '-g', '50',
-          '-c:a', 'aac',
-          '-ac', '2',
-          '-b:a', '160k',
-          '-af', 'aresample=async=1',
-          '-max_muxing_queue_size', '1024'
-        );
-      }
-
       ffmpegArgs.push(
+        '-i', inputUrl,
+        '-map', '0:v:0',
+        '-map', audioMap,
+        '-map_chapters', '-1',
+        ...(copyVideo
+          ? ['-c:v', 'copy']
+          : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '50']),
+        '-c:a', 'aac',
+        '-ac', '2',
+        '-b:a', copyVideo ? '192k' : '160k',
+        '-af', 'aresample=async=1000:min_comp=0.020:min_hard_comp=0.100',
+        '-max_muxing_queue_size', '1024',
         '-avoid_negative_ts', 'make_zero',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets',
+        // delay_moov écrit le moov avec les tables elst exactes (priming AAC, B-frames et délais MKV) dès le 1er fragment.
+        '-movflags', 'frag_keyframe+delay_moov+default_base_moof+negative_cts_offsets',
         '-f', 'mp4',
         'pipe:1'
       );
 
+      console.log(`[Video Stream Proxy] FFmpeg ${copyVideo ? 'remux' : 'transcode'} (piste ${audioStreamIndex ?? 'défaut'}, lang=${String(query.lang || 'vf').toUpperCase()}, t=${seekSec}s)...`);
+
       let ffmpegProc;
+      let ffmpegErrTail = '';
       try {
         ffmpegProc = spawn('ffmpeg', ffmpegArgs, {
-          stdio: ['ignore', 'pipe', 'ignore']
+          stdio: ['ignore', 'pipe', 'pipe']
         });
       } catch {
         return sendJSON(res, 502, { error: 'Flux vidéo indisponible.' });
       }
+      ffmpegProc.stderr?.on('data', (chunk) => {
+        if (res.headersSent) {
+          ffmpegErrTail = '';
+          return;
+        }
+        ffmpegErrTail = (ffmpegErrTail + chunk.toString('utf8')).slice(-2048);
+      });
 
       activeFfmpegJobs++;
       let cleaned = false;
@@ -618,7 +616,7 @@ const server = http.createServer(async (req, res) => {
       }, 4 * 60 * 60 * 1000);
       maxLifeTimer.unref?.();
 
-      ffmpegProc.on('close', () => {
+      ffmpegProc.on('close', (code) => {
         if (killTimer) clearTimeout(killTimer);
         if (maxLifeTimer) clearTimeout(maxLifeTimer);
         if (!cleaned) {
@@ -626,6 +624,9 @@ const server = http.createServer(async (req, res) => {
           activeFfmpegJobs = Math.max(0, activeFfmpegJobs - 1);
         }
         if (!res.headersSent) {
+          if (code && code !== 0 && ffmpegErrTail) {
+            console.warn(`[Video Stream Proxy] FFmpeg terminé avec code ${code}:`, ffmpegErrTail.trim().split(/\r?\n/).slice(-3).join(' | '));
+          }
           sendJSON(res, 502, { error: 'Échec de conversion du flux vidéo.' });
         }
       });
@@ -670,7 +671,6 @@ const server = http.createServer(async (req, res) => {
       const desiredAudioLang = String(query.lang || 'vf').toLowerCase() === 'vo' ? 'vo' : 'vf';
       const probedStreams = await probeMediaStreams(resolvedRemuxUrl);
       const audioStreamIndex = pickAudioStreamIndex(probedStreams, desiredAudioLang);
-      console.log(`[Video Stream Proxy] Remux audio instantané (piste ${audioStreamIndex ?? 'défaut'} / ${desiredAudioLang.toUpperCase()} -> AAC)...`);
       await spawnFfmpegRemux(resolvedRemuxUrl, { copyVideo: true, audioStreamIndex });
       return;
     }
